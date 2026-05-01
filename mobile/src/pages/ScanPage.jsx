@@ -36,18 +36,27 @@ export default function ScanPage() {
   const navigate   = useNavigate();
   const cameraRef  = useRef(null);
   const fileRef    = useRef(null);
-  const addMoreRef = useRef(null);
+  const addMoreRef   = useRef(null);
+  const submittingRef = useRef(false);
 
-  // entries: { id, file, isPdf, preview, pdfB64, rendering }
+  // entries: { id, fingerprint, file, isPdf, preview, pdfB64, rendering }
   const [entries, setEntries] = useState([]);
   const [parsing,  setParsing]  = useState(false);
   const [error,    setError]    = useState('');
   const [dragging, setDragging] = useState(false);
 
   const processFile = async (f) => {
-    const id    = `${Date.now()}-${Math.random()}`;
-    const isPdf = f.type === 'application/pdf';
-    setEntries(prev => [...prev, { id, file: f, isPdf, preview: null, pdfB64: null, rendering: isPdf }]);
+    const id          = `${Date.now()}-${Math.random()}`;
+    const isPdf       = f.type === 'application/pdf';
+    const fingerprint = `${f.name}-${f.size}-${f.lastModified}`;
+
+    let added = false;
+    setEntries(prev => {
+      if (prev.some(e => e.fingerprint === fingerprint)) return prev;
+      added = true;
+      return [...prev, { id, fingerprint, file: f, isPdf, preview: null, pdfB64: null, rendering: isPdf }];
+    });
+    if (!added) return;
 
     if (isPdf) {
       try {
@@ -76,7 +85,8 @@ export default function ScanPage() {
   const removeEntry = id => setEntries(prev => prev.filter(e => e.id !== id));
 
   const submit = async () => {
-    if (!entries.length) return;
+    if (!entries.length || submittingRef.current) return;
+    submittingRef.current = true;
     setError(''); setParsing(true);
     try {
       const results = await Promise.all(
@@ -115,6 +125,7 @@ export default function ScanPage() {
       setError(err?.message || 'Could not read receipt. Try a clearer photo or PDF.');
     } finally {
       setParsing(false);
+      submittingRef.current = false;
     }
   };
 

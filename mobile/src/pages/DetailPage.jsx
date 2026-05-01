@@ -185,17 +185,20 @@ export default function DetailPage() {
           <div>
             <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Splitwise Group</p>
             {loading ? (
-              <div className="flex gap-2">{[1,2,3].map(i => <div key={i} className="h-8 w-24 bg-slate-100 rounded-full animate-pulse" />)}</div>
+              <div className="h-11 w-full bg-slate-100 rounded-xl animate-pulse" />
             ) : (
-              <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
-                {groups.map(g => (
-                  <button key={g.id} onClick={() => switchGroup(g.id)}
-                    className={`shrink-0 px-4 py-1.5 rounded-full text-sm font-semibold border-2 transition-all
-                      ${selectedGroup === g.id ? 'text-white border-indigo' : 'border-slate-200 text-slate-500 hover:border-indigo-200'}`}
-                    style={selectedGroup === g.id ? { background: INDIGO, borderColor: INDIGO } : {}}>
-                    {g.name}
-                  </button>
-                ))}
+              <div className="relative">
+                <select
+                  value={selectedGroup ?? ''}
+                  onChange={e => switchGroup(Number(e.target.value))}
+                  className="w-full appearance-none bg-white border-2 rounded-xl px-4 py-2.5 pr-10 text-sm font-semibold text-slate-700 outline-none transition-colors cursor-pointer"
+                  style={{ borderColor: INDIGO }}
+                >
+                  {groups.map(g => (
+                    <option key={g.id} value={g.id}>{g.name}</option>
+                  ))}
+                </select>
+                <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: INDIGO }} />
               </div>
             )}
           </div>

@@ -1,0 +1,18 @@
+# Database and uploads (contain personal data)
+receipts.db
+uploads/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# macOS
+.DS_Store

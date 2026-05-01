@@ -1,0 +1,56 @@
+{
+  "expo": {
+    "name": "ReceiptSplit",
+    "slug": "receiptsplit",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#6366f1"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.receiptsplit.app",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Used to take photos of receipts for parsing.",
+        "NSPhotoLibraryUsageDescription": "Used to pick receipt photos from your library."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#6366f1"
+      },
+      "package": "com.receiptsplit.app",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single",
+      "name": "ReceiptSplit",
+      "shortName": "ReceiptSplit",
+      "description": "Scan receipts and split with Splitwise",
+      "themeColor": "#6366f1",
+      "backgroundColor": "#f8faff",
+      "display": "standalone",
+      "orientation": "portrait"
+    },
+    "plugins": [
+      "expo-image-picker"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "a07e1dbf-7e80-453e-91a2-ccb774c2cc8e"
+      }
+    },
+    "owner": "akashdas62"
+  }
+}

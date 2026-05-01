@@ -11,6 +11,30 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 
 const INDIGO = '#6366f1';
 
+// Merge items from multiple parsed images, removing cross-image duplicates.
+// Items within the same image are kept as-is (same item can legitimately
+// appear twice on one page). Items from a later image that exactly match
+// something already seen in an earlier image are treated as overlap and dropped.
+function mergeAndDedup(results) {
+  const seenInPrevious = new Set();
+  const merged = [];
+
+  for (const result of results) {
+    const imageItems = result.items || [];
+    const keysThisImage = new Set();
+
+    for (const item of imageItems) {
+      const key = `${(item.description || '').toLowerCase().trim()}|${(parseFloat(item.amount) || 0).toFixed(2)}`;
+      if (!seenInPrevious.has(key)) merged.push(item);
+      keysThisImage.add(key);
+    }
+
+    keysThisImage.forEach(k => seenInPrevious.add(k));
+  }
+
+  return merged;
+}
+
 async function pdfPageToBase64(file) {
   const arrayBuffer = await file.arrayBuffer();
   const pdf      = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -96,8 +120,8 @@ export default function ScanPage() {
         })
       );
 
-      const base    = results[0];
-      const allItems = results.flatMap(r => r.items || []);
+      const base     = results[0];
+      const allItems = mergeAndDedup(results);
 
       const receipt = {
         id:         String(Date.now()),

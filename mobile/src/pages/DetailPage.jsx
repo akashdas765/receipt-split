@@ -27,7 +27,7 @@ export default function DetailPage() {
 
   const [items,         setItems]         = useState(receipt?.items || []);
   const [merchant,      setMerchant]      = useState(receipt?.merchant || '');
-  const [date,          setDate]          = useState(receipt?.date     || '');
+  const [date,          setDate]          = useState(receipt?.date     || new Date().toISOString().split('T')[0]);
   const [groups,        setGroups]        = useState([]);
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [members,       setMembers]       = useState([]);

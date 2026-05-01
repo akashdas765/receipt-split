@@ -121,7 +121,7 @@ export default function HomePage() {
                     </div>
 
                     <div className="flex items-center gap-3 shrink-0">
-                      <span className="font-bold text-slate-800 text-sm">${(r.total || 0).toFixed(2)}</span>
+                      <span className="font-bold text-slate-800 text-sm">${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</span>
                       <button
                         onClick={e => { e.stopPropagation(); handleDelete(r.id, r.merchant); }}
                         className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors"

@@ -37,7 +37,8 @@ export default function DetailPage() {
   const [swError,       setSwError]       = useState('');
   const [openCat,       setOpenCat]       = useState(null); // item id with open dropdown
   const [showBreakdown, setShowBreakdown] = useState(false);
-  const dropdownRef = useRef(null);
+  const dropdownRef  = useRef(null);
+  const newItemIdRef = useRef(null);
 
   useEffect(() => {
     if (!receipt) { navigate('/'); return; }
@@ -49,6 +50,12 @@ export default function DetailPage() {
       .catch(() => setSwError('Could not load Splitwise groups. Check your API key.'))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!newItemIdRef.current) return;
+    const el = document.getElementById(`item-${newItemIdRef.current}`);
+    if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); newItemIdRef.current = null; }
+  }, [items]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -67,7 +74,11 @@ export default function DetailPage() {
 
   const updateItem  = (id, field, value) => setItems(prev => prev.map(i => i.id === id ? { ...i, [field]: value } : i));
   const deleteItem  = id => setItems(prev => prev.filter(i => i.id !== id));
-  const addItem     = () => setItems(prev => [...prev, { id: String(Date.now()), description: 'New item', quantity: 1, amount: 0, category: 'other', tax_exempt: 0, split_members: [] }]);
+  const addItem     = () => {
+    const id = String(Date.now());
+    newItemIdRef.current = id;
+    setItems(prev => [...prev, { id, description: 'New item', quantity: 1, amount: 0, category: 'other', tax_exempt: 0, split_members: [] }]);
+  };
   const toggleMember = (itemId, memberId) => setItems(prev => prev.map(item => {
     if (item.id !== itemId) return item;
     const ids = item.split_members || [], mid = String(memberId);
@@ -243,7 +254,7 @@ export default function DetailPage() {
                 const catOpen   = openCat === item.id;
 
                 return (
-                  <div key={item.id} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
+                  <div key={item.id} id={`item-${item.id}`} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
                     {/* Name + delete */}
                     <div className="flex items-center gap-2 mb-3">
                       <input value={item.description} onChange={e => updateItem(item.id, 'description', e.target.value)}

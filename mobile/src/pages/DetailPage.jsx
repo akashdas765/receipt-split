@@ -355,6 +355,7 @@ export default function DetailPage() {
               receiptId:    receipt.id,
               groupId:      selectedGroup,
               members,
+              items,
               personTotals: calcPersonTotals(),
               grandTotal:   grandTotal(),
               merchant:     merchant || receipt.merchant,

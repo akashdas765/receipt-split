@@ -38,12 +38,13 @@ export async function fetchGroups() {
   }));
 }
 
-export async function postExpense({ description, groupId, paidById, personTotals, members }) {
+export async function postExpense({ description, details, groupId, paidById, personTotals, members }) {
   // personTotals: { memberId: amount } — only members who owe something
   const totalAmount = Object.values(personTotals).reduce((s, v) => s + v, 0);
 
   // Build form body manually (URLSearchParams not reliable in RN for this API)
   let body = `cost=${totalAmount.toFixed(2)}&description=${encodeURIComponent(description)}&group_id=${groupId}&currency_code=USD`;
+  if (details) body += `&details=${encodeURIComponent(details)}`;
 
   members.forEach((m, i) => {
     const owed = (personTotals[String(m.id)] || 0).toFixed(2);

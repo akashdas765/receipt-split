@@ -16,7 +16,19 @@ function memberColor(name = '') {
 export default function ApprovePage() {
   const navigate = useNavigate();
   const { state } = useLocation();
-  const { receiptId, groupId, members = [], personTotals = {}, grandTotal = 0, merchant } = state || {};
+  const { receiptId, groupId, members = [], items = [], personTotals = {}, grandTotal = 0, merchant } = state || {};
+
+  const buildNote = () => {
+    const memberMap = {};
+    members.forEach(m => { memberMap[String(m.id)] = m.name; });
+    return items
+      .filter(i => (i.split_members || []).length > 0)
+      .map(i => {
+        const names = (i.split_members || []).map(id => memberMap[id] || id).join(', ');
+        return `${i.description} ($${parseFloat(i.amount || 0).toFixed(2)}) — ${names}`;
+      })
+      .join('\n');
+  };
 
   const [paidBy,     setPaidBy]     = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -33,6 +45,7 @@ export default function ApprovePage() {
       const activeMembers = members.filter(m => (personTotals[String(m.id)] || 0) > 0);
       await postExpense({
         description:  merchant || 'Receipt',
+        details:      buildNote(),
         groupId,
         paidById:     paidBy,
         personTotals: Object.fromEntries(

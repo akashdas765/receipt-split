@@ -38,17 +38,17 @@ export async function fetchGroups() {
   }));
 }
 
-export async function postExpense({ description, details, groupId, paidById, personTotals, members }) {
+export async function postExpense({ description, details, groupId, paidAmounts = {}, personTotals, members }) {
   // personTotals: { memberId: amount } — only members who owe something
+  // paidAmounts:  { memberId: amount } — how much each payer contributed
   const totalAmount = Object.values(personTotals).reduce((s, v) => s + v, 0);
 
-  // Build form body manually (URLSearchParams not reliable in RN for this API)
   let body = `cost=${totalAmount.toFixed(2)}&description=${encodeURIComponent(description)}&group_id=${groupId}&currency_code=USD`;
   if (details) body += `&details=${encodeURIComponent(details)}`;
 
   members.forEach((m, i) => {
     const owed = (personTotals[String(m.id)] || 0).toFixed(2);
-    const paid = m.id === paidById ? totalAmount.toFixed(2) : '0.00';
+    const paid = (paidAmounts[String(m.id)]  || 0).toFixed(2);
     body += `&users__${i}__user_id=${m.id}`;
     body += `&users__${i}__owed_share=${owed}`;
     body += `&users__${i}__paid_share=${paid}`;

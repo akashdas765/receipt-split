@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, CloudUpload, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { ArrowLeft, CloudUpload, AlertCircle, CheckCircle2, Loader2, Equal } from 'lucide-react';
 import { postExpense } from '../services/splitwise';
 import { saveReceipt } from '../services/db';
 
@@ -11,6 +11,13 @@ function memberColor(name = '') {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
   return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
+}
+
+function equalSplit(total, ids) {
+  if (!ids.length) return {};
+  const each     = Math.floor(total * 100 / ids.length) / 100;
+  const remainder = Math.round((total - each * ids.length) * 100) / 100;
+  return Object.fromEntries(ids.map((id, i) => [id, (i === 0 ? each + remainder : each).toFixed(2)]));
 }
 
 export default function ApprovePage() {
@@ -41,24 +48,61 @@ export default function ApprovePage() {
       .join('\n');
   };
 
-  const [paidBy,     setPaidBy]     = useState(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [error,      setError]      = useState('');
+  const [paidAmounts, setPaidAmounts] = useState({});
+  const [submitting,  setSubmitting]  = useState(false);
+  const [error,       setError]       = useState('');
+
+  const payerIds = Object.keys(paidAmounts);
+
+  const togglePayer = (memberId) => {
+    const mid = String(memberId);
+    const next = { ...paidAmounts };
+    if (next[mid] !== undefined) {
+      delete next[mid];
+    } else {
+      next[mid] = '0.00';
+    }
+    // Reset to equal split among remaining payers
+    const newIds = Object.keys(next);
+    setPaidAmounts(equalSplit(grandTotal, newIds));
+    setError('');
+  };
+
+  const resetEqual = () => {
+    if (!payerIds.length) return;
+    setPaidAmounts(equalSplit(grandTotal, payerIds));
+  };
+
+  const updateAmount = (memberId, value) => {
+    setPaidAmounts(prev => ({ ...prev, [String(memberId)]: value }));
+    setError('');
+  };
+
+  const totalPaid     = payerIds.reduce((s, id) => s + (parseFloat(paidAmounts[id]) || 0), 0);
+  const paidDiff      = Math.round((totalPaid - grandTotal) * 100) / 100;
+  const paidBalanced  = Math.abs(paidDiff) < 0.02;
 
   const membersWithAmounts = members
     .map(m => ({ ...m, amount: personTotals[String(m.id)] || 0 }))
     .filter(m => m.amount > 0);
 
   const submit = async () => {
-    if (!paidBy) { setError('Please choose who paid the bill.'); return; }
+    if (!payerIds.length) { setError('Please choose who paid the bill.'); return; }
+    if (!paidBalanced) {
+      setError(`Paid amounts are $${Math.abs(paidDiff).toFixed(2)} ${paidDiff > 0 ? 'over' : 'under'} the total.`);
+      return;
+    }
     setError(''); setSubmitting(true);
     try {
-      const activeMembers = members.filter(m => (personTotals[String(m.id)] || 0) > 0);
+      const activeMembers  = members.filter(m => (personTotals[String(m.id)] || 0) > 0);
+      const paidAmountsNum = Object.fromEntries(
+        payerIds.map(id => [id, Math.round((parseFloat(paidAmounts[id]) || 0) * 100) / 100])
+      );
       await postExpense({
         description:  merchant || 'Receipt',
         details:      buildNote(),
         groupId,
-        paidById:     paidBy,
+        paidAmounts:  paidAmountsNum,
         personTotals: Object.fromEntries(
           Object.entries(personTotals).map(([k, v]) => [k, Math.round(v * 100) / 100])
         ),
@@ -133,11 +177,12 @@ export default function ApprovePage() {
             <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Who paid?</p>
             <div className="flex flex-wrap gap-2">
               {members.map(m => {
+                const mid      = String(m.id);
                 const color    = memberColor(m.name);
-                const selected = paidBy === m.id;
+                const selected = paidAmounts[mid] !== undefined;
                 return (
-                  <button key={m.id} onClick={() => { setPaidBy(m.id); setError(''); }}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 font-semibold text-sm transition-all`}
+                  <button key={m.id} onClick={() => togglePayer(m.id)}
+                    className="flex items-center gap-2 px-3 py-2 rounded-xl border-2 font-semibold text-sm transition-all"
                     style={selected
                       ? { borderColor: color, background: color + '18', color }
                       : { borderColor: '#e2e8f0', background: '#fff', color: '#64748b' }}>
@@ -152,6 +197,60 @@ export default function ApprovePage() {
               })}
             </div>
           </div>
+
+          {/* Payment split amounts */}
+          {payerIds.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Payment split</p>
+                {payerIds.length > 1 && (
+                  <button onClick={resetEqual}
+                    className="flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-lg transition-colors hover:bg-indigo-50"
+                    style={{ color: INDIGO }}>
+                    <Equal size={12} /> Equal
+                  </button>
+                )}
+              </div>
+
+              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                {payerIds.map((mid, idx) => {
+                  const m     = members.find(m => String(m.id) === mid);
+                  const color = memberColor(m?.name || '');
+                  return (
+                    <div key={mid}
+                      className={`flex items-center gap-3 px-4 py-3 ${idx < payerIds.length - 1 ? 'border-b border-slate-100' : ''}`}>
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-extrabold text-xs shrink-0"
+                        style={{ background: color }}>
+                        {m?.name?.[0]?.toUpperCase()}
+                      </div>
+                      <span className="flex-1 font-semibold text-sm text-slate-700">{m?.name}</span>
+                      <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
+                        <span className="text-xs text-slate-400 font-semibold">$</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={paidAmounts[mid]}
+                          onChange={e => updateAmount(mid, e.target.value)}
+                          className="w-20 text-sm font-bold text-slate-800 bg-transparent outline-none text-right"
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Running total */}
+                <div className={`flex items-center justify-between px-4 py-2.5 border-t ${paidBalanced ? 'bg-emerald-50 border-emerald-100' : 'bg-amber-50 border-amber-100'}`}>
+                  <span className={`text-xs font-bold ${paidBalanced ? 'text-emerald-600' : 'text-amber-600'}`}>
+                    {paidBalanced ? 'Balanced' : paidDiff > 0 ? `$${paidDiff.toFixed(2)} over` : `$${Math.abs(paidDiff).toFixed(2)} remaining`}
+                  </span>
+                  <span className={`text-xs font-extrabold ${paidBalanced ? 'text-emerald-600' : 'text-amber-600'}`}>
+                    ${totalPaid.toFixed(2)} / ${grandTotal.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
 
         </div>
       </main>

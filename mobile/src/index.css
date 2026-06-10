@@ -20,6 +20,9 @@ body {
 
 input, textarea, select, button { font-family: inherit; }
 
+/* Prevent iOS auto-zoom on input focus (triggers when font-size < 16px) */
+input, textarea, select { font-size: max(16px, 1em); }
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

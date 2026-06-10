@@ -56,6 +56,15 @@ async function imageToBase64(file) {
   });
 }
 
+async function imageToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader   = new FileReader();
+    reader.onload  = e => resolve(e.target.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function ScanPage() {
   const navigate   = useNavigate();
   const cameraRef  = useRef(null);
@@ -78,7 +87,7 @@ export default function ScanPage() {
     setEntries(prev => {
       if (prev.some(e => e.fingerprint === fingerprint)) return prev;
       added = true;
-      return [...prev, { id, fingerprint, file: f, isPdf, preview: null, pdfB64: null, rendering: isPdf }];
+      return [...prev, { id, fingerprint, file: f, isPdf, preview: null, pdfB64: null, rendering: true }];
     });
     if (!added) return;
 
@@ -93,9 +102,15 @@ export default function ScanPage() {
         setError('Could not render PDF. Make sure it is a valid, non-encrypted PDF.');
       }
     } else {
-      setEntries(prev => prev.map(e =>
-        e.id === id ? { ...e, preview: URL.createObjectURL(f) } : e
-      ));
+      try {
+        const dataUrl = await imageToDataUrl(f);
+        setEntries(prev => prev.map(e =>
+          e.id === id ? { ...e, preview: dataUrl, rendering: false } : e
+        ));
+      } catch {
+        setEntries(prev => prev.filter(e => e.id !== id));
+        setError('Could not load image. Try a different file.');
+      }
     }
   };
 
@@ -220,7 +235,15 @@ export default function ScanPage() {
                       <span className="text-xs text-slate-400">Rendering PDF…</span>
                     </div>
                   ) : (
-                    <img src={entry.preview} alt="Receipt" className="w-full h-full object-cover" />
+                    <img
+                      src={entry.preview}
+                      alt="Receipt"
+                      className="w-full h-full object-cover"
+                      onError={e => {
+                        e.target.style.display = 'none';
+                        e.target.parentElement.classList.add('img-error');
+                      }}
+                    />
                   )}
                   {entry.isPdf && !entry.rendering && (
                     <div className="absolute bottom-2 left-2 flex items-center gap-1 bg-white/90 rounded-lg px-2 py-0.5">

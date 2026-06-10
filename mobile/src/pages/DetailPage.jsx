@@ -21,11 +21,20 @@ function isTaxable(item, isGrocery) {
   return true;
 }
 
+// Normalize items coming from Firestore (old format used split_members string[])
+function normalizeItems(rawItems) {
+  return (rawItems || []).map(item => ({
+    ...item,
+    split_shares: item.split_shares ||
+      Object.fromEntries((item.split_members || []).map(id => [id, 1])),
+  }));
+}
+
 export default function DetailPage() {
   const navigate     = useNavigate();
   const { state: receipt } = useLocation();
 
-  const [items,         setItems]         = useState(receipt?.items || []);
+  const [items,         setItems]         = useState(normalizeItems(receipt?.items));
   const [merchant,      setMerchant]      = useState(receipt?.merchant || '');
   const [date,          setDate]          = useState(receipt?.date     || new Date().toISOString().split('T')[0]);
   const [groups,        setGroups]        = useState([]);
@@ -35,7 +44,7 @@ export default function DetailPage() {
   const [taxRate,       setTaxRate]       = useState('7');
   const [loading,       setLoading]       = useState(true);
   const [swError,       setSwError]       = useState('');
-  const [openCat,       setOpenCat]       = useState(null); // item id with open dropdown
+  const [openCat,       setOpenCat]       = useState(null);
   const [showBreakdown, setShowBreakdown] = useState(false);
   const dropdownRef  = useRef(null);
   const newItemIdRef = useRef(null);
@@ -57,7 +66,6 @@ export default function DetailPage() {
     if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); newItemIdRef.current = null; }
   }, [items]);
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handler = (e) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setOpenCat(null);
@@ -69,7 +77,7 @@ export default function DetailPage() {
   const switchGroup = gid => {
     const grp = groups.find(g => g.id === gid);
     setSelectedGroup(gid); setMembers(grp?.members || []);
-    setItems(prev => prev.map(i => ({ ...i, split_members: [] })));
+    setItems(prev => prev.map(i => ({ ...i, split_shares: {}, split_members: [] })));
   };
 
   const updateItem  = (id, field, value) => setItems(prev => prev.map(i => i.id === id ? { ...i, [field]: value } : i));
@@ -77,35 +85,62 @@ export default function DetailPage() {
   const addItem     = () => {
     const id = String(Date.now());
     newItemIdRef.current = id;
-    setItems(prev => [...prev, { id, description: 'New item', quantity: 1, amount: 0, category: 'other', tax_exempt: 0, split_members: [] }]);
+    setItems(prev => [...prev, { id, description: 'New item', quantity: 1, amount: 0, category: 'other', tax_exempt: 0, split_shares: {}, split_members: [] }]);
   };
+
   const toggleMember = (itemId, memberId) => setItems(prev => prev.map(item => {
     if (item.id !== itemId) return item;
-    const ids = item.split_members || [], mid = String(memberId);
-    return { ...item, split_members: ids.includes(mid) ? ids.filter(x => x !== mid) : [...ids, mid] };
+    const mid    = String(memberId);
+    const shares = { ...(item.split_shares || {}) };
+    if (shares[mid]) {
+      delete shares[mid];
+    } else {
+      shares[mid] = 1;
+    }
+    return { ...item, split_shares: shares, split_members: Object.keys(shares) };
   }));
+
+  const adjustShare = (itemId, memberId, delta) => setItems(prev => prev.map(item => {
+    if (item.id !== itemId) return item;
+    const mid    = String(memberId);
+    const shares = { ...(item.split_shares || {}) };
+    shares[mid]  = Math.max(1, (shares[mid] || 1) + delta);
+    return { ...item, split_shares: shares };
+  }));
+
   const splitAll = itemId => {
     const allIds = members.map(m => String(m.id));
     setItems(prev => prev.map(item => {
       if (item.id !== itemId) return item;
-      const cur = item.split_members || [];
-      return { ...item, split_members: cur.length === allIds.length ? [] : allIds };
+      const cur = Object.keys(item.split_shares || {});
+      if (cur.length === allIds.length) {
+        return { ...item, split_shares: {}, split_members: [] };
+      }
+      const shares = { ...(item.split_shares || {}) };
+      allIds.forEach(id => { if (!shares[id]) shares[id] = 1; });
+      return { ...item, split_shares: shares, split_members: allIds };
     }));
   };
+
   const toggleTaxExempt = id => setItems(prev => prev.map(i => i.id === id ? { ...i, tax_exempt: i.tax_exempt ? 0 : 1 } : i));
 
   const txRate = parseFloat(taxRate) / 100 || 0;
   const subtotalBeforeTax = () => items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
   const totalTaxAmount    = () => items.reduce((s, i) => s + (isTaxable(i, isGrocery) ? (parseFloat(i.amount) || 0) * txRate : 0), 0);
   const grandTotal        = () => items.reduce((s, i) => { const b = parseFloat(i.amount) || 0; return s + (isTaxable(i, isGrocery) ? b * (1 + txRate) : b); }, 0);
-  const calcPersonTotals  = () => {
+
+  const calcPersonTotals = () => {
     const totals = {};
     items.forEach(item => {
-      const ids = item.split_members || []; if (!ids.length) return;
-      const b = parseFloat(item.amount) || 0;
-      const total = isTaxable(item, isGrocery) ? b * (1 + txRate) : b;
-      const share = total / ids.length;
-      ids.forEach(id => { totals[id] = (totals[id] || 0) + share; });
+      const shares    = item.split_shares || {};
+      const memberIds = Object.keys(shares).filter(id => (shares[id] || 0) > 0);
+      if (!memberIds.length) return;
+      const totalShares = memberIds.reduce((s, id) => s + (shares[id] || 0), 0);
+      const b           = parseFloat(item.amount) || 0;
+      const lineTotal   = isTaxable(item, isGrocery) ? b * (1 + txRate) : b;
+      memberIds.forEach(id => {
+        totals[id] = (totals[id] || 0) + (lineTotal * shares[id] / totalShares);
+      });
     });
     return totals;
   };
@@ -247,11 +282,12 @@ export default function DetailPage() {
 
             <div ref={dropdownRef} className="space-y-3">
               {items.map(item => {
-                const taxable   = isTaxable(item, isGrocery);
-                const base      = parseFloat(item.amount) || 0;
-                const lineTotal = taxable ? base * (1 + txRate) : base;
-                const assigned  = item.split_members || [];
-                const catOpen   = openCat === item.id;
+                const taxable    = isTaxable(item, isGrocery);
+                const base       = parseFloat(item.amount) || 0;
+                const lineTotal  = taxable ? base * (1 + txRate) : base;
+                const shares     = item.split_shares || {};
+                const assignedIds = Object.keys(shares).filter(id => shares[id] > 0);
+                const catOpen    = openCat === item.id;
 
                 return (
                   <div key={item.id} id={`item-${item.id}`} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
@@ -315,28 +351,61 @@ export default function DetailPage() {
                     {/* Member pills */}
                     <div className="flex flex-wrap gap-1.5">
                       {members.map(m => {
-                        const active = assigned.includes(String(m.id));
-                        const color  = memberColor(m.name);
+                        const mid        = String(m.id);
+                        const shareCount = shares[mid] || 0;
+                        const active     = shareCount > 0;
+                        const color      = memberColor(m.name);
+                        const totalShares = assignedIds.reduce((s, id) => s + (shares[id] || 0), 0);
+
                         return (
-                          <button key={m.id} onClick={() => toggleMember(item.id, m.id)}
-                            className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border-2 transition-all"
+                          <div key={m.id}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border-2 transition-all select-none"
                             style={active
                               ? { background: color, borderColor: color, color: '#fff' }
                               : { background: '#f8faff', borderColor: '#e2e8f0', color: '#64748b' }}>
-                            {active && (
-                              <span className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-extrabold"
-                                style={{ background: color + '40', color }}>
-                                {m.name?.[0]?.toUpperCase()}
-                              </span>
+                            {active ? (
+                              <>
+                                <span className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-extrabold shrink-0"
+                                  style={{ background: 'rgba(255,255,255,0.25)' }}>
+                                  {m.name?.[0]?.toUpperCase()}
+                                </span>
+                                <button
+                                  onClick={() => toggleMember(item.id, m.id)}
+                                  className="font-semibold leading-none"
+                                >
+                                  {m.name}
+                                </button>
+                                <button
+                                  onClick={e => { e.stopPropagation(); adjustShare(item.id, m.id, -1); }}
+                                  className="w-4 h-4 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0 leading-none"
+                                  style={{ background: 'rgba(255,255,255,0.25)' }}
+                                >−</button>
+                                <span className="font-extrabold min-w-[10px] text-center leading-none">
+                                  {shareCount}
+                                </span>
+                                <button
+                                  onClick={e => { e.stopPropagation(); adjustShare(item.id, m.id, 1); }}
+                                  className="w-4 h-4 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0 leading-none"
+                                  style={{ background: 'rgba(255,255,255,0.25)' }}
+                                >+</button>
+                                {totalShares > 0 && (
+                                  <span className="text-[10px] opacity-70 leading-none">
+                                    {Math.round(shareCount / totalShares * 100)}%
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <button onClick={() => toggleMember(item.id, m.id)} className="leading-none">
+                                {m.name}
+                              </button>
                             )}
-                            {m.name}
-                          </button>
+                          </div>
                         );
                       })}
                       <button onClick={() => splitAll(item.id)}
                         className="px-2.5 py-1 rounded-full text-xs font-bold border-2 transition-all"
                         style={{ borderColor: '#e0e7ff', background: '#e0e7ff', color: INDIGO }}>
-                        {assigned.length === members.length && members.length > 0 ? 'Clear' : 'All'}
+                        {assignedIds.length === members.length && members.length > 0 ? 'Clear' : 'All'}
                       </button>
                     </div>
                   </div>

@@ -22,9 +22,20 @@ export default function ApprovePage() {
     const memberMap = {};
     members.forEach(m => { memberMap[String(m.id)] = m.name; });
     return items
-      .filter(i => (i.split_members || []).length > 0)
+      .filter(i => {
+        const shares = i.split_shares || {};
+        return Object.keys(shares).some(id => shares[id] > 0) || (i.split_members || []).length > 0;
+      })
       .map(i => {
-        const names = (i.split_members || []).map(id => memberMap[id] || id).join(', ');
+        const shares    = i.split_shares || {};
+        const memberIds = Object.keys(shares).length > 0
+          ? Object.keys(shares).filter(id => shares[id] > 0)
+          : (i.split_members || []);
+        const names = memberIds.map(id => {
+          const name  = memberMap[id] || id;
+          const count = shares[id];
+          return count && count > 1 ? `${name} ×${count}` : name;
+        }).join(', ');
         return `${i.description} ($${parseFloat(i.amount || 0).toFixed(2)}) — ${names}`;
       })
       .join('\n');

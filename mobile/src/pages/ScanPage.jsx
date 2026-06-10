@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Camera, ImagePlus, Sparkles, X, AlertCircle, Loader2, FileText, Plus } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
-import { parseReceiptImage } from '../services/mistral';
+import { parseReceiptImage } from '../services/groq';
 import { saveReceipt } from '../services/db';
 
 // Use CDN worker — avoids Vite bundling issues with the PDF.js worker

@@ -1,16 +1,16 @@
-functionsDirectory = "/Users/akashdas/Desktop/Projects/AI Proejct /mobile/netlify/functions"
+functionsDirectory = "/Users/akashdas/Desktop/Projects/AI Project/mobile/netlify/functions"
 functionsDirectoryOrigin = "config-v1"
 redirectsOrigin = "config"
 plugins = []
 headers = []
 
 [build]
-publish = "/Users/akashdas/Desktop/Projects/AI Proejct /mobile/dist"
+publish = "/Users/akashdas/Desktop/Projects/AI Project/mobile/dist"
 publishOrigin = "config"
 commandOrigin = "config"
-base = "/Users/akashdas/Desktop/Projects/AI Proejct /mobile"
+base = "/Users/akashdas/Desktop/Projects/AI Project/mobile"
 command = "npm install && npm run build"
-functions = "/Users/akashdas/Desktop/Projects/AI Proejct /mobile/netlify/functions"
+functions = "/Users/akashdas/Desktop/Projects/AI Project/mobile/netlify/functions"
 
 [build.environment]
 NODE_VERSION = "20"

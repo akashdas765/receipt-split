@@ -13,8 +13,10 @@ import ApprovePage from './pages/ApprovePage';
 
 function Spinner() {
   return (
-    <div className="flex items-center justify-center min-h-screen" style={{ background: 'var(--bg)' }}>
-      <div className="w-10 h-10 rounded-full border-4 border-indigo-200 border-t-indigo animate-spin" />
+    <div className="flex items-center justify-center min-h-screen aurora-bg">
+      <div className="w-14 h-14 rounded-2xl logo-glow anim-float flex items-center justify-center">
+        <div className="w-7 h-7 rounded-full border-[3px] border-white/30 border-t-white animate-spin" />
+      </div>
     </div>
   );
 }

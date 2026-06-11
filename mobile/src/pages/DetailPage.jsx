@@ -148,11 +148,11 @@ export default function DetailPage() {
   if (!receipt) return null;
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: 'var(--bg)' }}>
+    <div className="min-h-screen flex flex-col aurora-bg">
       {/* Header */}
-      <header className="sticky top-0 z-20 bg-white border-b border-slate-100 shadow-sm">
+      <header className="sticky top-0 z-20 glass">
         <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
-          <button onClick={() => navigate('/')} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-600">
+          <button onClick={() => navigate('/')} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-600 btn-press">
             <ArrowLeft size={20} />
           </button>
           <span className="font-extrabold text-slate-800">Assign & Split</span>
@@ -161,9 +161,9 @@ export default function DetailPage() {
 
       {/* Breakdown modal */}
       {showBreakdown && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4"
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4 anim-fade-in"
           onClick={() => setShowBreakdown(false)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl anim-sheet-up" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-extrabold text-slate-800 text-base">Total Breakdown</h3>
               <button onClick={() => setShowBreakdown(false)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
@@ -189,14 +189,14 @@ export default function DetailPage() {
         <div className="max-w-2xl mx-auto px-4 py-4 pb-24 space-y-4">
 
           {swError && (
-            <div className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+            <div className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl px-4 py-3 anim-pop">
               <AlertCircle size={15} className="text-red-500 shrink-0" />
               <p className="text-sm text-red-600 font-medium">{swError}</p>
             </div>
           )}
 
           {/* Stats 2×2 */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 stagger">
             {[
               { label: 'Merchant', icon: Store, content: (
                 <input value={merchant} onChange={e => setMerchant(e.target.value)}
@@ -216,7 +216,7 @@ export default function DetailPage() {
               const Tag = tappable ? 'button' : 'div';
               return (
                 <Tag key={label} onClick={tappable ? () => setShowBreakdown(true) : undefined}
-                  className={`bg-white rounded-2xl p-3 border text-left ${tappable ? 'border-indigo-100 hover:bg-indigo-50/50 cursor-pointer transition-colors' : 'border-slate-100'} shadow-sm`}>
+                  className={`bg-white rounded-2xl p-3 border text-left anim-fade-up ${tappable ? 'border-indigo-100 hover:bg-indigo-50/50 cursor-pointer card-lift' : 'border-slate-100'} shadow-sm`}>
                   <div className="flex items-center gap-1.5 mb-2">
                     <Icon size={13} style={{ color: INDIGO }} />
                     <span className="text-xs font-semibold text-slate-400">{label}{tappable ? ' ↗' : ''}</span>
@@ -231,7 +231,7 @@ export default function DetailPage() {
           <div>
             <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Splitwise Group</p>
             {loading ? (
-              <div className="h-11 w-full bg-slate-100 rounded-xl animate-pulse" />
+              <div className="h-11 w-full rounded-xl skeleton" />
             ) : (
               <div className="relative">
                 <select
@@ -280,7 +280,7 @@ export default function DetailPage() {
               </button>
             </div>
 
-            <div ref={dropdownRef} className="space-y-3">
+            <div ref={dropdownRef} className="space-y-3 stagger">
               {items.map(item => {
                 const taxable    = isTaxable(item, isGrocery);
                 const base       = parseFloat(item.amount) || 0;
@@ -290,7 +290,7 @@ export default function DetailPage() {
                 const catOpen    = openCat === item.id;
 
                 return (
-                  <div key={item.id} id={`item-${item.id}`} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
+                  <div key={item.id} id={`item-${item.id}`} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm anim-fade-up">
                     {/* Name + delete */}
                     <div className="flex items-center gap-2 mb-3">
                       <input value={item.description} onChange={e => updateItem(item.id, 'description', e.target.value)}
@@ -334,7 +334,7 @@ export default function DetailPage() {
                         <ChevronDown size={12} />
                       </button>
                       {catOpen && (
-                        <div className="absolute top-full mt-1 left-0 z-30 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden min-w-[130px]">
+                        <div className="absolute top-full mt-1 left-0 z-30 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden min-w-[130px] anim-scale-in origin-top-left">
                           {CATS.map(cat => (
                             <button key={cat} onClick={() => { updateItem(item.id, 'category', cat); setOpenCat(null); }}
                               className={`w-full text-left px-3 py-2 text-sm transition-colors flex items-center justify-between
@@ -359,9 +359,9 @@ export default function DetailPage() {
 
                         return (
                           <div key={m.id}
-                            className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border-2 transition-all select-none"
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border-2 transition-all select-none ${active ? 'anim-pop shadow-md' : 'hover:border-indigo-200'}`}
                             style={active
-                              ? { background: color, borderColor: color, color: '#fff' }
+                              ? { background: color, borderColor: color, color: '#fff', boxShadow: `0 4px 12px ${color}55` }
                               : { background: '#f8faff', borderColor: '#e2e8f0', color: '#64748b' }}>
                             {active ? (
                               <>
@@ -403,7 +403,7 @@ export default function DetailPage() {
                         );
                       })}
                       <button onClick={() => splitAll(item.id)}
-                        className="px-2.5 py-1 rounded-full text-xs font-bold border-2 transition-all"
+                        className="px-2.5 py-1 rounded-full text-xs font-bold border-2 transition-all btn-press"
                         style={{ borderColor: '#e0e7ff', background: '#e0e7ff', color: INDIGO }}>
                         {assignedIds.length === members.length && members.length > 0 ? 'Clear' : 'All'}
                       </button>
@@ -417,7 +417,7 @@ export default function DetailPage() {
       </main>
 
       {/* Sticky footer */}
-      <div className="sticky bottom-0 z-10 bg-white border-t border-slate-100 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
+      <div className="sticky bottom-0 z-10 glass-footer">
         <div className="max-w-2xl mx-auto px-4 py-3">
           <button
             onClick={() => navigate('/approve', { state: {
@@ -429,8 +429,7 @@ export default function DetailPage() {
               grandTotal:   grandTotal(),
               merchant:     merchant || receipt.merchant,
             }})}
-            className="w-full py-3.5 rounded-xl text-white font-bold text-base flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
-            style={{ background: EMERALD, boxShadow: '0 4px 16px rgba(16,185,129,0.4)' }}
+            className="w-full py-3.5 rounded-2xl text-white font-bold text-base flex items-center justify-center gap-2 btn-gradient-emerald btn-press"
           >
             <CheckCircle2 size={20} /> Review & Approve
           </button>

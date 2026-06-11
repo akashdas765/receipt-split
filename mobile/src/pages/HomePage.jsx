@@ -32,19 +32,20 @@ export default function HomePage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: 'var(--bg)' }}>
+    <div className="min-h-screen flex flex-col aurora-bg">
       {/* Header */}
-      <header className="sticky top-0 z-20 bg-white border-b border-slate-100 shadow-sm">
+      <header className="sticky top-0 z-20 glass">
         <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Receipt size={20} style={{ color: INDIGO }} />
-            <span className="font-extrabold text-slate-800 text-base">ReceiptSplit</span>
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center logo-glow">
+              <Receipt size={15} color="#fff" />
+            </div>
+            <span className="font-extrabold text-gradient text-base tracking-tight">ReceiptSplit</span>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => navigate('/scan')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-sm font-bold transition-opacity hover:opacity-90"
-              style={{ background: INDIGO }}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-white text-sm font-bold btn-gradient btn-press"
             >
               <Plus size={16} />
               <span className="hidden sm:inline">Scan Receipt</span>
@@ -64,13 +65,24 @@ export default function HomePage() {
       {/* Body */}
       <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-4">
         {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="w-8 h-8 rounded-full border-4 border-indigo-200 border-t-indigo animate-spin" />
+          <div className="flex flex-col gap-3 pt-8">
+            {[0, 1, 2].map(i => (
+              <div key={i} className="rounded-2xl p-4 bg-white border border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl skeleton shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3.5 w-1/2 rounded-full skeleton" />
+                    <div className="h-3 w-3/4 rounded-full skeleton" />
+                  </div>
+                  <div className="h-4 w-14 rounded-full skeleton shrink-0" />
+                </div>
+              </div>
+            ))}
           </div>
         ) : receipts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="w-20 h-20 rounded-full bg-indigo-50 flex items-center justify-center mb-4">
-              <Receipt size={36} style={{ color: '#c7d2fe' }} />
+          <div className="flex flex-col items-center justify-center py-24 text-center anim-scale-in">
+            <div className="w-20 h-20 rounded-3xl bg-indigo-50 flex items-center justify-center mb-4 anim-float">
+              <Receipt size={36} style={{ color: '#a5b4fc' }} />
             </div>
             <h2 className="text-lg font-bold text-slate-500 mb-1">No receipts yet</h2>
             <p className="text-sm text-slate-400">Tap Scan Receipt to get started</p>
@@ -88,16 +100,18 @@ export default function HomePage() {
               </button>
             </div>
 
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-3 stagger">
               {receipts.map(r => (
                 <button
                   key={r.id}
                   onClick={() => navigate('/detail', { state: r })}
-                  className="w-full text-left bg-white rounded-2xl p-4 border border-slate-100 shadow-sm hover:shadow-md hover:border-indigo-100 transition-all"
+                  className="w-full text-left bg-white rounded-2xl p-4 border border-slate-100 shadow-sm hover:border-indigo-100 card-lift anim-fade-up"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-                      style={{ background: r.approved ? EMERALD : INDIGO }}>
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
+                      style={{ background: r.approved
+                        ? 'linear-gradient(135deg, #10b981, #14b8a6)'
+                        : 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
                       {r.approved
                         ? <CheckCheck size={18} color="#fff" />
                         : <Receipt size={18} color="#fff" />}

@@ -171,11 +171,11 @@ export default function ScanPage() {
   const anyRendering = entries.some(e => e.rendering);
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: 'var(--bg)' }}>
+    <div className="min-h-screen flex flex-col aurora-bg">
       {/* Header */}
-      <header className="sticky top-0 z-20 bg-white border-b border-slate-100 shadow-sm">
+      <header className="sticky top-0 z-20 glass">
         <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
-          <button onClick={() => navigate('/')} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-600">
+          <button onClick={() => navigate('/')} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-600 btn-press">
             <ArrowLeft size={20} />
           </button>
           <span className="font-extrabold text-slate-800">Scan Receipt</span>
@@ -192,10 +192,11 @@ export default function ScanPage() {
               onDragLeave={() => setDragging(false)}
               onDrop={e => { e.preventDefault(); setDragging(false); handleFiles(e.dataTransfer.files); }}
               onClick={() => fileRef.current?.click()}
-              className={`relative flex flex-col items-center justify-center border-2 border-dashed rounded-2xl p-10 cursor-pointer transition-all select-none
-                ${dragging ? 'border-indigo bg-indigo-50 scale-[1.01]' : 'border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/30'}`}
+              className={`relative flex flex-col items-center justify-center border-2 border-dashed rounded-3xl p-10 cursor-pointer transition-all select-none anim-fade-up
+                ${dragging ? 'dropzone-active bg-indigo-50 scale-[1.02]' : 'border-slate-200 bg-white/80 hover:border-indigo-300 hover:bg-indigo-50/30'}`}
             >
-              <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4" style={{ background: '#e0e7ff' }}>
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-4 transition-transform ${dragging ? 'scale-110' : 'anim-float'}`}
+                style={{ background: 'linear-gradient(135deg, #e0e7ff, #ede9fe)' }}>
                 <ImagePlus size={28} style={{ color: INDIGO }} />
               </div>
               <p className="font-bold text-slate-600 text-base mb-1">
@@ -205,19 +206,19 @@ export default function ScanPage() {
               <input ref={fileRef} type="file" accept="image/*,application/pdf" multiple onChange={e => handleFiles(e.target.files)} className="hidden" />
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 anim-fade-up delay-1">
               <div className="flex-1 h-px bg-slate-200" />
               <span className="text-xs text-slate-400 font-medium">or</span>
               <div className="flex-1 h-px bg-slate-200" />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 anim-fade-up delay-2">
               <button onClick={() => cameraRef.current?.click()}
-                className="flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-slate-200 bg-white text-slate-700 font-bold text-sm hover:border-indigo-300 hover:text-indigo transition-colors">
+                className="flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-slate-200 bg-white text-slate-700 font-bold text-sm hover:border-indigo-300 hover:text-indigo transition-colors btn-press">
                 <Camera size={17} /> Camera
               </button>
               <button onClick={() => fileRef.current?.click()}
-                className="flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-slate-200 bg-white text-slate-700 font-bold text-sm hover:border-indigo-300 hover:text-indigo transition-colors">
+                className="flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-slate-200 bg-white text-slate-700 font-bold text-sm hover:border-indigo-300 hover:text-indigo transition-colors btn-press">
                 <FileText size={17} /> Browse / PDF
               </button>
             </div>
@@ -226,9 +227,9 @@ export default function ScanPage() {
         ) : (
           <>
             {/* Thumbnail grid */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 stagger">
               {entries.map(entry => (
-                <div key={entry.id} className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 aspect-[3/4]">
+                <div key={entry.id} className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 aspect-[3/4] shadow-md anim-scale-in">
                   {entry.rendering ? (
                     <div className="w-full h-full flex flex-col items-center justify-center gap-2">
                       <Loader2 size={24} className="animate-spin" style={{ color: INDIGO }} />
@@ -263,7 +264,7 @@ export default function ScanPage() {
               {/* Add more tile */}
               <button
                 onClick={() => addMoreRef.current?.click()}
-                className="aspect-[3/4] rounded-2xl border-2 border-dashed border-slate-200 bg-white flex flex-col items-center justify-center gap-2 hover:border-indigo-300 hover:bg-indigo-50/30 transition-colors"
+                className="aspect-[3/4] rounded-2xl border-2 border-dashed border-slate-200 bg-white/80 flex flex-col items-center justify-center gap-2 hover:border-indigo-300 hover:bg-indigo-50/30 transition-colors btn-press anim-scale-in"
               >
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: '#e0e7ff' }}>
                   <Plus size={20} style={{ color: INDIGO }} />
@@ -282,7 +283,7 @@ export default function ScanPage() {
         )}
 
         {error && (
-          <div className="flex items-start gap-2 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+          <div className="flex items-start gap-2 bg-red-50 border border-red-100 rounded-xl px-4 py-3 anim-pop">
             <AlertCircle size={16} className="text-red-500 shrink-0 mt-0.5" />
             <p className="text-sm text-red-600 font-medium">{error}</p>
           </div>
@@ -290,8 +291,7 @@ export default function ScanPage() {
 
         {entries.length > 0 && !anyRendering && (
           <button onClick={submit} disabled={parsing}
-            className="flex items-center justify-center gap-2 w-full py-4 rounded-xl text-white font-bold text-base transition-opacity disabled:opacity-60"
-            style={{ background: INDIGO, boxShadow: '0 6px 20px rgba(99,102,241,0.4)' }}>
+            className="flex items-center justify-center gap-2 w-full py-4 rounded-2xl text-white font-bold text-base btn-gradient btn-press disabled:opacity-80 anim-fade-up">
             {parsing
               ? <><Loader2 size={20} className="animate-spin" /> Parsing {entries.length > 1 ? `${entries.length} images` : 'receipt'}…</>
               : <><Sparkles size={20} /> Parse with AI</>}
@@ -299,7 +299,7 @@ export default function ScanPage() {
         )}
 
         {parsing && (
-          <p className="text-center text-xs text-slate-400 -mt-2">
+          <p className="text-center text-xs text-slate-400 -mt-2 anim-fade-in">
             Analysing {entries.length > 1 ? 'your receipts' : 'your receipt'}… this takes 10–20 seconds
           </p>
         )}

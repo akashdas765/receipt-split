@@ -120,11 +120,11 @@ export default function ApprovePage() {
   if (!state) { navigate('/'); return null; }
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: 'var(--bg)' }}>
+    <div className="min-h-screen flex flex-col aurora-bg">
       {/* Header */}
-      <header className="sticky top-0 z-20 bg-white border-b border-slate-100 shadow-sm">
+      <header className="sticky top-0 z-20 glass">
         <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
-          <button onClick={() => navigate(-1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-600">
+          <button onClick={() => navigate(-1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-600 btn-press">
             <ArrowLeft size={20} />
           </button>
           <span className="font-extrabold text-slate-800">Review & Post</span>
@@ -135,18 +135,19 @@ export default function ApprovePage() {
         <div className="max-w-2xl mx-auto px-4 py-4 pb-28 space-y-5">
 
           {/* Total card */}
-          <div className="bg-white rounded-2xl p-6 flex flex-col items-center border border-slate-100 shadow-sm">
-            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3"
-              style={{ background: '#e0e7ff' }}>
+          <div className="bg-white rounded-3xl p-6 flex flex-col items-center border border-slate-100 shadow-sm anim-scale-in"
+            style={{ boxShadow: '0 16px 40px rgba(99,102,241,0.10)' }}>
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3 anim-float"
+              style={{ background: 'linear-gradient(135deg, #e0e7ff, #ede9fe)' }}>
               <CloudUpload size={26} style={{ color: INDIGO }} />
             </div>
             <p className="font-bold text-slate-600 text-sm mb-1">{merchant || 'Receipt'}</p>
-            <p className="font-extrabold text-4xl mb-1" style={{ color: INDIGO }}>${grandTotal.toFixed(2)}</p>
+            <p className="font-extrabold text-4xl mb-1 text-gradient">${grandTotal.toFixed(2)}</p>
             <p className="text-xs text-slate-400">Total including tax</p>
           </div>
 
           {/* Split breakdown */}
-          <div>
+          <div className="anim-fade-up delay-1">
             <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Split breakdown</p>
             {membersWithAmounts.length === 0 ? (
               <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex items-center gap-3">
@@ -154,11 +155,11 @@ export default function ApprovePage() {
                 <p className="text-sm text-slate-400">No items assigned — go back and assign members to items.</p>
               </div>
             ) : (
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-2 stagger">
                 {membersWithAmounts.map(m => {
                   const color = memberColor(m.name);
                   return (
-                    <div key={m.id} className="bg-white rounded-xl px-4 py-3 flex items-center gap-3 border border-slate-100 shadow-sm">
+                    <div key={m.id} className="bg-white rounded-xl px-4 py-3 flex items-center gap-3 border border-slate-100 shadow-sm anim-fade-up card-lift">
                       <div className="w-9 h-9 rounded-full flex items-center justify-center text-white font-extrabold text-sm shrink-0"
                         style={{ background: color }}>
                         {m.name?.[0]?.toUpperCase()}
@@ -173,7 +174,7 @@ export default function ApprovePage() {
           </div>
 
           {/* Who paid */}
-          <div>
+          <div className="anim-fade-up delay-2">
             <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Who paid?</p>
             <div className="flex flex-wrap gap-2">
               {members.map(m => {
@@ -182,9 +183,9 @@ export default function ApprovePage() {
                 const selected = paidAmounts[mid] !== undefined;
                 return (
                   <button key={m.id} onClick={() => togglePayer(m.id)}
-                    className="flex items-center gap-2 px-3 py-2 rounded-xl border-2 font-semibold text-sm transition-all"
+                    className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 font-semibold text-sm transition-all btn-press ${selected ? 'anim-pop' : ''}`}
                     style={selected
-                      ? { borderColor: color, background: color + '18', color }
+                      ? { borderColor: color, background: color + '18', color, boxShadow: `0 4px 14px ${color}33` }
                       : { borderColor: '#e2e8f0', background: '#fff', color: '#64748b' }}>
                     <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-extrabold shrink-0"
                       style={{ background: color }}>
@@ -200,7 +201,7 @@ export default function ApprovePage() {
 
           {/* Payment split amounts */}
           {payerIds.length > 0 && (
-            <div>
+            <div className="anim-fade-up">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Payment split</p>
                 {payerIds.length > 1 && (
@@ -240,7 +241,7 @@ export default function ApprovePage() {
                 })}
 
                 {/* Running total */}
-                <div className={`flex items-center justify-between px-4 py-2.5 border-t ${paidBalanced ? 'bg-emerald-50 border-emerald-100' : 'bg-amber-50 border-amber-100'}`}>
+                <div className={`flex items-center justify-between px-4 py-2.5 border-t transition-colors duration-300 ${paidBalanced ? 'bg-emerald-50 border-emerald-100' : 'bg-amber-50 border-amber-100'}`}>
                   <span className={`text-xs font-bold ${paidBalanced ? 'text-emerald-600' : 'text-amber-600'}`}>
                     {paidBalanced ? 'Balanced' : paidDiff > 0 ? `$${paidDiff.toFixed(2)} over` : `$${Math.abs(paidDiff).toFixed(2)} remaining`}
                   </span>
@@ -256,17 +257,16 @@ export default function ApprovePage() {
       </main>
 
       {/* Sticky footer */}
-      <div className="sticky bottom-0 z-10 bg-white border-t border-slate-100 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
+      <div className="sticky bottom-0 z-10 glass-footer">
         <div className="max-w-2xl mx-auto px-4 py-3 space-y-2">
           {error && (
-            <div className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
+            <div className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl px-3 py-2 anim-pop">
               <AlertCircle size={15} className="text-red-500 shrink-0" />
               <p className="text-xs text-red-600 font-medium">{error}</p>
             </div>
           )}
           <button onClick={submit} disabled={submitting}
-            className="w-full py-3.5 rounded-xl text-white font-bold text-base flex items-center justify-center gap-2 transition-opacity hover:opacity-90 disabled:opacity-60"
-            style={{ background: INDIGO, boxShadow: '0 4px 16px rgba(99,102,241,0.4)' }}>
+            className="w-full py-3.5 rounded-2xl text-white font-bold text-base flex items-center justify-center gap-2 btn-gradient btn-press disabled:opacity-80">
             {submitting
               ? <><Loader2 size={20} className="animate-spin" /> Posting…</>
               : <><CloudUpload size={20} /> Post to Splitwise</>}

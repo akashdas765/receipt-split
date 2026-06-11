@@ -52,18 +52,18 @@ export default function SignupPage() {
   const toggle = (setter) => <button type="button" onClick={() => setter(v => !v)} className="text-slate-400 hover:text-slate-600 shrink-0" />;
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'var(--bg)' }}>
+    <div className="min-h-screen flex items-center justify-center p-4 aurora-bg">
       <div className="w-full max-w-sm">
-        <div className="flex flex-col items-center mb-8">
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4"
-            style={{ background: 'var(--indigo)', boxShadow: '0 8px 24px rgba(99,102,241,0.35)' }}>
+        <div className="flex flex-col items-center mb-8 anim-fade-up">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4 logo-glow anim-float">
             <Receipt size={32} color="#fff" />
           </div>
-          <h1 className="text-2xl font-extrabold text-slate-800">ReceiptSplit</h1>
+          <h1 className="text-3xl font-extrabold text-gradient tracking-tight">ReceiptSplit</h1>
           <p className="text-sm text-slate-400 mt-1">Create your account</p>
         </div>
 
-        <form onSubmit={submit} className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+        <form onSubmit={submit} className="bg-white/90 rounded-3xl p-6 border border-slate-100 anim-fade-up delay-1"
+          style={{ boxShadow: '0 20px 50px rgba(99,102,241,0.10)' }}>
           <Field label="Email" icon={Mail} type="email" value={email} onChange={clear(setEmail)}
             placeholder="you@example.com" autoComplete="email" />
 
@@ -105,20 +105,19 @@ export default function SignupPage() {
           </div>
 
           {error && (
-            <div className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl px-3 py-2 mb-4">
+            <div className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl px-3 py-2 mb-4 anim-pop">
               <AlertCircle size={15} className="text-red-500 shrink-0" />
               <p className="text-xs text-red-600 font-medium">{error}</p>
             </div>
           )}
 
           <button type="submit" disabled={loading}
-            className="w-full py-3 rounded-xl text-white font-bold text-sm transition-opacity disabled:opacity-60"
-            style={{ background: 'var(--indigo)', boxShadow: '0 4px 16px rgba(99,102,241,0.35)' }}>
+            className="w-full py-3 rounded-xl text-white font-bold text-sm btn-gradient btn-press disabled:opacity-60">
             {loading ? 'Creating account…' : 'Create Account'}
           </button>
         </form>
 
-        <p className="text-center text-sm text-slate-500 mt-5">
+        <p className="text-center text-sm text-slate-500 mt-5 anim-fade-up delay-2">
           Already have an account?{' '}
           <button onClick={() => navigate('/login')} className="font-bold" style={{ color: 'var(--indigo)' }}>
             Sign In

@@ -2,12 +2,11 @@ import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Camera, ImagePlus, Sparkles, X, AlertCircle, Loader2, FileText, Plus } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
+import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.js?url';
 import { parseReceiptImage } from '../services/groq';
 import { saveReceipt } from '../services/db';
 
-// Use CDN worker — avoids Vite bundling issues with the PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
 const INDIGO = '#6366f1';
 
@@ -36,15 +35,21 @@ function mergeAndDedup(results) {
 }
 
 async function pdfPageToBase64(file) {
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf      = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const page     = await pdf.getPage(1);
-  const viewport = page.getViewport({ scale: 2.5 });
-  const canvas   = document.createElement('canvas');
-  canvas.width   = viewport.width;
-  canvas.height  = viewport.height;
-  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-  return canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('PDF render timed out')), 15000)
+  );
+  const render = async () => {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf      = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const page     = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 2.5 });
+    const canvas   = document.createElement('canvas');
+    canvas.width   = viewport.width;
+    canvas.height  = viewport.height;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    return canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+  };
+  return Promise.race([render(), timeout]);
 }
 
 async function imageToBase64(file) {

@@ -28,6 +28,7 @@ function displayNames(members) {
 export async function fetchGroups() {
   const res  = await swFetch('/get_groups');
   const data = await res.json();
+  if (!res.ok || data?.error) throw new Error(data?.error || 'Could not load Splitwise groups.');
   return (data.groups || []).map(g => ({
     id:      g.id,
     name:    g.name,
@@ -59,5 +60,22 @@ export async function postExpense({ description, details, groupId, paidAmounts =
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
   });
-  return res.json();
+  const data = await res.json();
+
+  // Splitwise often returns HTTP 200 with an `errors` object instead of a
+  // non-2xx status when it rejects the expense (bad group/user id,
+  // validation failure, etc.) — without checking this, a rejected expense
+  // looked identical to a successful one and the receipt got marked
+  // "approved" even though nothing was posted.
+  if (!res.ok || (data?.errors && Object.keys(data.errors).length > 0)) {
+    const message = data?.errors
+      ? Object.values(data.errors).flat().join(' ')
+      : (data?.error || 'Splitwise rejected the expense.');
+    throw new Error(message);
+  }
+  if (!data?.expenses?.length) {
+    throw new Error('Splitwise did not confirm the expense was created.');
+  }
+
+  return data;
 }

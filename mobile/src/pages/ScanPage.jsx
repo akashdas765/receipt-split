@@ -52,15 +52,6 @@ async function pdfPageToBase64(file) {
   return Promise.race([render(), timeout]);
 }
 
-async function imageToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader   = new FileReader();
-    reader.onload  = e => resolve(e.target.result.split(',')[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 async function imageToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader   = new FileReader();
@@ -70,6 +61,24 @@ async function imageToDataUrl(file) {
   });
 }
 
+// Downscale + re-encode so phone photos (often 5-10MB) don't stall the
+// upload to Groq over a cellular connection. Returns raw base64 (no prefix).
+async function compressImageToBase64(file, maxDim = 1600, quality = 0.85) {
+  const dataUrl = await imageToDataUrl(file);
+  const img = new Image();
+  await new Promise((resolve, reject) => {
+    img.onload  = resolve;
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+  const scale  = Math.min(1, maxDim / Math.max(img.width, img.height));
+  const canvas = document.createElement('canvas');
+  canvas.width  = Math.round(img.width  * scale);
+  canvas.height = Math.round(img.height * scale);
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', quality).split(',')[1];
+}
+
 export default function ScanPage() {
   const navigate   = useNavigate();
   const cameraRef  = useRef(null);
@@ -77,7 +86,7 @@ export default function ScanPage() {
   const addMoreRef   = useRef(null);
   const submittingRef = useRef(false);
 
-  // entries: { id, fingerprint, file, isPdf, preview, pdfB64, rendering }
+  // entries: { id, fingerprint, file, isPdf, preview, pdfB64, imgB64, rendering }
   const [entries, setEntries] = useState([]);
   const [parsing,  setParsing]  = useState(false);
   const [error,    setError]    = useState('');
@@ -108,9 +117,9 @@ export default function ScanPage() {
       }
     } else {
       try {
-        const dataUrl = await imageToDataUrl(f);
+        const b64 = await compressImageToBase64(f);
         setEntries(prev => prev.map(e =>
-          e.id === id ? { ...e, preview: dataUrl, rendering: false } : e
+          e.id === id ? { ...e, imgB64: b64, preview: 'data:image/jpeg;base64,' + b64, rendering: false } : e
         ));
       } catch {
         setEntries(prev => prev.filter(e => e.id !== id));
@@ -135,7 +144,7 @@ export default function ScanPage() {
     try {
       const results = await Promise.all(
         entries.map(async entry => {
-          const base64 = entry.isPdf ? entry.pdfB64 : await imageToBase64(entry.file);
+          const base64 = entry.isPdf ? entry.pdfB64 : entry.imgB64;
           return parseReceiptImage(base64, 'image/jpeg');
         })
       );

@@ -61,24 +61,37 @@ function purchasableSum(parsed) {
 }
 
 async function callGroq(base64, mime, userText) {
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type':  'application/json',
-      'Authorization': `Bearer ${GROQ_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-      messages: [
-        { role: 'system', content: PARSE_SYSTEM },
-        { role: 'user', content: [
-          { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } },
-          { type: 'text', text: userText },
-        ]},
-      ],
-      max_tokens: 4096,
-    }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 45000);
+
+  let res;
+  try {
+    res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        messages: [
+          { role: 'system', content: PARSE_SYSTEM },
+          { role: 'user', content: [
+            { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } },
+            { type: 'text', text: userText },
+          ]},
+        ],
+        max_tokens: 4096,
+      }),
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('Request timed out. Check your connection and try again.');
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
   const data = await res.json();
   if (!res.ok) throw new Error(data?.error?.message || 'Groq API error');
   return JSON.parse(stripFences(data.choices[0].message.content));

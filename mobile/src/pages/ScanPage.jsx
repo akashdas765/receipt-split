@@ -83,31 +83,38 @@ async function fileToBase64Raw(file) {
 
 // Downscale + re-encode so phone photos (often 5-10MB) don't stall the
 // upload to Groq over a cellular connection. Returns { b64, mime }.
-// Falls back to the original file untouched if decoding hangs or fails
-// (e.g. an exotic format) — a slow upload beats a stuck spinner.
+// Falls back to the original file untouched if decoding fails (e.g. an
+// exotic format) — a slow upload beats a stuck spinner. A single timeout
+// wraps BOTH the decode attempt and the fallback: if the file itself is
+// slow to read (e.g. an iCloud photo that hasn't finished downloading to
+// the device), no code path here can outrun that, so there must be one
+// absolute ceiling that always surfaces an error instead of hanging.
 async function compressImageToBase64(file, maxDim = 1600, quality = 0.85) {
   const timeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('Image decode timed out')), 20000)
+    setTimeout(() => reject(new Error(
+      'Photo took too long to load. If it’s stored in iCloud, open it in Photos first so it downloads, then try again.'
+    )), 25000)
   );
-  const compress = async () => {
-    const bitmap = await createImageBitmap(file);
+
+  const attempt = async () => {
     try {
-      const scale  = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
-      const canvas = document.createElement('canvas');
-      canvas.width  = Math.round(bitmap.width  * scale);
-      canvas.height = Math.round(bitmap.height * scale);
-      canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      return { b64: canvas.toDataURL('image/jpeg', quality).split(',')[1], mime: 'image/jpeg' };
-    } finally {
-      bitmap.close();
+      const bitmap = await createImageBitmap(file);
+      try {
+        const scale  = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+        const canvas = document.createElement('canvas');
+        canvas.width  = Math.round(bitmap.width  * scale);
+        canvas.height = Math.round(bitmap.height * scale);
+        canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        return { b64: canvas.toDataURL('image/jpeg', quality).split(',')[1], mime: 'image/jpeg' };
+      } finally {
+        bitmap.close();
+      }
+    } catch {
+      return { b64: await fileToBase64Raw(file), mime: file.type || 'image/jpeg' };
     }
   };
 
-  try {
-    return await Promise.race([compress(), timeout]);
-  } catch {
-    return { b64: await fileToBase64Raw(file), mime: file.type || 'image/jpeg' };
-  }
+  return Promise.race([attempt(), timeout]);
 }
 
 export default function ScanPage() {
@@ -152,9 +159,9 @@ export default function ScanPage() {
         setEntries(prev => prev.map(e =>
           e.id === id ? { ...e, imgB64: b64, imgMime: mime, preview: `data:${mime};base64,` + b64, rendering: false } : e
         ));
-      } catch {
+      } catch (err) {
         setEntries(prev => prev.filter(e => e.id !== id));
-        setError('Could not load image. Try a different file.');
+        setError(err?.message || 'Could not load image. Try a different file.');
       }
     }
   };

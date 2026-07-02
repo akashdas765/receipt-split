@@ -76,45 +76,9 @@ async function imageToDataUrl(file) {
   });
 }
 
-async function fileToBase64Raw(file) {
+async function imageToBase64(file) {
   const dataUrl = await imageToDataUrl(file);
   return dataUrl.split(',')[1];
-}
-
-// Downscale + re-encode so phone photos (often 5-10MB) don't stall the
-// upload to Groq over a cellular connection. Returns { b64, mime }.
-// Falls back to the original file untouched if decoding fails (e.g. an
-// exotic format) — a slow upload beats a stuck spinner. A single timeout
-// wraps BOTH the decode attempt and the fallback: if the file itself is
-// slow to read (e.g. an iCloud photo that hasn't finished downloading to
-// the device), no code path here can outrun that, so there must be one
-// absolute ceiling that always surfaces an error instead of hanging.
-async function compressImageToBase64(file, maxDim = 1600, quality = 0.85) {
-  const timeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error(
-      'Photo took too long to load. If it’s stored in iCloud, open it in Photos first so it downloads, then try again.'
-    )), 25000)
-  );
-
-  const attempt = async () => {
-    try {
-      const bitmap = await createImageBitmap(file);
-      try {
-        const scale  = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
-        const canvas = document.createElement('canvas');
-        canvas.width  = Math.round(bitmap.width  * scale);
-        canvas.height = Math.round(bitmap.height * scale);
-        canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-        return { b64: canvas.toDataURL('image/jpeg', quality).split(',')[1], mime: 'image/jpeg' };
-      } finally {
-        bitmap.close();
-      }
-    } catch {
-      return { b64: await fileToBase64Raw(file), mime: file.type || 'image/jpeg' };
-    }
-  };
-
-  return Promise.race([attempt(), timeout]);
 }
 
 export default function ScanPage() {
@@ -124,7 +88,7 @@ export default function ScanPage() {
   const addMoreRef   = useRef(null);
   const submittingRef = useRef(false);
 
-  // entries: { id, fingerprint, file, isPdf, preview, pdfB64, imgB64, rendering }
+  // entries: { id, fingerprint, file, isPdf, preview, pdfB64, rendering }
   const [entries, setEntries] = useState([]);
   const [parsing,  setParsing]  = useState(false);
   const [error,    setError]    = useState('');
@@ -155,9 +119,9 @@ export default function ScanPage() {
       }
     } else {
       try {
-        const { b64, mime } = await compressImageToBase64(f);
+        const dataUrl = await imageToDataUrl(f);
         setEntries(prev => prev.map(e =>
-          e.id === id ? { ...e, imgB64: b64, imgMime: mime, preview: `data:${mime};base64,` + b64, rendering: false } : e
+          e.id === id ? { ...e, preview: dataUrl, rendering: false } : e
         ));
       } catch (err) {
         setEntries(prev => prev.filter(e => e.id !== id));
@@ -185,8 +149,8 @@ export default function ScanPage() {
     try {
       const results = await Promise.all(
         entries.map(async entry => {
-          const base64 = entry.isPdf ? entry.pdfB64 : entry.imgB64;
-          const mime   = entry.isPdf ? 'image/jpeg' : (entry.imgMime || 'image/jpeg');
+          const base64 = entry.isPdf ? entry.pdfB64 : await imageToBase64(entry.file);
+          const mime   = entry.isPdf ? 'image/jpeg' : (entry.file.type || 'image/jpeg');
           return parseReceiptImage(base64, mime);
         })
       );

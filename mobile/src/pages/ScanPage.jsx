@@ -36,18 +36,33 @@ function mergeAndDedup(results) {
 
 async function pdfPageToBase64(file) {
   const timeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('PDF render timed out')), 15000)
+    setTimeout(() => reject(new Error('PDF render timed out')), 20000)
   );
   const render = async () => {
     const arrayBuffer = await file.arrayBuffer();
-    const pdf      = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    const page     = await pdf.getPage(1);
-    const viewport = page.getViewport({ scale: 2.5 });
-    const canvas   = document.createElement('canvas');
-    canvas.width   = viewport.width;
-    canvas.height  = viewport.height;
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-    return canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    try {
+      const page = await pdf.getPage(1);
+
+      // Cap the rendered canvas size — mobile Safari silently hangs/crashes
+      // the worker on very large canvases (multi-page scan apps often
+      // produce oversized PDFs).
+      let scale    = 2.5;
+      let viewport = page.getViewport({ scale });
+      const maxDim = 3000;
+      if (Math.max(viewport.width, viewport.height) > maxDim) {
+        scale   *= maxDim / Math.max(viewport.width, viewport.height);
+        viewport = page.getViewport({ scale });
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width  = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      return canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+    } finally {
+      pdf.destroy();
+    }
   };
   return Promise.race([render(), timeout]);
 }
@@ -130,9 +145,12 @@ export default function ScanPage() {
 
   const handleFiles = (fileList) => {
     setError('');
-    Array.from(fileList).forEach(f => {
-      if (f.type.startsWith('image/') || f.type === 'application/pdf') processFile(f);
-    });
+    const files = Array.from(fileList).filter(f => f.type.startsWith('image/') || f.type === 'application/pdf');
+    // Process one at a time — rendering multiple PDFs concurrently spins up
+    // multiple pdf.js workers at once, which reliably hangs on mobile Safari.
+    (async () => {
+      for (const f of files) await processFile(f);
+    })();
   };
 
   const removeEntry = id => setEntries(prev => prev.filter(e => e.id !== id));

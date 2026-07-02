@@ -20,6 +20,31 @@ function equalSplit(total, ids) {
   return Object.fromEntries(ids.map((id, i) => [id, (i === 0 ? each + remainder : each).toFixed(2)]));
 }
 
+// Round each person's owed share to the cent, then push any leftover cents
+// (from rounding each share independently) onto the largest share so the
+// sum matches the rounded grand total exactly. Splitwise computes its own
+// "cost" as the sum of these shares — without this correction, that sum can
+// differ from what our own "Balanced" check compares against (grandTotal),
+// causing Splitwise to reject the expense even though our UI says balanced.
+function roundShares(shares, total) {
+  const ids = Object.keys(shares);
+  if (!ids.length) return {};
+  const rounded = {};
+  let sum = 0;
+  ids.forEach(id => {
+    const r = Math.round(shares[id] * 100) / 100;
+    rounded[id] = r;
+    sum += r;
+  });
+  const target = Math.round(total * 100) / 100;
+  const diff   = Math.round((target - sum) * 100) / 100;
+  if (diff !== 0) {
+    const maxId = ids.reduce((a, b) => (rounded[a] >= rounded[b] ? a : b));
+    rounded[maxId] = Math.round((rounded[maxId] + diff) * 100) / 100;
+  }
+  return rounded;
+}
+
 export default function ApprovePage() {
   const navigate = useNavigate();
   const { state } = useLocation();
@@ -95,17 +120,16 @@ export default function ApprovePage() {
     setError(''); setSubmitting(true);
     try {
       const activeMembers  = members.filter(m => (personTotals[String(m.id)] || 0) > 0);
-      const paidAmountsNum = Object.fromEntries(
-        payerIds.map(id => [id, Math.round((parseFloat(paidAmounts[id]) || 0) * 100) / 100])
+      const paidAmountsNum = roundShares(
+        Object.fromEntries(payerIds.map(id => [id, parseFloat(paidAmounts[id]) || 0])),
+        grandTotal
       );
       await postExpense({
         description:  merchant || 'Receipt',
         details:      buildNote(),
         groupId,
         paidAmounts:  paidAmountsNum,
-        personTotals: Object.fromEntries(
-          Object.entries(personTotals).map(([k, v]) => [k, Math.round(v * 100) / 100])
-        ),
+        personTotals: roundShares(personTotals, grandTotal),
         members: activeMembers,
       });
       if (receiptId) await saveReceipt({ ...state, id: receiptId, approved: true });

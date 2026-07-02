@@ -76,22 +76,38 @@ async function imageToDataUrl(file) {
   });
 }
 
-// Downscale + re-encode so phone photos (often 5-10MB) don't stall the
-// upload to Groq over a cellular connection. Returns raw base64 (no prefix).
-async function compressImageToBase64(file, maxDim = 1600, quality = 0.85) {
+async function fileToBase64Raw(file) {
   const dataUrl = await imageToDataUrl(file);
-  const img = new Image();
-  await new Promise((resolve, reject) => {
-    img.onload  = resolve;
-    img.onerror = reject;
-    img.src = dataUrl;
-  });
-  const scale  = Math.min(1, maxDim / Math.max(img.width, img.height));
-  const canvas = document.createElement('canvas');
-  canvas.width  = Math.round(img.width  * scale);
-  canvas.height = Math.round(img.height * scale);
-  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/jpeg', quality).split(',')[1];
+  return dataUrl.split(',')[1];
+}
+
+// Downscale + re-encode so phone photos (often 5-10MB) don't stall the
+// upload to Groq over a cellular connection. Returns { b64, mime }.
+// Falls back to the original file untouched if decoding hangs or fails
+// (e.g. an exotic format) — a slow upload beats a stuck spinner.
+async function compressImageToBase64(file, maxDim = 1600, quality = 0.85) {
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('Image decode timed out')), 20000)
+  );
+  const compress = async () => {
+    const bitmap = await createImageBitmap(file);
+    try {
+      const scale  = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width  = Math.round(bitmap.width  * scale);
+      canvas.height = Math.round(bitmap.height * scale);
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      return { b64: canvas.toDataURL('image/jpeg', quality).split(',')[1], mime: 'image/jpeg' };
+    } finally {
+      bitmap.close();
+    }
+  };
+
+  try {
+    return await Promise.race([compress(), timeout]);
+  } catch {
+    return { b64: await fileToBase64Raw(file), mime: file.type || 'image/jpeg' };
+  }
 }
 
 export default function ScanPage() {
@@ -132,9 +148,9 @@ export default function ScanPage() {
       }
     } else {
       try {
-        const b64 = await compressImageToBase64(f);
+        const { b64, mime } = await compressImageToBase64(f);
         setEntries(prev => prev.map(e =>
-          e.id === id ? { ...e, imgB64: b64, preview: 'data:image/jpeg;base64,' + b64, rendering: false } : e
+          e.id === id ? { ...e, imgB64: b64, imgMime: mime, preview: `data:${mime};base64,` + b64, rendering: false } : e
         ));
       } catch {
         setEntries(prev => prev.filter(e => e.id !== id));
@@ -163,7 +179,8 @@ export default function ScanPage() {
       const results = await Promise.all(
         entries.map(async entry => {
           const base64 = entry.isPdf ? entry.pdfB64 : entry.imgB64;
-          return parseReceiptImage(base64, 'image/jpeg');
+          const mime   = entry.isPdf ? 'image/jpeg' : (entry.imgMime || 'image/jpeg');
+          return parseReceiptImage(base64, mime);
         })
       );
 
@@ -265,7 +282,7 @@ export default function ScanPage() {
                   {entry.rendering ? (
                     <div className="w-full h-full flex flex-col items-center justify-center gap-2">
                       <Loader2 size={24} className="animate-spin" style={{ color: INDIGO }} />
-                      <span className="text-xs text-slate-400">Rendering PDF…</span>
+                      <span className="text-xs text-slate-400">{entry.isPdf ? 'Rendering PDF…' : 'Loading photo…'}</span>
                     </div>
                   ) : (
                     <img

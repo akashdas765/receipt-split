@@ -81,12 +81,38 @@ async function imageToBase64(file) {
   return dataUrl.split(',')[1];
 }
 
+const GROQ_SUPPORTED_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
+// Groq's vision API rejects HEIC/HEIF (and anything else outside the
+// standard web formats) with a 400. Re-encode those to JPEG via canvas;
+// leave already-supported formats untouched (no need to pay the decode
+// cost when it isn't necessary).
+async function toGroqCompatible(file) {
+  if (GROQ_SUPPORTED_MIMES.has(file.type)) {
+    return { b64: await imageToBase64(file), mime: file.type };
+  }
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width  = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext('2d').drawImage(bitmap, 0, 0);
+    return { b64: canvas.toDataURL('image/jpeg', 0.92).split(',')[1], mime: 'image/jpeg' };
+  } finally {
+    bitmap.close();
+  }
+}
+
 export default function ScanPage() {
   const navigate   = useNavigate();
   const cameraRef  = useRef(null);
   const fileRef    = useRef(null);
   const addMoreRef   = useRef(null);
   const submittingRef = useRef(false);
+  // Tracks fingerprints of currently-present entries. Checked synchronously
+  // (not derived inside a setEntries updater) so it can't be affected by how
+  // many times or in what order React invokes that updater.
+  const fingerprintsRef = useRef(new Set());
 
   // entries: { id, fingerprint, file, isPdf, preview, pdfB64, rendering }
   const [entries, setEntries] = useState([]);
@@ -95,17 +121,13 @@ export default function ScanPage() {
   const [dragging, setDragging] = useState(false);
 
   const processFile = async (f) => {
-    const id          = `${Date.now()}-${Math.random()}`;
-    const isPdf       = f.type === 'application/pdf';
     const fingerprint = `${f.name}-${f.size}-${f.lastModified}`;
+    if (fingerprintsRef.current.has(fingerprint)) return;
+    fingerprintsRef.current.add(fingerprint);
 
-    let added = false;
-    setEntries(prev => {
-      if (prev.some(e => e.fingerprint === fingerprint)) return prev;
-      added = true;
-      return [...prev, { id, fingerprint, file: f, isPdf, preview: null, pdfB64: null, rendering: true }];
-    });
-    if (!added) return;
+    const id    = `${Date.now()}-${Math.random()}`;
+    const isPdf = f.type === 'application/pdf';
+    setEntries(prev => [...prev, { id, fingerprint, file: f, isPdf, preview: null, pdfB64: null, rendering: true }]);
 
     if (isPdf) {
       try {
@@ -114,6 +136,7 @@ export default function ScanPage() {
           e.id === id ? { ...e, pdfB64: b64, preview: 'data:image/jpeg;base64,' + b64, rendering: false } : e
         ));
       } catch {
+        fingerprintsRef.current.delete(fingerprint);
         setEntries(prev => prev.filter(e => e.id !== id));
         setError('Could not render PDF. Make sure it is a valid, non-encrypted PDF.');
       }
@@ -124,6 +147,7 @@ export default function ScanPage() {
           e.id === id ? { ...e, preview: dataUrl, rendering: false } : e
         ));
       } catch (err) {
+        fingerprintsRef.current.delete(fingerprint);
         setEntries(prev => prev.filter(e => e.id !== id));
         setError(err?.message || 'Could not load image. Try a different file.');
       }
@@ -140,7 +164,13 @@ export default function ScanPage() {
     })();
   };
 
-  const removeEntry = id => setEntries(prev => prev.filter(e => e.id !== id));
+  const removeEntry = id => {
+    setEntries(prev => {
+      const removed = prev.find(e => e.id === id);
+      if (removed) fingerprintsRef.current.delete(removed.fingerprint);
+      return prev.filter(e => e.id !== id);
+    });
+  };
 
   const submit = async () => {
     if (!entries.length || submittingRef.current) return;
@@ -149,9 +179,9 @@ export default function ScanPage() {
     try {
       const results = await Promise.all(
         entries.map(async entry => {
-          const base64 = entry.isPdf ? entry.pdfB64 : await imageToBase64(entry.file);
-          const mime   = entry.isPdf ? 'image/jpeg' : (entry.file.type || 'image/jpeg');
-          return parseReceiptImage(base64, mime);
+          if (entry.isPdf) return parseReceiptImage(entry.pdfB64, 'image/jpeg');
+          const { b64, mime } = await toGroqCompatible(entry.file);
+          return parseReceiptImage(b64, mime);
         })
       );
 

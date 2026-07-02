@@ -73,9 +73,10 @@ export async function postExpense({ description, details, groupId, paidAmounts =
       : (data?.error || 'Splitwise rejected the expense.');
     throw new Error(message);
   }
-  if (!data?.expenses?.length) {
+  const expense = data?.expenses?.[0];
+  if (!expense?.id) {
     throw new Error('Splitwise did not confirm the expense was created.');
   }
 
-  return data;
+  return expense;
 }

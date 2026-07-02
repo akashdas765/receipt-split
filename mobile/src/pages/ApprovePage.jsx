@@ -124,7 +124,7 @@ export default function ApprovePage() {
         Object.fromEntries(payerIds.map(id => [id, parseFloat(paidAmounts[id]) || 0])),
         grandTotal
       );
-      await postExpense({
+      const expense = await postExpense({
         description:  merchant || 'Receipt',
         details:      buildNote(),
         groupId,
@@ -132,7 +132,12 @@ export default function ApprovePage() {
         personTotals: roundShares(personTotals, grandTotal),
         members: activeMembers,
       });
-      if (receiptId) await saveReceipt({ ...state, id: receiptId, approved: true });
+      // Only mark a receipt "posted" when Splitwise actually gave back a
+      // transaction id — that id is the proof, not just a resolved promise.
+      if (!expense?.id) throw new Error('Splitwise did not confirm the expense was created.');
+      if (receiptId) {
+        await saveReceipt({ ...state, id: receiptId, approved: true, splitwise_expense_id: expense.id });
+      }
       navigate('/');
     } catch (err) {
       setError(err?.message || 'Could not post to Splitwise. Try again.');

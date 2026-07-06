@@ -5,12 +5,16 @@ import { postExpense } from '../services/splitwise';
 import { saveReceipt } from '../services/db';
 
 const INDIGO = '#6366f1';
-const AVATAR_COLORS = ['#6366f1','#8b5cf6','#ec4899','#14b8a6','#f59e0b','#10b981','#f97316','#06b6d4','#84cc16','#a855f7'];
+// Ordered for max adjacent CVD separation (validated via dataviz skill) —
+// keep this order intact, don't re-sort alphabetically or by hue.
+const AVATAR_COLORS = ['#ef4444','#10b981','#a855f7','#f59e0b','#0ea5e9','#ec4899','#22c55e','#6366f1','#f97316','#14b8a6','#d946ef','#84cc16','#3b82f6'];
 
-function memberColor(name = '') {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
-  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
+// Color by position in the group roster, not a name hash — guarantees every
+// member gets a distinct color (up to AVATAR_COLORS.length) instead of
+// colliding whenever two names hash to the same slot.
+function memberColor(memberId, members) {
+  const idx = members.findIndex(m => String(m.id) === String(memberId));
+  return AVATAR_COLORS[(idx < 0 ? 0 : idx) % AVATAR_COLORS.length];
 }
 
 function equalSplit(total, ids) {
@@ -119,7 +123,11 @@ export default function ApprovePage() {
     }
     setError(''); setSubmitting(true);
     try {
-      const activeMembers  = members.filter(m => (personTotals[String(m.id)] || 0) > 0);
+      // Include payers even if they weren't assigned any items (owed_share
+      // will be 0) — otherwise their paid_share is silently omitted from the
+      // Splitwise request and the expense fails to balance.
+      const payerIdSet     = new Set(payerIds);
+      const activeMembers  = members.filter(m => (personTotals[String(m.id)] || 0) > 0 || payerIdSet.has(String(m.id)));
       const paidAmountsNum = roundShares(
         Object.fromEntries(payerIds.map(id => [id, parseFloat(paidAmounts[id]) || 0])),
         grandTotal
@@ -186,7 +194,7 @@ export default function ApprovePage() {
             ) : (
               <div className="flex flex-col gap-2 stagger">
                 {membersWithAmounts.map(m => {
-                  const color = memberColor(m.name);
+                  const color = memberColor(m.id, members);
                   return (
                     <div key={m.id} className="bg-white rounded-xl px-4 py-3 flex items-center gap-3 border border-slate-100 shadow-sm anim-fade-up card-lift">
                       <div className="w-9 h-9 rounded-full flex items-center justify-center text-white font-extrabold text-sm shrink-0"
@@ -208,7 +216,7 @@ export default function ApprovePage() {
             <div className="flex flex-wrap gap-2">
               {members.map(m => {
                 const mid      = String(m.id);
-                const color    = memberColor(m.name);
+                const color    = memberColor(m.id, members);
                 const selected = paidAmounts[mid] !== undefined;
                 return (
                   <button key={m.id} onClick={() => togglePayer(m.id)}
@@ -245,7 +253,7 @@ export default function ApprovePage() {
               <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
                 {payerIds.map((mid, idx) => {
                   const m     = members.find(m => String(m.id) === mid);
-                  const color = memberColor(m?.name || '');
+                  const color = memberColor(mid, members);
                   return (
                     <div key={mid}
                       className={`flex items-center gap-3 px-4 py-3 ${idx < payerIds.length - 1 ? 'border-b border-slate-100' : ''}`}>

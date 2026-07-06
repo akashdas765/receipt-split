@@ -6,12 +6,16 @@ import { fetchGroups } from '../services/splitwise';
 const INDIGO  = '#6366f1';
 const EMERALD = '#10b981';
 const CATS    = ['food', 'drink', 'alcohol', 'fee', 'tip', 'other'];
-const AVATAR_COLORS = ['#6366f1','#8b5cf6','#ec4899','#14b8a6','#f59e0b','#10b981','#f97316','#06b6d4','#84cc16','#a855f7'];
+// Ordered for max adjacent CVD separation (validated via dataviz skill) —
+// keep this order intact, don't re-sort alphabetically or by hue.
+const AVATAR_COLORS = ['#ef4444','#10b981','#a855f7','#f59e0b','#0ea5e9','#ec4899','#22c55e','#6366f1','#f97316','#14b8a6','#d946ef','#84cc16','#3b82f6'];
 
-function memberColor(name = '') {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
-  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
+// Color by position in the group roster, not a name hash — guarantees every
+// member gets a distinct color (up to AVATAR_COLORS.length) instead of
+// colliding whenever two names hash to the same slot.
+function memberColor(memberId, members) {
+  const idx = members.findIndex(m => String(m.id) === String(memberId));
+  return AVATAR_COLORS[(idx < 0 ? 0 : idx) % AVATAR_COLORS.length];
 }
 
 const FOOD_CATS = ['food', 'drink'];
@@ -22,12 +26,24 @@ function isTaxable(item, isGrocery) {
 }
 
 // Normalize items coming from Firestore (old format used split_members string[])
+// and from OCR (which only has quantity + line-total amount, no unit price).
 function normalizeItems(rawItems) {
-  return (rawItems || []).map(item => ({
-    ...item,
-    split_shares: item.split_shares ||
-      Object.fromEntries((item.split_members || []).map(id => [id, 1])),
-  }));
+  return (rawItems || []).map(item => {
+    const qty = parseFloat(item.quantity) || 1;
+    return {
+      ...item,
+      split_shares: item.split_shares ||
+        Object.fromEntries((item.split_members || []).map(id => [id, 1])),
+      unit_price: item.unit_price ?? (parseFloat(item.amount) || 0) / qty,
+    };
+  });
+}
+
+// Source of truth for an item's pre-tax total: unit price × quantity, both
+// kept as the raw strings the user is typing so editing one field never
+// clobbers mid-edit text in the other (see updateItem — no parsing on keystroke).
+function lineAmount(item) {
+  return (parseFloat(item.unit_price) || 0) * (parseFloat(item.quantity) || 1);
 }
 
 export default function DetailPage() {
@@ -85,7 +101,7 @@ export default function DetailPage() {
   const addItem     = () => {
     const id = String(Date.now());
     newItemIdRef.current = id;
-    setItems(prev => [...prev, { id, description: 'New item', quantity: 1, amount: 0, category: 'other', tax_exempt: 0, split_shares: {}, split_members: [] }]);
+    setItems(prev => [...prev, { id, description: 'New item', quantity: 1, unit_price: 0, amount: 0, category: 'other', tax_exempt: 0, split_shares: {}, split_members: [] }]);
   };
 
   const toggleMember = (itemId, memberId) => setItems(prev => prev.map(item => {
@@ -125,9 +141,9 @@ export default function DetailPage() {
   const toggleTaxExempt = id => setItems(prev => prev.map(i => i.id === id ? { ...i, tax_exempt: i.tax_exempt ? 0 : 1 } : i));
 
   const txRate = parseFloat(taxRate) / 100 || 0;
-  const subtotalBeforeTax = () => items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
-  const totalTaxAmount    = () => items.reduce((s, i) => s + (isTaxable(i, isGrocery) ? (parseFloat(i.amount) || 0) * txRate : 0), 0);
-  const grandTotal        = () => items.reduce((s, i) => { const b = parseFloat(i.amount) || 0; return s + (isTaxable(i, isGrocery) ? b * (1 + txRate) : b); }, 0);
+  const subtotalBeforeTax = () => items.reduce((s, i) => s + lineAmount(i), 0);
+  const totalTaxAmount    = () => items.reduce((s, i) => s + (isTaxable(i, isGrocery) ? lineAmount(i) * txRate : 0), 0);
+  const grandTotal        = () => items.reduce((s, i) => { const b = lineAmount(i); return s + (isTaxable(i, isGrocery) ? b * (1 + txRate) : b); }, 0);
 
   const calcPersonTotals = () => {
     const totals = {};
@@ -136,7 +152,7 @@ export default function DetailPage() {
       const memberIds = Object.keys(shares).filter(id => (shares[id] || 0) > 0);
       if (!memberIds.length) return;
       const totalShares = memberIds.reduce((s, id) => s + (shares[id] || 0), 0);
-      const b           = parseFloat(item.amount) || 0;
+      const b           = lineAmount(item);
       const lineTotal   = isTaxable(item, isGrocery) ? b * (1 + txRate) : b;
       memberIds.forEach(id => {
         totals[id] = (totals[id] || 0) + (lineTotal * shares[id] / totalShares);
@@ -283,7 +299,7 @@ export default function DetailPage() {
             <div ref={dropdownRef} className="space-y-3 stagger">
               {items.map(item => {
                 const taxable    = isTaxable(item, isGrocery);
-                const base       = parseFloat(item.amount) || 0;
+                const base       = lineAmount(item);
                 const lineTotal  = taxable ? base * (1 + txRate) : base;
                 const shares     = item.split_shares || {};
                 const assignedIds = Object.keys(shares).filter(id => shares[id] > 0);
@@ -305,15 +321,16 @@ export default function DetailPage() {
                     <div className="flex items-center gap-2 mb-3 flex-wrap">
                       <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
                         <span className="text-xs text-slate-400 font-semibold">Qty</span>
-                        <input type="number" value={item.quantity} min="1"
-                          onChange={e => updateItem(item.id, 'quantity', parseInt(e.target.value) || 1)}
+                        <input type="number" value={item.quantity} min="0"
+                          onChange={e => updateItem(item.id, 'quantity', e.target.value === '' ? '0' : e.target.value)}
+                          onBlur={() => { if (!parseFloat(item.quantity)) updateItem(item.id, 'quantity', 1); }}
                           className="w-10 text-sm font-bold text-slate-800 bg-transparent outline-none text-center" />
                       </div>
                       <span className="text-slate-300 font-bold text-sm">×</span>
                       <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
                         <span className="text-xs text-slate-400 font-semibold">$</span>
-                        <input type="number" value={item.amount} min="0" step="0.01"
-                          onChange={e => updateItem(item.id, 'amount', e.target.value)}
+                        <input type="number" value={item.unit_price} min="0" step="0.01"
+                          onChange={e => updateItem(item.id, 'unit_price', e.target.value)}
                           className="w-16 text-sm font-bold text-slate-800 bg-transparent outline-none text-center" />
                       </div>
                       <span className="text-slate-300 font-bold text-sm">=</span>
@@ -354,7 +371,7 @@ export default function DetailPage() {
                         const mid        = String(m.id);
                         const shareCount = shares[mid] || 0;
                         const active     = shareCount > 0;
-                        const color      = memberColor(m.name);
+                        const color      = memberColor(m.id, members);
                         const totalShares = assignedIds.reduce((s, id) => s + (shares[id] || 0), 0);
 
                         return (
@@ -424,7 +441,7 @@ export default function DetailPage() {
               receiptId:    receipt.id,
               groupId:      selectedGroup,
               members,
-              items,
+              items:        items.map(i => ({ ...i, amount: lineAmount(i) })),
               personTotals: calcPersonTotals(),
               grandTotal:   grandTotal(),
               merchant:     merchant || receipt.merchant,

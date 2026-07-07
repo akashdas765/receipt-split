@@ -1,14 +1,26 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Camera, ImagePlus, Sparkles, X, AlertCircle, Loader2, FileText, Plus } from 'lucide-react';
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.js?url';
 import { parseReceiptImage } from '../services/groq';
 import { saveReceipt } from '../services/db';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
-
 const INDIGO = '#6366f1';
+
+// pdfjs-dist + its ~1MB worker are only needed by the (uncommon) PDF upload
+// path — load them on first use instead of bundling into the initial page load.
+let pdfjsLibPromise = null;
+function loadPdfjs() {
+  if (!pdfjsLibPromise) {
+    pdfjsLibPromise = Promise.all([
+      import('pdfjs-dist'),
+      import('pdfjs-dist/build/pdf.worker.min.js?url'),
+    ]).then(([pdfjsLib, workerUrlModule]) => {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrlModule.default;
+      return pdfjsLib;
+    });
+  }
+  return pdfjsLibPromise;
+}
 
 // Merge items from multiple parsed images, removing cross-image duplicates.
 // Items within the same image are kept as-is (same item can legitimately
@@ -39,6 +51,7 @@ async function pdfPageToBase64(file) {
     setTimeout(() => reject(new Error('PDF render timed out')), 20000)
   );
   const render = async () => {
+    const pdfjsLib = await loadPdfjs();
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     try {

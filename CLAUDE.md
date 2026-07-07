@@ -10,7 +10,8 @@ All commands run from `mobile/`:
 npm run dev        # local dev server (Vite)
 npm run build      # production build → dist/
 npm run preview    # preview production build locally
-netlify deploy --prod  # build + deploy to Netlify
+netlify deploy --prod  # build + deploy to Netlify (dormant, kept in sync but not primary)
+vercel --prod          # build + deploy to Vercel (primary deploy target)
 ```
 
 ## Architecture
@@ -20,7 +21,7 @@ netlify deploy --prod  # build + deploy to Netlify
 ### User flow
 
 1. **Login/Signup** — Firebase Auth. The user's Splitwise API key is stored in Firestore (`users/{uid}.splitwise_api_key`) and loaded into the in-memory `session` singleton on login.
-2. **ScanPage** — User uploads an image or PDF. PDFs are rendered to JPEG via pdf.js before being sent. The image is passed as base64 to Mistral `pixtral-12b-2409`, which returns structured JSON (merchant, date, items, subtotal, tax, total). If the item sum is >12% off the subtotal, a second Mistral call is made with a correction prompt. The parsed receipt is saved to Firestore and the user is navigated to DetailPage.
+2. **ScanPage** — User uploads an image or PDF. PDFs are rendered to JPEG via pdf.js (loaded lazily, only on first PDF upload) before being sent. The image is passed as base64 to Groq's `meta-llama/llama-4-scout-17b-16e-instruct`, which returns structured JSON (merchant, date, items, subtotal, tax, total). If the item sum is >12% off the subtotal, a second Groq call is made with a correction prompt. The parsed receipt is saved to Firestore and the user is navigated to DetailPage.
 3. **DetailPage** — User assigns each line item to group members (fetched from Splitwise), sets a tax rate, and toggles individual items as tax-exempt. `grandTotal()` is recalculated live from items × (1 + taxRate). Grocery mode exempts `food` and `drink` category items from tax.
 4. **ApprovePage** — Shows the per-person split. User picks who paid, then `postExpense` POSTs to Splitwise. On success the receipt is saved back to Firestore with `approved: true` and `grandTotal`.
 
@@ -31,14 +32,14 @@ netlify deploy --prod  # build + deploy to Netlify
 | `src/services/firebase.js` | Firebase app init; exports `auth` and `db` |
 | `src/services/auth.js` | signup / login / logout wrapping Firebase Auth; sets `session` |
 | `src/services/session.js` | In-memory singleton holding `splitwiseKey` and `userId` — cleared on logout |
-| `src/services/db.js` | Firestore CRUD for receipts under `users/{uid}/receipts` |
-| `src/services/mistral.js` | Calls Mistral vision API; handles retry logic and strips tax/subtotal lines from item list |
-| `src/services/splitwise.js` | `fetchGroups` and `postExpense`; all requests go through the Netlify proxy to avoid CORS |
+| `src/services/db.js` | Firestore CRUD for receipts under `users/{uid}/receipts`, paginated (20/page) |
+| `src/services/groq.js` | Calls Groq's vision API; handles retry logic and strips tax/subtotal lines from item list |
+| `src/services/splitwise.js` | `fetchGroups` and `postExpense`; all requests go through the CORS proxy (`postExpense` calls Splitwise's `update_expense` instead of `create_expense` when re-posting an already-approved receipt, to avoid duplicating it) |
 | `src/config.js` | Re-exports `VITE_*` env vars as named constants |
 
 ### Splitwise CORS proxy
 
-Splitwise doesn't allow browser requests. The Netlify function at `netlify/functions/splitwise.js` proxies all Splitwise API calls. The client passes the user's key via the `x-splitwise-key` request header; the function forwards it as `Authorization: Bearer`.
+Splitwise doesn't allow browser requests. `shared/splitwiseProxy.js` holds the actual proxy logic (validates the request, forwards to Splitwise, returns the response) as a framework-agnostic function; both `netlify/functions/splitwise.js` and `api/splitwise.js` (Vercel) are thin adapters around it, so the two deploy targets can't drift out of sync. The client passes the user's key via the `x-splitwise-key` request header; each adapter forwards it as `Authorization: Bearer`.
 
 ### Data shape
 
@@ -47,12 +48,6 @@ Receipts stored in Firestore:
 - `grandTotal` — recalculated total (items + tax); written on approval; used for display on HomePage
 - `items[].split_members` — array of Splitwise member ID strings assigned to that item
 - `items[].tax_exempt` — 0 or 1
-
-### Dead code to be aware of
-
-- `src/screens/` — old React Native screens; the app is web-only. These are not imported anywhere.
-- `src/services/storage.js` — uses React Native `AsyncStorage`; replaced by `db.js` (Firestore).
-- `mobile/functions/` — Firebase Cloud Functions version of the Splitwise proxy; replaced by `netlify/functions/splitwise.js`.
 
 ### Environment variables
 

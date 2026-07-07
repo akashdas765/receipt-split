@@ -39,7 +39,7 @@ export async function fetchGroups() {
   }));
 }
 
-export async function postExpense({ description, details, groupId, paidAmounts = {}, personTotals, members }) {
+export async function postExpense({ description, details, groupId, paidAmounts = {}, personTotals, members, expenseId }) {
   // personTotals: { memberId: amount } — only members who owe something
   // paidAmounts:  { memberId: amount } — how much each payer contributed
   const totalAmount = Object.values(personTotals).reduce((s, v) => s + v, 0);
@@ -55,7 +55,10 @@ export async function postExpense({ description, details, groupId, paidAmounts =
     body += `&users__${i}__paid_share=${paid}`;
   });
 
-  const res  = await swFetch('/create_expense', {
+  // Re-posting an already-approved receipt updates the existing Splitwise
+  // expense instead of creating a duplicate one.
+  const path = expenseId ? `/update_expense/${expenseId}` : '/create_expense';
+  const res  = await swFetch(path, {
     method:  'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,

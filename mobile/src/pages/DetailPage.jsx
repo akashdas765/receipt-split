@@ -2,21 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Store, Calendar, List, DollarSign, Trash2, Plus, ChevronDown, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { fetchGroups } from '../services/splitwise';
+import { memberColor } from '../utils/memberColor';
 
 const INDIGO  = '#6366f1';
 const EMERALD = '#10b981';
 const CATS    = ['food', 'drink', 'alcohol', 'fee', 'tip', 'other'];
-// Ordered for max adjacent CVD separation (validated via dataviz skill) —
-// keep this order intact, don't re-sort alphabetically or by hue.
-const AVATAR_COLORS = ['#ef4444','#10b981','#a855f7','#f59e0b','#0ea5e9','#ec4899','#22c55e','#6366f1','#f97316','#14b8a6','#d946ef','#84cc16','#3b82f6'];
-
-// Color by position in the group roster, not a name hash — guarantees every
-// member gets a distinct color (up to AVATAR_COLORS.length) instead of
-// colliding whenever two names hash to the same slot.
-function memberColor(memberId, members) {
-  const idx = members.findIndex(m => String(m.id) === String(memberId));
-  return AVATAR_COLORS[(idx < 0 ? 0 : idx) % AVATAR_COLORS.length];
-}
 
 const FOOD_CATS = ['food', 'drink'];
 function isTaxable(item, isGrocery) {
@@ -445,6 +435,9 @@ export default function DetailPage() {
               personTotals: calcPersonTotals(),
               grandTotal:   grandTotal(),
               merchant:     merchant || receipt.merchant,
+              // Present if this receipt was already posted — re-posting
+              // then updates that expense instead of creating a duplicate.
+              existingExpenseId: receipt.splitwise_expense_id || null,
             }})}
             className="w-full py-3.5 rounded-2xl text-white font-bold text-base flex items-center justify-center gap-2 btn-gradient-emerald btn-press"
           >

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Receipt, LogOut, Plus, Trash2, CheckCheck, Clock } from 'lucide-react';
+import { Receipt, LogOut, Plus, Trash2, CheckCheck, AlertTriangle, X } from 'lucide-react';
 import { logout } from '../services/auth';
 import { loadReceipts, deleteReceipt } from '../services/db';
 
@@ -12,19 +12,40 @@ export default function HomePage() {
   const [receipts,   setReceipts]   = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [cursor,     setCursor]     = useState(null);
+  const [hasMore,    setHasMore]    = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [confirmTarget, setConfirmTarget] = useState(null); // { id, merchant } | null
+  const [deleting,    setDeleting]    = useState(false);
 
   const load = useCallback(async () => {
-    const list = await loadReceipts();
+    const { receipts: list, cursor: next, hasMore: more } = await loadReceipts();
     setReceipts(list);
+    setCursor(next);
+    setHasMore(more);
     setLoading(false);
     setRefreshing(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  const handleDelete = (id, merchant) => {
-    if (!window.confirm(`Remove "${merchant || 'this receipt'}"?`)) return;
-    deleteReceipt(id).then(() => setReceipts(r => r.filter(x => x.id !== id)));
+  const loadMore = async () => {
+    if (!cursor || loadingMore) return;
+    setLoadingMore(true);
+    const { receipts: list, cursor: next, hasMore: more } = await loadReceipts(cursor);
+    setReceipts(r => [...r, ...list]);
+    setCursor(next);
+    setHasMore(more);
+    setLoadingMore(false);
+  };
+
+  const confirmDelete = async () => {
+    if (!confirmTarget) return;
+    setDeleting(true);
+    await deleteReceipt(confirmTarget.id);
+    setReceipts(r => r.filter(x => x.id !== confirmTarget.id));
+    setDeleting(false);
+    setConfirmTarget(null);
   };
 
   const handleLogout = async () => {
@@ -33,6 +54,37 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
+      {/* Delete confirmation modal */}
+      {confirmTarget && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4 anim-fade-in"
+          onClick={() => !deleting && setConfirmTarget(null)}>
+          <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl anim-sheet-up" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-red-50 flex items-center justify-center shrink-0">
+                  <AlertTriangle size={18} className="text-red-500" />
+                </div>
+                <h3 className="font-extrabold text-slate-800 text-base">Remove receipt?</h3>
+              </div>
+              <button onClick={() => setConfirmTarget(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+            </div>
+            <p className="text-sm text-slate-500 mb-5">
+              This will permanently remove <span className="font-semibold text-slate-700">{confirmTarget.merchant || 'this receipt'}</span> from your history.
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmTarget(null)} disabled={deleting}
+                className="flex-1 py-2.5 rounded-xl font-bold text-sm text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors btn-press disabled:opacity-60">
+                Cancel
+              </button>
+              <button onClick={confirmDelete} disabled={deleting}
+                className="flex-1 py-2.5 rounded-xl font-bold text-sm text-white bg-red-500 hover:bg-red-600 transition-colors btn-press disabled:opacity-60">
+                {deleting ? 'Removing…' : 'Remove'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="sticky top-0 z-20 glass">
         <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
@@ -137,7 +189,7 @@ export default function HomePage() {
                     <div className="flex items-center gap-3 shrink-0">
                       <span className="font-bold text-slate-800 text-sm">${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</span>
                       <button
-                        onClick={e => { e.stopPropagation(); handleDelete(r.id, r.merchant); }}
+                        onClick={e => { e.stopPropagation(); setConfirmTarget({ id: r.id, merchant: r.merchant }); }}
                         className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors"
                       >
                         <Trash2 size={15} />
@@ -147,6 +199,16 @@ export default function HomePage() {
                 </button>
               ))}
             </div>
+
+            {hasMore && (
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="w-full mt-3 py-2.5 rounded-xl text-sm font-bold text-slate-500 bg-white border border-slate-100 hover:border-indigo-100 hover:text-indigo-500 transition-colors disabled:opacity-60"
+              >
+                {loadingMore ? 'Loading…' : 'Load more'}
+              </button>
+            )}
           </>
         )}
       </main>

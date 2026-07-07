@@ -3,19 +3,9 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, CloudUpload, AlertCircle, CheckCircle2, Loader2, Equal } from 'lucide-react';
 import { postExpense } from '../services/splitwise';
 import { saveReceipt } from '../services/db';
+import { memberColor } from '../utils/memberColor';
 
 const INDIGO = '#6366f1';
-// Ordered for max adjacent CVD separation (validated via dataviz skill) —
-// keep this order intact, don't re-sort alphabetically or by hue.
-const AVATAR_COLORS = ['#ef4444','#10b981','#a855f7','#f59e0b','#0ea5e9','#ec4899','#22c55e','#6366f1','#f97316','#14b8a6','#d946ef','#84cc16','#3b82f6'];
-
-// Color by position in the group roster, not a name hash — guarantees every
-// member gets a distinct color (up to AVATAR_COLORS.length) instead of
-// colliding whenever two names hash to the same slot.
-function memberColor(memberId, members) {
-  const idx = members.findIndex(m => String(m.id) === String(memberId));
-  return AVATAR_COLORS[(idx < 0 ? 0 : idx) % AVATAR_COLORS.length];
-}
 
 function equalSplit(total, ids) {
   if (!ids.length) return {};
@@ -52,7 +42,7 @@ function roundShares(shares, total) {
 export default function ApprovePage() {
   const navigate = useNavigate();
   const { state } = useLocation();
-  const { receiptId, groupId, members = [], items = [], personTotals = {}, grandTotal = 0, merchant } = state || {};
+  const { receiptId, groupId, members = [], items = [], personTotals = {}, grandTotal = 0, merchant, existingExpenseId } = state || {};
 
   const buildNote = () => {
     const memberMap = {};
@@ -139,6 +129,7 @@ export default function ApprovePage() {
         paidAmounts:  paidAmountsNum,
         personTotals: roundShares(personTotals, grandTotal),
         members: activeMembers,
+        expenseId: existingExpenseId || undefined,
       });
       // Only mark a receipt "posted" when Splitwise actually gave back a
       // transaction id — that id is the proof, not just a resolved promise.
@@ -164,7 +155,7 @@ export default function ApprovePage() {
           <button onClick={() => navigate(-1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-600 btn-press">
             <ArrowLeft size={20} />
           </button>
-          <span className="font-extrabold text-slate-800">Review & Post</span>
+          <span className="font-extrabold text-slate-800">{existingExpenseId ? 'Review & Update' : 'Review & Post'}</span>
         </div>
       </header>
 
@@ -305,8 +296,8 @@ export default function ApprovePage() {
           <button onClick={submit} disabled={submitting}
             className="w-full py-3.5 rounded-2xl text-white font-bold text-base flex items-center justify-center gap-2 btn-gradient btn-press disabled:opacity-80">
             {submitting
-              ? <><Loader2 size={20} className="animate-spin" /> Posting…</>
-              : <><CloudUpload size={20} /> Post to Splitwise</>}
+              ? <><Loader2 size={20} className="animate-spin" /> {existingExpenseId ? 'Updating…' : 'Posting…'}</>
+              : <><CloudUpload size={20} /> {existingExpenseId ? 'Update Splitwise Expense' : 'Post to Splitwise'}</>}
           </button>
         </div>
       </div>

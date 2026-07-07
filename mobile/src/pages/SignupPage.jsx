@@ -49,8 +49,6 @@ export default function SignupPage() {
     }
   };
 
-  const toggle = (setter) => <button type="button" onClick={() => setter(v => !v)} className="text-slate-400 hover:text-slate-600 shrink-0" />;
-
   return (
     <div className="min-h-screen flex items-center justify-center p-4 aurora-bg">
       <div className="w-full max-w-sm">

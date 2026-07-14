@@ -1,4 +1,6 @@
-import { GROQ_API_KEY } from '../config';
+// Requests go through our serverless proxy so the Groq API key never ships
+// in the client bundle (previously a VITE_* env var read straight from here).
+const PROXY = '/.netlify/functions/groq';
 
 const PARSE_SYSTEM = `You are a receipt parsing assistant. Extract ALL purchased line items from the receipt image with exact accuracy. Return valid JSON only — no extra text, no markdown fences.
 
@@ -66,13 +68,10 @@ async function callGroq(base64, mime, userText) {
 
   let res;
   try {
-    res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    res = await fetch(PROXY, {
       method: 'POST',
       signal: controller.signal,
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'meta-llama/llama-4-scout-17b-16e-instruct',
         messages: [
@@ -93,15 +92,15 @@ async function callGroq(base64, mime, userText) {
   }
 
   const data = await res.json();
-  if (!res.ok) throw new Error(data?.error?.message || 'Groq API error');
+  if (!res.ok) {
+    const message = typeof data?.error === 'string' ? data.error : data?.error?.message;
+    throw new Error(message || 'Groq API error');
+  }
   return JSON.parse(stripFences(data.choices[0].message.content));
 }
 
 // base64: raw base64 string (no data URI prefix), mime: 'image/jpeg' or 'image/png'
 export async function parseReceiptImage(base64, mime = 'image/jpeg') {
-  if (!GROQ_API_KEY || GROQ_API_KEY === 'YOUR_GROQ_KEY_HERE') {
-    throw new Error('Add your Groq API key to src/config.js');
-  }
 
   let parsed = await callGroq(base64, mime, 'Parse this receipt and return the JSON.');
 

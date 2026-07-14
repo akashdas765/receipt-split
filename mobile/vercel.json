@@ -1,6 +1,7 @@
 {
   "rewrites": [
     { "source": "/.netlify/functions/splitwise", "destination": "/api/splitwise" },
+    { "source": "/.netlify/functions/groq", "destination": "/api/groq" },
     {
       "source": "/(.*)",
       "has": [{ "type": "header", "key": "accept", "value": ".*text/html.*" }],

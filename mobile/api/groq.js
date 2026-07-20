@@ -6,9 +6,12 @@ export default async function handler(req, res) {
     return;
   }
 
+  const authHeader = req.headers['authorization'];
+  const idToken    = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
   // Vercel auto-parses a JSON request body into req.body — re-stringify to
   // forward it as-is rather than relying on parser/serializer symmetry.
-  const { status, bodyText } = await proxyGroq({ body: JSON.stringify(req.body) });
+  const { status, bodyText } = await proxyGroq({ idToken, body: JSON.stringify(req.body) });
 
   res.status(status).setHeader('Content-Type', 'application/json').send(bodyText);
 }

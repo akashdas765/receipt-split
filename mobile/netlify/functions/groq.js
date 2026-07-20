@@ -5,7 +5,10 @@ export const handler = async (event) => {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
   }
 
-  const { status, bodyText } = await proxyGroq({ body: event.body });
+  const authHeader = event.headers['authorization'] || event.headers['Authorization'];
+  const idToken    = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  const { status, bodyText } = await proxyGroq({ idToken, body: event.body });
 
   return {
     statusCode: status,

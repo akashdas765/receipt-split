@@ -1,5 +1,9 @@
+import { auth } from './firebase';
+
 // Requests go through our serverless proxy so the Groq API key never ships
 // in the client bundle (previously a VITE_* env var read straight from here).
+// The proxy requires a valid Firebase ID token so it can't be used as an
+// anonymous free relay to Groq by anyone who finds the endpoint.
 const PROXY = '/.netlify/functions/groq';
 
 const PARSE_SYSTEM = `You are a receipt parsing assistant. Extract ALL purchased line items from the receipt image with exact accuracy. Return valid JSON only — no extra text, no markdown fences.
@@ -66,12 +70,17 @@ async function callGroq(base64, mime, userText) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45000);
 
+  const idToken = await auth.currentUser?.getIdToken();
+
   let res;
   try {
     res = await fetch(PROXY, {
       method: 'POST',
       signal: controller.signal,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      },
       body: JSON.stringify({
         model: 'meta-llama/llama-4-scout-17b-16e-instruct',
         messages: [

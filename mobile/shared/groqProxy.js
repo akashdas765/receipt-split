@@ -22,14 +22,23 @@ export async function proxyGroq({ idToken, body }) {
     return { status: 500, bodyText: JSON.stringify({ error: 'Server is missing GROQ_API_KEY' }) };
   }
 
-  const groqRes = await fetch(GROQ_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type':  'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body,
-  });
+  // A network-level failure reaching Groq (dropped connection, EPIPE on a
+  // large image body, DNS blip, ...) must not escape as an uncaught
+  // exception — that crashes the whole function and the client sees a
+  // platform error page instead of JSON, which res.json() then chokes on.
+  let groqRes;
+  try {
+    groqRes = await fetch(GROQ_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body,
+    });
+  } catch (err) {
+    return { status: 502, bodyText: JSON.stringify({ error: `Could not reach Groq: ${err.message}` }) };
+  }
 
   return { status: groqRes.status, bodyText: await groqRes.text() };
 }

@@ -82,7 +82,7 @@ async function callGroq(base64, mime, userText) {
         ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
       },
       body: JSON.stringify({
-        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        model: 'qwen/qwen3.6-27b',
         messages: [
           { role: 'system', content: PARSE_SYSTEM },
           { role: 'user', content: [

@@ -70,7 +70,17 @@ async function callGroq(base64, mime, userText) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45000);
 
-  const idToken = await auth.currentUser?.getIdToken();
+  // getIdToken() has known failures in restricted WebKit contexts (e.g. an
+  // installed iOS PWA's storage partitioning) — if it throws, fall back to
+  // an unauthenticated request rather than let a cryptic WebKit error (e.g.
+  // "The string did not match the expected pattern.") leak to the user;
+  // the proxy will then give a clear "Missing or invalid auth token" 401.
+  let idToken;
+  try {
+    idToken = await auth.currentUser?.getIdToken();
+  } catch {
+    idToken = null;
+  }
 
   let res;
   try {

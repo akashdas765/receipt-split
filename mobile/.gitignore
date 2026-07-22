@@ -45,3 +45,4 @@ yarn-error.*
 # Local Netlify folder
 .netlify
 .vercel
+.env*

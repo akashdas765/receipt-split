@@ -9,10 +9,10 @@ export const handler = async (event) => {
   const idToken    = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
   try {
-    const { status, bodyText } = await proxyGroq({ idToken, body: event.body });
+    const { status, bodyText, provider } = await proxyGroq({ idToken, body: event.body });
     return {
       statusCode: status,
-      headers:    { 'Content-Type': 'application/json' },
+      headers:    { 'Content-Type': 'application/json', ...(provider ? { 'X-Ai-Provider': provider } : {}) },
       body:       bodyText,
     };
   } catch (err) {

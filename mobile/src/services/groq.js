@@ -120,7 +120,12 @@ async function callGroq(base64, mime, userText) {
     const message = typeof data?.error === 'string' ? data.error : data?.error?.message;
     throw new Error(message || 'Groq API error');
   }
-  return JSON.parse(stripFences(data.choices[0].message.content));
+  const parsed = JSON.parse(stripFences(data.choices[0].message.content));
+  // Surfaces which provider actually served this request (the proxy falls
+  // back to NVIDIA when Groq is rate-limited) so the UI can let the user
+  // know when that happened.
+  parsed._provider = res.headers.get('X-Ai-Provider') || 'groq';
+  return parsed;
 }
 
 // base64: raw base64 string (no data URI prefix), mime: 'image/jpeg' or 'image/png'

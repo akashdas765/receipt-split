@@ -72,7 +72,7 @@ export async function proxyGroq({ idToken, body }) {
 
   const nvidiaKey = process.env.NVIDIA_API_KEY;
   if (groqRes.status !== 429 || !nvidiaKey) {
-    return { status: groqRes.status, bodyText: await groqRes.text() };
+    return { status: groqRes.status, bodyText: await groqRes.text(), provider: 'groq' };
   }
 
   let nvidiaRes;
@@ -81,8 +81,8 @@ export async function proxyGroq({ idToken, body }) {
   } catch {
     // Fallback itself failed — surface the original Groq rate-limit error
     // rather than a fallback-specific one, since that's the actual cause.
-    return { status: groqRes.status, bodyText: await groqRes.text() };
+    return { status: groqRes.status, bodyText: await groqRes.text(), provider: 'groq' };
   }
 
-  return { status: nvidiaRes.status, bodyText: await nvidiaRes.text() };
+  return { status: nvidiaRes.status, bodyText: await nvidiaRes.text(), provider: 'nvidia' };
 }

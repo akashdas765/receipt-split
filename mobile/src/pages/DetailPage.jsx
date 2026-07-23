@@ -50,6 +50,7 @@ export default function DetailPage() {
   const [taxRate,       setTaxRate]       = useState('7');
   const [loading,       setLoading]       = useState(true);
   const [swError,       setSwError]       = useState('');
+  const [showFallbackNotice, setShowFallbackNotice] = useState(!!receipt?.usedFallback);
   const [openCat,       setOpenCat]       = useState(null);
   const [showBreakdown, setShowBreakdown] = useState(false);
   const dropdownRef  = useRef(null);
@@ -198,6 +199,14 @@ export default function DetailPage() {
             <div className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl px-4 py-3 anim-pop">
               <AlertCircle size={15} className="text-red-500 shrink-0" />
               <p className="text-sm text-red-600 font-medium">{swError}</p>
+            </div>
+          )}
+
+          {showFallbackNotice && (
+            <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 anim-pop">
+              <AlertCircle size={15} className="text-indigo-500 shrink-0" />
+              <p className="text-sm text-indigo-600 font-medium flex-1">Our main AI was at capacity, so this receipt was parsed with a backup model — double-check the items below.</p>
+              <button onClick={() => setShowFallbackNotice(false)} className="text-indigo-400 hover:text-indigo-600 shrink-0"><X size={15} /></button>
             </div>
           )}
 

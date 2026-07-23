@@ -198,8 +198,9 @@ export default function ScanPage() {
         })
       );
 
-      const base     = results[0];
-      const allItems = mergeAndDedup(results);
+      const base          = results[0];
+      const allItems      = mergeAndDedup(results);
+      const usedFallback  = results.some(r => r._provider === 'nvidia');
 
       const receipt = {
         id:         String(Date.now()),
@@ -222,7 +223,9 @@ export default function ScanPage() {
       };
 
       await saveReceipt(receipt);
-      navigate('/detail', { state: receipt });
+      // usedFallback is a one-time UI notice, not real receipt data — kept
+      // out of the object that gets persisted to Firestore.
+      navigate('/detail', { state: { ...receipt, usedFallback } });
     } catch (err) {
       setError(err?.message || 'Could not read receipt. Try a clearer photo or PDF.');
     } finally {

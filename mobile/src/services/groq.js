@@ -101,6 +101,11 @@ async function callGroq(base64, mime, userText) {
           ]},
         ],
         max_tokens: 4096,
+        // qwen3.6-27b is a "thinking" model by default and prepends a
+        // <think>...</think> reasoning block before the actual JSON, which
+        // breaks JSON.parse. Disable reasoning entirely — we just want the
+        // structured answer, not a rationale.
+        reasoning_effort: 'none',
       }),
     });
   } catch (err) {

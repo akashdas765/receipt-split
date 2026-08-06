@@ -65,7 +65,7 @@ export default function DetailPage() {
         setGroups(grps);
         if (grps.length > 0) { setSelectedGroup(grps[0].id); setMembers(grps[0].members); }
       })
-      .catch(() => setSwError('Could not load Splitwise groups. Check your API key.'))
+      .catch(err => setSwError(err?.message || 'Could not load Splitwise groups. Check your API key.'))
       .finally(() => setLoading(false));
   }, []);
 

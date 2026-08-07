@@ -25,6 +25,8 @@ function normalizeItems(rawItems) {
       split_shares: item.split_shares ||
         Object.fromEntries((item.split_members || []).map(id => [id, 1])),
       unit_price: item.unit_price ?? (parseFloat(item.amount) || 0) / qty,
+      split_mode: item.split_mode || 'whole',
+      unit_shares: item.unit_shares || Array.from({ length: Math.max(1, Math.round(qty)) }, () => ({})),
     };
   });
 }
@@ -63,7 +65,7 @@ export default function DetailPage() {
         setGroups(grps);
         if (grps.length > 0) { setSelectedGroup(grps[0].id); setMembers(grps[0].members); }
       })
-      .catch(() => setSwError('Could not load Splitwise groups. Check your API key.'))
+      .catch(err => setSwError(err?.message || 'Could not load Splitwise groups. Check your API key.'))
       .finally(() => setLoading(false));
   }, []);
 
@@ -131,6 +133,37 @@ export default function DetailPage() {
 
   const toggleTaxExempt = id => setItems(prev => prev.map(i => i.id === id ? { ...i, tax_exempt: i.tax_exempt ? 0 : 1 } : i));
 
+  // Per-unit splitting: for items with quantity > 1, each unit can be assigned
+  // to a different subset of members (e.g. 1 of 3 milks to one person, the
+  // other 2 split three ways) instead of the whole line sharing one split.
+  const toggleSplitMode = itemId => setItems(prev => prev.map(item => {
+    if (item.id !== itemId) return item;
+    const qty = Math.max(1, Math.round(parseFloat(item.quantity) || 1));
+    return {
+      ...item,
+      split_mode: item.split_mode === 'unit' ? 'whole' : 'unit',
+      unit_shares: item.unit_shares?.length === qty ? item.unit_shares : Array.from({ length: qty }, () => ({})),
+    };
+  }));
+
+  const toggleUnitMember = (itemId, unitIdx, memberId) => setItems(prev => prev.map(item => {
+    if (item.id !== itemId) return item;
+    const mid = String(memberId);
+    const unitShares = item.unit_shares.map((u, i) => i === unitIdx ? { ...u } : u);
+    const u = unitShares[unitIdx];
+    if (u[mid]) delete u[mid]; else u[mid] = 1;
+    return { ...item, unit_shares: unitShares };
+  }));
+
+  const adjustUnitShare = (itemId, unitIdx, memberId, delta) => setItems(prev => prev.map(item => {
+    if (item.id !== itemId) return item;
+    const mid = String(memberId);
+    const unitShares = item.unit_shares.map((u, i) => i === unitIdx ? { ...u } : u);
+    const u = unitShares[unitIdx];
+    u[mid] = Math.max(1, (u[mid] || 1) + delta);
+    return { ...item, unit_shares: unitShares };
+  }));
+
   const txRate = parseFloat(taxRate) / 100 || 0;
   const subtotalBeforeTax = () => items.reduce((s, i) => s + lineAmount(i), 0);
   const totalTaxAmount    = () => items.reduce((s, i) => s + (isTaxable(i, isGrocery) ? lineAmount(i) * txRate : 0), 0);
@@ -138,13 +171,26 @@ export default function DetailPage() {
 
   const calcPersonTotals = () => {
     const totals = {};
+    const taxMult = item => isTaxable(item, isGrocery) ? (1 + txRate) : 1;
+
     items.forEach(item => {
+      if (item.split_mode === 'unit' && item.unit_shares?.length) {
+        const unitTotal = (parseFloat(item.unit_price) || 0) * taxMult(item);
+        item.unit_shares.forEach(u => {
+          const memberIds = Object.keys(u).filter(id => (u[id] || 0) > 0);
+          if (!memberIds.length) return;
+          const totalShares = memberIds.reduce((s, id) => s + (u[id] || 0), 0);
+          memberIds.forEach(id => {
+            totals[id] = (totals[id] || 0) + (unitTotal * u[id] / totalShares);
+          });
+        });
+        return;
+      }
       const shares    = item.split_shares || {};
       const memberIds = Object.keys(shares).filter(id => (shares[id] || 0) > 0);
       if (!memberIds.length) return;
       const totalShares = memberIds.reduce((s, id) => s + (shares[id] || 0), 0);
-      const b           = lineAmount(item);
-      const lineTotal   = isTaxable(item, isGrocery) ? b * (1 + txRate) : b;
+      const lineTotal   = lineAmount(item) * taxMult(item);
       memberIds.forEach(id => {
         totals[id] = (totals[id] || 0) + (lineTotal * shares[id] / totalShares);
       });
@@ -364,7 +410,66 @@ export default function DetailPage() {
                       )}
                     </div>
 
-                    {/* Member pills */}
+                    {/* Split mode toggle (only meaningful for qty > 1) */}
+                    {Math.round(parseFloat(item.quantity) || 1) > 1 && (
+                      <button onClick={() => toggleSplitMode(item.id)}
+                        className="mb-2 text-xs font-bold px-2.5 py-1 rounded-lg transition-colors hover:bg-indigo-100"
+                        style={{ background: '#eef1fb', color: INDIGO }}>
+                        {item.split_mode === 'unit' ? 'Whole item' : 'Split per unit'}
+                      </button>
+                    )}
+
+                    {item.split_mode === 'unit' ? (
+                      /* Per-unit member pills — each of the `quantity` units gets its own split */
+                      <div className="flex flex-col gap-2.5 pl-3 border-l-2 border-slate-100">
+                        {item.unit_shares.map((u, unitIdx) => {
+                          const unitAssignedIds = Object.keys(u).filter(id => u[id] > 0);
+                          return (
+                            <div key={unitIdx}>
+                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-1">Unit {unitIdx + 1}</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {members.map(m => {
+                                  const mid         = String(m.id);
+                                  const shareCount  = u[mid] || 0;
+                                  const active      = shareCount > 0;
+                                  const color       = memberColor(m.id, members);
+                                  const totalShares = unitAssignedIds.reduce((s, id) => s + (u[id] || 0), 0);
+                                  return (
+                                    <div key={m.id}
+                                      className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border-2 transition-all select-none ${active ? 'anim-pop shadow-md' : 'hover:border-indigo-200'}`}
+                                      style={active
+                                        ? { background: color, borderColor: color, color: '#fff', boxShadow: `0 4px 12px ${color}55` }
+                                        : { background: '#f8faff', borderColor: '#e2e8f0', color: '#64748b' }}>
+                                      {active ? (
+                                        <>
+                                          <span className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-extrabold shrink-0" style={{ background: 'rgba(255,255,255,0.25)' }}>
+                                            {m.name?.[0]?.toUpperCase()}
+                                          </span>
+                                          <button onClick={() => toggleUnitMember(item.id, unitIdx, m.id)} className="font-semibold leading-none">{m.name}</button>
+                                          <button onClick={e => { e.stopPropagation(); adjustUnitShare(item.id, unitIdx, m.id, -1); }}
+                                            className="w-4 h-4 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0 leading-none"
+                                            style={{ background: 'rgba(255,255,255,0.25)' }}>−</button>
+                                          <span className="font-extrabold min-w-[10px] text-center leading-none">{shareCount}</span>
+                                          <button onClick={e => { e.stopPropagation(); adjustUnitShare(item.id, unitIdx, m.id, 1); }}
+                                            className="w-4 h-4 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0 leading-none"
+                                            style={{ background: 'rgba(255,255,255,0.25)' }}>+</button>
+                                          {totalShares > 0 && (
+                                            <span className="text-[10px] opacity-70 leading-none">{Math.round(shareCount / totalShares * 100)}%</span>
+                                          )}
+                                        </>
+                                      ) : (
+                                        <button onClick={() => toggleUnitMember(item.id, unitIdx, m.id)} className="leading-none">{m.name}</button>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                    /* Member pills */
                     <div className="flex flex-wrap gap-1.5">
                       {members.map(m => {
                         const mid        = String(m.id);
@@ -424,6 +529,7 @@ export default function DetailPage() {
                         {assignedIds.length === members.length && members.length > 0 ? 'Clear' : 'All'}
                       </button>
                     </div>
+                    )}
                   </div>
                 );
               })}

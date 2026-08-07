@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Receipt, LogOut, Plus, Trash2, CheckCheck, AlertTriangle, X } from 'lucide-react';
+import { Receipt, LogOut, Plus, Trash2, CheckCheck, AlertTriangle, X, TrendingUp } from 'lucide-react';
 import { logout } from '../services/auth';
 import { loadReceipts, deleteReceipt } from '../services/db';
 
@@ -95,6 +95,13 @@ export default function HomePage() {
             <span className="font-extrabold text-gradient text-base tracking-tight">ReceiptSplit</span>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate('/insights')}
+              className="p-2 rounded-lg text-indigo-400 hover:bg-indigo-50 transition-colors"
+              title="Insights"
+            >
+              <TrendingUp size={18} />
+            </button>
             <button
               onClick={() => navigate('/scan')}
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-white text-sm font-bold btn-gradient btn-press"

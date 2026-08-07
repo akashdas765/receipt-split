@@ -39,6 +39,15 @@ export async function fetchGroups() {
   }));
 }
 
+// Used to identify which Splitwise member id is "me" so we can pull out the
+// user's own share from a receipt's stored personTotals.
+export async function fetchCurrentUser() {
+  const res  = await swFetch('/get_current_user');
+  const data = await res.json();
+  if (!res.ok || data?.error) throw new Error(data?.error || 'Could not load your Splitwise profile.');
+  return { id: String(data.user.id), name: data.user.first_name };
+}
+
 export async function postExpense({ description, details, groupId, paidAmounts = {}, personTotals, members, expenseId }) {
   // personTotals: { memberId: amount } — only members who owe something
   // paidAmounts:  { memberId: amount } — how much each payer contributed

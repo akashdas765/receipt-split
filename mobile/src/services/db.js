@@ -30,6 +30,18 @@ export async function loadReceipts(cursor = null) {
   }
 }
 
+// Single-shot fetch (no pagination) used by the Insights page — analysis
+// wants a broad recent window, not the 20-at-a-time feed the home list uses.
+export async function loadReceiptsForInsights(max = 200) {
+  try {
+    const q    = query(receiptsCol(), orderBy('scanned_at', 'desc'), limit(max));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch {
+    return [];
+  }
+}
+
 export async function saveReceipt(receipt) {
   const { id, ...data } = receipt;
   await setDoc(doc(receiptsCol(), id), data, { merge: true });

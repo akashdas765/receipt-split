@@ -6,6 +6,7 @@ const SW_BASE = 'https://secure.splitwise.com/api/v3.0';
 // do, but there's no reason to leave it open as a general-purpose relay.
 const ALLOWED_PATHS = [
   /^\/get_groups$/,
+  /^\/get_current_user$/,
   /^\/create_expense$/,
   /^\/update_expense\/\d+$/,
 ];

@@ -7,6 +7,7 @@ import {
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { session } from './session';
+import { migrateLegacyPlaidConnection, loadPlaidConnections } from './db';
 
 export async function signup(email, password, splitwiseKey) {
   const cred = await createUserWithEmailAndPassword(auth, email, password);
@@ -24,8 +25,13 @@ export async function login(email, password) {
   const cred = await signInWithEmailAndPassword(auth, email, password);
   const snap = await getDoc(doc(db, 'users', cred.user.uid));
   if (!snap.exists()) throw new Error('User profile not found.');
-  session.setKey(snap.data().splitwise_api_key);
+  const data = snap.data();
+  session.setKey(data.splitwise_api_key);
   session.setUserId(cred.user.uid);
+  try {
+    await migrateLegacyPlaidConnection();
+    session.setPlaidConnections(await loadPlaidConnections());
+  } catch {}
   return cred.user;
 }
 

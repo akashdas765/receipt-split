@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Store, Calendar, List, DollarSign, Trash2, Plus, ChevronDown, CheckCircle2, AlertCircle, X } from 'lucide-react';
+import { Store, Calendar, List, DollarSign, Trash2, Plus, ChevronDown, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { fetchGroups } from '../services/splitwise';
 import { memberColor } from '../utils/memberColor';
+import PageHeader from '../components/PageHeader';
 
 const INDIGO  = '#6366f1';
 const EMERALD = '#10b981';
@@ -203,14 +204,7 @@ export default function DetailPage() {
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
       {/* Header */}
-      <header className="sticky top-0 z-20 glass">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
-          <button onClick={() => navigate('/')} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-600 btn-press">
-            <ArrowLeft size={20} />
-          </button>
-          <span className="font-extrabold text-slate-800">Assign & Split</span>
-        </div>
-      </header>
+      <PageHeader title="Assign & Split" onBack={() => navigate('/')} />
 
       {/* Breakdown modal */}
       {showBreakdown && (

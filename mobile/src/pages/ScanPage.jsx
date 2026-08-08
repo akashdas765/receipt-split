@@ -1,26 +1,12 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Camera, ImagePlus, Sparkles, X, AlertCircle, Loader2, FileText, Plus } from 'lucide-react';
+import { Camera, ImagePlus, Sparkles, X, AlertCircle, Loader2, FileText, Plus } from 'lucide-react';
 import { parseReceiptImage } from '../services/groq';
 import { saveReceipt } from '../services/db';
+import { loadPdfjs } from '../utils/pdfjsLoader';
+import PageHeader from '../components/PageHeader';
 
 const INDIGO = '#6366f1';
-
-// pdfjs-dist + its ~1MB worker are only needed by the (uncommon) PDF upload
-// path — load them on first use instead of bundling into the initial page load.
-let pdfjsLibPromise = null;
-function loadPdfjs() {
-  if (!pdfjsLibPromise) {
-    pdfjsLibPromise = Promise.all([
-      import('pdfjs-dist'),
-      import('pdfjs-dist/build/pdf.worker.min.js?url'),
-    ]).then(([pdfjsLib, workerUrlModule]) => {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrlModule.default;
-      return pdfjsLib;
-    });
-  }
-  return pdfjsLibPromise;
-}
 
 // Merge items from multiple parsed images, removing cross-image duplicates.
 // Items within the same image are kept as-is (same item can legitimately
@@ -239,14 +225,7 @@ export default function ScanPage() {
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
       {/* Header */}
-      <header className="sticky top-0 z-20 glass">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
-          <button onClick={() => navigate('/')} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-600 btn-press">
-            <ArrowLeft size={20} />
-          </button>
-          <span className="font-extrabold text-slate-800">Scan Receipt</span>
-        </div>
-      </header>
+      <PageHeader title="Scan Receipt" onBack={() => navigate('/')} />
 
       <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-6 flex flex-col gap-5">
 

@@ -4,12 +4,16 @@ import { doc, getDoc } from 'firebase/firestore';
 import { onAuthChange } from './services/auth';
 import { db } from './services/firebase';
 import { session } from './services/session';
+import { migrateLegacyPlaidConnection, loadPlaidConnections } from './services/db';
 import LoginPage   from './pages/LoginPage';
 import SignupPage  from './pages/SignupPage';
 import HomePage    from './pages/HomePage';
 import ScanPage    from './pages/ScanPage';
 import DetailPage  from './pages/DetailPage';
 import ApprovePage from './pages/ApprovePage';
+import InsightsPage from './pages/InsightsPage';
+import StatementsPage from './pages/StatementsPage';
+import SearchPage from './pages/SearchPage';
 
 function Spinner() {
   return (
@@ -34,6 +38,10 @@ export default function App() {
             const snap = await getDoc(doc(db, 'users', firebaseUser.uid));
             if (snap.exists()) session.setKey(snap.data().splitwise_api_key);
           } catch {}
+          try {
+            await migrateLegacyPlaidConnection();
+            session.setPlaidConnections(await loadPlaidConnections());
+          } catch {}
         }
         setUser(firebaseUser);
       } else {
@@ -54,6 +62,9 @@ export default function App() {
             <Route path="/scan"    element={<ScanPage />} />
             <Route path="/detail"  element={<DetailPage />} />
             <Route path="/approve" element={<ApprovePage />} />
+            <Route path="/insights" element={<InsightsPage />} />
+            <Route path="/statements" element={<StatementsPage />} />
+            <Route path="/search" element={<SearchPage />} />
             <Route path="*"        element={<Navigate to="/" replace />} />
           </>
         ) : (

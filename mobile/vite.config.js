@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { proxySplitwise } from './shared/splitwiseProxy.js';
 import { proxyGroq } from './shared/groqProxy.js';
+import { proxyPlaid } from './shared/plaidProxy.js';
 
 async function readBody(req) {
   const chunks = [];
@@ -59,6 +60,27 @@ function localFunctionsProxy() {
           return;
         }
 
+        if (url.pathname === '/.netlify/functions/plaid') {
+          if (req.method !== 'POST') {
+            res.statusCode = 405;
+            res.end(JSON.stringify({ error: 'Method not allowed' }));
+            return;
+          }
+          const authHeader = req.headers['authorization'];
+          const idToken    = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+          try {
+            const { status, bodyText } = await proxyPlaid({ idToken, body: await readBody(req) });
+            res.statusCode = status;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(bodyText);
+          } catch (err) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: err.message || 'Unexpected proxy error' }));
+          }
+          return;
+        }
+
         next();
       });
     },
@@ -66,12 +88,22 @@ function localFunctionsProxy() {
 }
 
 export default defineConfig(({ mode }) => {
-  // proxySplitwise/proxyGroq read process.env directly (same as the deployed
-  // functions) — loadEnv with an empty prefix pulls in the non-VITE_ vars
-  // (GROQ_API_KEY, NVIDIA_API_KEY) that Vite otherwise wouldn't expose.
+  // proxySplitwise/proxyGroq (and, transitively, verifyFirebaseToken) read
+  // process.env directly (same as the deployed functions) — loadEnv reads
+  // .env into `env`, but Vite never mirrors any of that into process.env on
+  // its own, VITE_-prefixed or not, so every var these proxies touch has to
+  // be copied over by hand. VITE_FIREBASE_PROJECT_ID is included even though
+  // it's VITE_-prefixed (normally implying "client-exposed, no proxy needed")
+  // because verifyFirebaseToken.js reads it server-side to check the ID
+  // token's audience — omitting it made that check silently reject every
+  // request locally (idToken present and valid, but projectId undefined).
   const env = loadEnv(mode, process.cwd(), '');
-  process.env.GROQ_API_KEY   ??= env.GROQ_API_KEY;
-  process.env.NVIDIA_API_KEY ??= env.NVIDIA_API_KEY;
+  process.env.GROQ_API_KEY            ??= env.GROQ_API_KEY;
+  process.env.NVIDIA_API_KEY          ??= env.NVIDIA_API_KEY;
+  process.env.VITE_FIREBASE_PROJECT_ID ??= env.VITE_FIREBASE_PROJECT_ID;
+  process.env.PLAID_CLIENT_ID         ??= env.PLAID_CLIENT_ID;
+  process.env.PLAID_SECRET            ??= env.PLAID_SECRET;
+  process.env.PLAID_ENV               ??= env.PLAID_ENV;
 
   return {
     plugins: [react(), localFunctionsProxy()],

@@ -1,42 +1,146 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Receipt, LogOut, Plus, Trash2, CheckCheck, AlertTriangle, X } from 'lucide-react';
+import { Receipt, LogOut, Trash2, CheckCheck, AlertTriangle, X, Users, AlertCircle } from 'lucide-react';
 import { logout } from '../services/auth';
-import { loadReceipts, deleteReceipt } from '../services/db';
+import { loadReceiptsForInsights, deleteReceipt } from '../services/db';
+import { fetchCurrentUser, fetchAllExpenses, fetchGroups } from '../services/splitwise';
+import { getMonthRange } from '../utils/statementFormatters';
+import BottomNav from '../components/BottomNav';
+import MonthSlider from '../components/MonthSlider';
 
-const INDIGO  = '#6366f1';
+const INDIGO = '#6366f1';
 const EMERALD = '#10b981';
+const TEAL   = '#14b8a6';
+
+function formatWithCurrency(amount, currencyCode) {
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode }).format(amount);
+  } catch {
+    return `${currencyCode} ${amount.toFixed(2)}`;
+  }
+}
 
 export default function HomePage() {
   const navigate = useNavigate();
-  const [receipts,   setReceipts]   = useState([]);
-  const [loading,    setLoading]    = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [cursor,     setCursor]     = useState(null);
-  const [hasMore,    setHasMore]    = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [confirmTarget, setConfirmTarget] = useState(null); // { id, merchant } | null
-  const [deleting,    setDeleting]    = useState(false);
 
-  const load = useCallback(async () => {
-    const { receipts: list, cursor: next, hasMore: more } = await loadReceipts();
-    setReceipts(list);
-    setCursor(next);
-    setHasMore(more);
-    setLoading(false);
-    setRefreshing(false);
+  // Receipts (added through this app) — loaded once, filtered to the
+  // selected month client-side (same 200-receipt window Insights uses).
+  const [receipts,        setReceipts]        = useState([]);
+  const [loadingReceipts, setLoadingReceipts]  = useState(true);
+
+  // Full Splitwise history — re-fetched per selected month, so it covers
+  // expenses added any way (not just receipts posted through this app).
+  const [myId,             setMyId]             = useState(null);
+  const [groups,            setGroups]           = useState([]);
+  const [splitwiseExpenses, setSplitwiseExpenses] = useState([]);
+  // Splitwise expenses logged in a currency other than USD (e.g. a trip
+  // paid in INR) — kept separate from splitwiseExpenses so they never get
+  // silently summed into the $ totals below (see fetchAllExpenses), but
+  // still shown in the list, in their own currency, clearly marked.
+  const [otherCurrencyExpenses, setOtherCurrencyExpenses] = useState([]);
+  const [loadingSw,         setLoadingSw]         = useState(true);
+
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+
+  const [confirmTarget, setConfirmTarget] = useState(null); // { id, merchant } | null
+  const [deleting,      setDeleting]      = useState(false);
+
+  // Surfaced instead of silently swallowed — if this fails, myId never
+  // resolves, which silently zeroes "Your share" (personTotals lookups all
+  // short-circuit) and skips Splitwise-only expenses entirely, with no
+  // other indication anything went wrong.
+  const [swAuthError, setSwAuthError] = useState('');
+
+  useEffect(() => {
+    loadReceiptsForInsights().then(list => { setReceipts(list); setLoadingReceipts(false); });
+    fetchGroups().then(setGroups).catch(() => {});
+    fetchCurrentUser()
+      .then(u => setMyId(u.id))
+      .catch(err => {
+        // Without myId the Splitwise-fetch effect below never runs (it's
+        // gated on myId being set), so loadingSw would otherwise stay true
+        // forever — stop it here instead of leaving the skeleton spinning.
+        setLoadingSw(false);
+        setSwAuthError(err?.message || 'Could not connect to Splitwise — your share and Splitwise expenses won\'t show until this is fixed.');
+      });
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!myId) return;
+    let cancelled = false;
+    const { start, end } = getMonthRange(currentMonth);
+    setLoadingSw(true);
+    fetchAllExpenses(myId, { datedAfter: start, datedBefore: end })
+      .then(({ expenses, otherCurrencyExpenses }) => {
+        if (cancelled) return;
+        setSplitwiseExpenses(expenses);
+        setOtherCurrencyExpenses(otherCurrencyExpenses);
+      })
+      .catch(() => { if (!cancelled) { setSplitwiseExpenses([]); setOtherCurrencyExpenses([]); } })
+      .finally(() => { if (!cancelled) setLoadingSw(false); });
+    return () => { cancelled = true; };
+  }, [myId, currentMonth]);
 
-  const loadMore = async () => {
-    if (!cursor || loadingMore) return;
-    setLoadingMore(true);
-    const { receipts: list, cursor: next, hasMore: more } = await loadReceipts(cursor);
-    setReceipts(r => [...r, ...list]);
-    setCursor(next);
-    setHasMore(more);
-    setLoadingMore(false);
+  const monthRange = useMemo(() => getMonthRange(currentMonth), [currentMonth]);
+
+  const monthlyReceipts = useMemo(() =>
+    receipts.filter(r => {
+      const d = (r.date || r.scanned_at || '').slice(0, 10);
+      return d >= monthRange.start && d <= monthRange.end;
+    }),
+    [receipts, monthRange]
+  );
+
+  // A receipt posted through this app IS a Splitwise expense — exclude
+  // those from the "pure Splitwise" list so they don't show up twice.
+  const postedExpenseIds = useMemo(() =>
+    new Set(receipts.filter(r => r.approved && r.splitwise_expense_id).map(r => r.splitwise_expense_id)),
+    [receipts]
+  );
+
+  const splitwiseOnly = useMemo(() =>
+    splitwiseExpenses.filter(e => e.myOwedShare > 0 && !postedExpenseIds.has(e.id)),
+    [splitwiseExpenses, postedExpenseIds]
+  );
+
+  // Same as splitwiseOnly, but never summed into any $ total below — see
+  // the currency_code split in fetchAllExpenses.
+  const foreignCurrencyOnly = useMemo(() =>
+    otherCurrencyExpenses.filter(e => e.myOwedShare > 0 && !postedExpenseIds.has(e.id)),
+    [otherCurrencyExpenses, postedExpenseIds]
+  );
+
+  const groupName = id => groups.find(g => g.id === id)?.name;
+
+  const approvedMonthlyReceipts = useMemo(() => monthlyReceipts.filter(r => r.approved), [monthlyReceipts]);
+  const pendingMonthlyReceipts  = useMemo(() => monthlyReceipts.filter(r => !r.approved), [monthlyReceipts]);
+
+  // "Your share" — approved receipts contribute their actual split amount
+  // (personTotals, set at approval — see ApprovePage), not the full group
+  // total, plus every Splitwise-only expense's owed share. Pending receipts
+  // aren't split yet, so their "my share" isn't knowable — kept out of this
+  // total and shown separately below instead of silently inflating it with
+  // a full amount that isn't really "my spend" yet.
+  const myShareTotal =
+    approvedMonthlyReceipts.reduce((s, r) => s + (myId && r.personTotals?.[myId] || 0), 0) +
+    splitwiseOnly.reduce((s, e) => s + (e.myOwedShare || 0), 0);
+  const myShareCount = approvedMonthlyReceipts.length + splitwiseOnly.length;
+
+  const pendingTotal = pendingMonthlyReceipts.reduce((s, r) => s + (r.grandTotal ?? r.total ?? 0), 0);
+
+  const monthCount = monthlyReceipts.length + splitwiseOnly.length + foreignCurrencyOnly.length;
+
+  const reloadMonth = () => {
+    if (!myId) return;
+    setLoadingSw(true);
+    fetchAllExpenses(myId, { datedAfter: monthRange.start, datedBefore: monthRange.end })
+      .then(({ expenses, otherCurrencyExpenses }) => {
+        setSplitwiseExpenses(expenses);
+        setOtherCurrencyExpenses(otherCurrencyExpenses);
+      })
+      .catch(() => { setSplitwiseExpenses([]); setOtherCurrencyExpenses([]); })
+      .finally(() => setLoadingSw(false));
+    loadReceiptsForInsights().then(setReceipts);
   };
 
   const confirmDelete = async () => {
@@ -51,6 +155,8 @@ export default function HomePage() {
   const handleLogout = async () => {
     await logout();
   };
+
+  const loading = loadingReceipts;
 
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
@@ -94,30 +200,22 @@ export default function HomePage() {
             </div>
             <span className="font-extrabold text-gradient text-base tracking-tight">ReceiptSplit</span>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => navigate('/scan')}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-white text-sm font-bold btn-gradient btn-press"
-            >
-              <Plus size={16} />
-              <span className="hidden sm:inline">Scan Receipt</span>
-              <span className="sm:hidden">Scan</span>
-            </button>
-            <button
-              onClick={handleLogout}
-              className="p-2 rounded-lg text-red-400 hover:bg-red-50 transition-colors"
-              title="Logout"
-            >
-              <LogOut size={18} />
-            </button>
-          </div>
+          <button
+            onClick={handleLogout}
+            className="p-2 rounded-lg text-red-400 hover:bg-red-50 transition-colors"
+            title="Logout"
+          >
+            <LogOut size={18} />
+          </button>
         </div>
       </header>
 
+      <MonthSlider currentMonth={currentMonth} onChange={setCurrentMonth} />
+
       {/* Body */}
-      <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-4">
+      <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-4 pb-24">
         {loading ? (
-          <div className="flex flex-col gap-3 pt-8">
+          <div className="flex flex-col gap-3 pt-4">
             {[0, 1, 2].map(i => (
               <div key={i} className="rounded-2xl p-4 bg-white border border-slate-100">
                 <div className="flex items-center gap-3">
@@ -131,87 +229,210 @@ export default function HomePage() {
               </div>
             ))}
           </div>
-        ) : receipts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center anim-scale-in">
-            <div className="w-20 h-20 rounded-3xl bg-indigo-50 flex items-center justify-center mb-4 anim-float">
-              <Receipt size={36} style={{ color: '#a5b4fc' }} />
-            </div>
-            <h2 className="text-lg font-bold text-slate-500 mb-1">No receipts yet</h2>
-            <p className="text-sm text-slate-400">Tap Scan Receipt to get started</p>
-          </div>
         ) : (
           <>
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-xs text-slate-400 font-medium">{receipts.length} receipt{receipts.length !== 1 ? 's' : ''}</p>
-              <button
-                onClick={() => { setRefreshing(true); load(); }}
-                className="text-xs font-semibold transition-colors"
-                style={{ color: INDIGO }}
-              >
-                {refreshing ? 'Refreshing…' : 'Refresh'}
-              </button>
+            {swAuthError && (
+              <div className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl px-4 py-3 mb-4 anim-pop">
+                <AlertCircle size={15} className="text-red-500 shrink-0" />
+                <p className="text-sm text-red-600 font-medium">{swAuthError}</p>
+              </div>
+            )}
+
+            {/* Month total */}
+            <div
+              className="rounded-2xl p-4 mb-4 border border-indigo-100 anim-fade-up"
+              style={{ background: 'linear-gradient(135deg, #eef1fb, #f5f0fe)' }}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">{monthRange.label}</p>
+                  <p className="text-2xl font-extrabold text-slate-800">${myShareTotal.toFixed(2)}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Your share · {myShareCount} transaction{myShareCount !== 1 ? 's' : ''}
+                  </p>
+                </div>
+                <button
+                  onClick={reloadMonth}
+                  className="text-xs font-bold shrink-0 transition-colors"
+                  style={{ color: INDIGO }}
+                >
+                  Refresh
+                </button>
+              </div>
+
+              {pendingMonthlyReceipts.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-indigo-100/60 flex items-center justify-between gap-3">
+                  <span className="text-xs font-bold" style={{ color: '#f59e0b' }}>
+                    +${pendingTotal.toFixed(2)} pending
+                  </span>
+                  <span className="text-xs text-slate-400">
+                    {pendingMonthlyReceipts.length} not yet split — not counted above
+                  </span>
+                </div>
+              )}
             </div>
 
-            <div className="flex flex-col gap-3 stagger">
-              {receipts.map(r => (
-                <button
-                  key={r.id}
-                  onClick={() => navigate('/detail', { state: r })}
-                  className="w-full text-left bg-white rounded-2xl p-4 border border-slate-100 shadow-sm hover:border-indigo-100 card-lift anim-fade-up"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
-                      style={{ background: r.approved
-                        ? 'linear-gradient(135deg, #10b981, #14b8a6)'
-                        : 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                      {r.approved
-                        ? <CheckCheck size={18} color="#fff" />
-                        : <Receipt size={18} color="#fff" />}
-                    </div>
+            {monthCount === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center anim-scale-in">
+                <div className="w-20 h-20 rounded-3xl bg-indigo-50 flex items-center justify-center mb-4 anim-float">
+                  <Receipt size={36} style={{ color: '#a5b4fc' }} />
+                </div>
+                <h2 className="text-lg font-bold text-slate-500 mb-1">Nothing in {monthRange.label}</h2>
+                <p className="text-sm text-slate-400">Scan a receipt or pick another month</p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3 stagger">
+                {monthlyReceipts.map(r => (
+                  <button
+                    key={r.id}
+                    onClick={() => navigate('/detail', { state: r })}
+                    className="w-full text-left bg-white rounded-2xl p-4 border border-slate-100 shadow-sm hover:border-indigo-100 card-lift anim-fade-up"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
+                        style={{ background: r.approved
+                          ? 'linear-gradient(135deg, #10b981, #14b8a6)'
+                          : 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                        {r.approved
+                          ? <CheckCheck size={18} color="#fff" />
+                          : <Receipt size={18} color="#fff" />}
+                      </div>
 
-                    <div className="flex-1 min-w-0">
-                      <p className="font-bold text-slate-800 text-sm truncate">
-                        {r.merchant || 'Unknown merchant'}
-                      </p>
-                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-xs text-slate-400">
-                          {r.date || r.scanned_at?.slice(0, 10)}
-                        </span>
-                        <span className="text-slate-200">·</span>
-                        <span className="text-xs font-semibold" style={{ color: r.approved ? EMERALD : '#f59e0b' }}>
-                          {r.approved ? 'Posted' : 'Pending'}
-                        </span>
-                        <span className="text-slate-200">·</span>
-                        <span className="text-xs text-slate-400">{r.items?.length || 0} items</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-slate-800 text-sm truncate">
+                          {r.merchant || 'Unknown merchant'}
+                        </p>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          <span className="text-xs text-slate-400">
+                            {r.date || r.scanned_at?.slice(0, 10)}
+                          </span>
+                          <span className="text-slate-200">·</span>
+                          <span className="text-xs font-semibold" style={{ color: r.approved ? EMERALD : '#f59e0b' }}>
+                            {r.approved ? 'Posted' : 'Pending'}
+                          </span>
+                          <span className="text-slate-200">·</span>
+                          <span className="text-xs text-slate-400">{r.items?.length || 0} items</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 shrink-0">
+                        <div className="text-right">
+                          {r.approved && myId && r.personTotals?.[myId] != null ? (
+                            <>
+                              <p className="font-bold text-slate-800 text-sm">${r.personTotals[myId].toFixed(2)}</p>
+                              <p className="text-[10px] text-slate-400">of ${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</p>
+                            </>
+                          ) : (
+                            <p className="font-bold text-slate-800 text-sm">${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={e => { e.stopPropagation(); setConfirmTarget({ id: r.id, merchant: r.merchant }); }}
+                          className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                        >
+                          <Trash2 size={15} />
+                        </button>
                       </div>
                     </div>
+                  </button>
+                ))}
 
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className="font-bold text-slate-800 text-sm">${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</span>
-                      <button
-                        onClick={e => { e.stopPropagation(); setConfirmTarget({ id: r.id, merchant: r.merchant }); }}
-                        className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                {/* Splitwise expenses not added through this app — visually
+                    distinct (teal, Users icon, "Splitwise" badge) so it's
+                    clear these weren't scanned here. */}
+                {splitwiseOnly.map(e => (
+                  <div key={e.id} className="w-full bg-white rounded-2xl p-4 border border-teal-100 shadow-sm anim-fade-up flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
+                      style={{ background: 'linear-gradient(135deg, #14b8a6, #0ea5e9)' }}>
+                      <Users size={18} color="#fff" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-slate-800 text-sm truncate">{e.description || 'Splitwise expense'}</p>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <span className="text-xs text-slate-400">{e.date}</span>
+                        <span className="text-slate-200">·</span>
+                        <span className="text-xs font-semibold" style={{ color: TEAL }}>Splitwise</span>
+                        {groupName(e.group_id) && (
+                          <>
+                            <span className="text-slate-200">·</span>
+                            <span className="text-xs text-slate-400 truncate">{groupName(e.group_id)}</span>
+                          </>
+                        )}
+                        {e.addedBy && (
+                          <>
+                            <span className="text-slate-200">·</span>
+                            <span className="text-xs text-slate-400 truncate">Added By {e.addedBy}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="font-bold text-slate-800 text-sm">${e.myOwedShare.toFixed(2)}</p>
+                      {e.cost > e.myOwedShare && (
+                        <p className="text-[10px] text-slate-400">of ${e.cost.toFixed(2)}</p>
+                      )}
                     </div>
                   </div>
-                </button>
-              ))}
-            </div>
+                ))}
 
-            {hasMore && (
-              <button
-                onClick={loadMore}
-                disabled={loadingMore}
-                className="w-full mt-3 py-2.5 rounded-xl text-sm font-bold text-slate-500 bg-white border border-slate-100 hover:border-indigo-100 hover:text-indigo-500 transition-colors disabled:opacity-60"
-              >
-                {loadingMore ? 'Loading…' : 'Load more'}
-              </button>
+                {/* Splitwise expenses logged in a non-USD currency — shown
+                    so they're not silently missing, but never folded into
+                    the $ totals above (mixing currencies would misreport
+                    them, e.g. a ₹3600 expense is not $3600). */}
+                {foreignCurrencyOnly.map(e => (
+                  <div key={e.id} className="w-full bg-white rounded-2xl p-4 border border-amber-100 shadow-sm anim-fade-up flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
+                      style={{ background: 'linear-gradient(135deg, #f59e0b, #f97316)' }}>
+                      <Users size={18} color="#fff" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-slate-800 text-sm truncate">{e.description || 'Splitwise expense'}</p>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <span className="text-xs text-slate-400">{e.date}</span>
+                        <span className="text-slate-200">·</span>
+                        <span className="text-xs font-semibold text-amber-500">Splitwise · {e.currency_code}</span>
+                        {groupName(e.group_id) && (
+                          <>
+                            <span className="text-slate-200">·</span>
+                            <span className="text-xs text-slate-400 truncate">{groupName(e.group_id)}</span>
+                          </>
+                        )}
+                        {e.addedBy && (
+                          <>
+                            <span className="text-slate-200">·</span>
+                            <span className="text-xs text-slate-400 truncate">Added By {e.addedBy}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="font-bold text-slate-800 text-sm">{formatWithCurrency(e.myOwedShare, e.currency_code)}</p>
+                      {e.cost > e.myOwedShare && (
+                        <p className="text-[10px] text-slate-400">of {formatWithCurrency(e.cost, e.currency_code)}</p>
+                      )}
+                      <p className="text-[10px] text-amber-500">not in totals</p>
+                    </div>
+                  </div>
+                ))}
+
+                {loadingSw && (
+                  <div className="rounded-2xl p-4 bg-white border border-slate-100">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl skeleton shrink-0" />
+                      <div className="flex-1 space-y-2">
+                        <div className="h-3.5 w-1/2 rounded-full skeleton" />
+                        <div className="h-3 w-3/4 rounded-full skeleton" />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
           </>
         )}
       </main>
+
+      <BottomNav />
     </div>
   );
 }

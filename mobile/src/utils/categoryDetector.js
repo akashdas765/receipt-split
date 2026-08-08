@@ -103,3 +103,22 @@ export function getCategoryIcon(cat) {
 }
 
 export const ALL_CATEGORIES = Object.keys(CATEGORIES);
+
+// Receipt line items use a small closed set of categories (see groq.js's
+// PARSE_SYSTEM prompt: food/drink/alcohol/tip/fee/other) — a different,
+// narrower vocabulary than the bank-transaction categories above. This maps
+// one onto the other so Insights can combine receipt-item spend and
+// bank-transaction spend into one category breakdown instead of showing
+// "food" and "Food & Dining" as separate rows for the same thing.
+const RECEIPT_CATEGORY_MAP = {
+  food:    'Food & Dining',
+  drink:   'Food & Dining',
+  alcohol: 'Food & Dining',
+  tip:     'Food & Dining',
+  fee:     'Other',
+  other:   'Other',
+};
+
+export function mapReceiptCategory(cat) {
+  return RECEIPT_CATEGORY_MAP[(cat || '').toLowerCase()] || 'Other';
+}

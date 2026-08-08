@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, TrendingUp, Loader2, AlertCircle, Send } from 'lucide-react';
-import { loadReceiptsForInsights } from '../services/db';
-import { fetchCurrentUser } from '../services/splitwise';
+import { loadReceiptsForInsights, loadTransactions } from '../services/db';
+import { fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { computeStats, askInsightsChat } from '../services/insights';
 
 const INDIGO  = '#6366f1';
@@ -33,7 +33,24 @@ export default function InsightsPage() {
           loadReceiptsForInsights(),
           fetchCurrentUser().catch(() => null),
         ]);
-        setStats(computeStats(receipts, me?.id));
+
+        // Full Splitwise history + imported bank transactions require the
+        // resolved Splitwise user id, so these run after the above rather
+        // than in the same Promise.all.
+        let transactions = [];
+        let splitwiseExpenses = [];
+        if (me?.id) {
+          const oneYearAgo = new Date();
+          oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+          const [txns, sw] = await Promise.all([
+            loadTransactions(),
+            fetchAllExpenses(me.id, { datedAfter: oneYearAgo.toISOString().slice(0, 10) }).catch(() => ({ expenses: [] })),
+          ]);
+          transactions = txns;
+          splitwiseExpenses = sw.expenses;
+        }
+
+        setStats(computeStats({ receipts, myId: me?.id, transactions, splitwiseExpenses }));
       } catch (err) {
         setError(err?.message || 'Could not load your expense history.');
       } finally {
@@ -86,29 +103,38 @@ export default function InsightsPage() {
               <AlertCircle size={15} className="text-red-500 shrink-0" />
               <p className="text-sm text-red-600 font-medium">{error}</p>
             </div>
-          ) : stats.receiptCount === 0 ? (
+          ) : stats.totalSpent === 0 && stats.topMerchants.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 text-center anim-scale-in">
               <div className="w-20 h-20 rounded-3xl bg-indigo-50 flex items-center justify-center mb-4 anim-float">
                 <TrendingUp size={36} style={{ color: '#a5b4fc' }} />
               </div>
               <h2 className="text-lg font-bold text-slate-500 mb-1">Nothing to analyze yet</h2>
-              <p className="text-sm text-slate-400">Scan a few receipts and check back</p>
+              <p className="text-sm text-slate-400">Scan a receipt, connect Splitwise, or import a bank statement</p>
             </div>
           ) : (
             <>
+              {/* Data sources — makes clear this isn't just scanned receipts */}
+              <p className="text-xs text-slate-400 anim-fade-up">
+                {stats.receiptCount} receipt{stats.receiptCount !== 1 ? 's' : ''}
+                {' · '}{stats.mySplitwiseShareCount} Splitwise expense{stats.mySplitwiseShareCount !== 1 ? 's' : ''}
+                {stats.hasBankData && <> · {stats.transactionCount} bank transaction{stats.transactionCount !== 1 ? 's' : ''}</>}
+              </p>
+
               {/* Stat cards */}
               <div className="grid grid-cols-2 gap-3 stagger">
                 <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm anim-fade-up">
                   <p className="text-xs font-semibold text-slate-400 mb-1">Total spend</p>
                   <p className="text-xl font-extrabold text-slate-800">${stats.totalSpent.toFixed(2)}</p>
-                  <p className="text-[11px] text-slate-400 mt-0.5">{stats.receiptCount} receipt{stats.receiptCount !== 1 ? 's' : ''}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    {stats.hasBankData ? 'reconciled with bank data' : 'Splitwise + pending receipts'}
+                  </p>
                 </div>
                 <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm anim-fade-up">
-                  <p className="text-xs font-semibold text-slate-400 mb-1">Your share</p>
+                  <p className="text-xs font-semibold text-slate-400 mb-1">Your Splitwise share</p>
                   {stats.hasMyShare ? (
                     <>
-                      <p className="text-xl font-extrabold" style={{ color: INDIGO }}>${stats.myShare.toFixed(2)}</p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">across {stats.myShareCount} posted receipt{stats.myShareCount !== 1 ? 's' : ''}</p>
+                      <p className="text-xl font-extrabold" style={{ color: INDIGO }}>${stats.mySplitwiseShare.toFixed(2)}</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">across {stats.mySplitwiseShareCount} expense{stats.mySplitwiseShareCount !== 1 ? 's' : ''}</p>
                     </>
                   ) : (
                     <p className="text-sm text-slate-400 mt-1">Couldn't match your Splitwise profile</p>

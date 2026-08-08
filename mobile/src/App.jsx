@@ -4,6 +4,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { onAuthChange } from './services/auth';
 import { db } from './services/firebase';
 import { session } from './services/session';
+import { migrateLegacyPlaidConnection, loadPlaidConnections } from './services/db';
 import LoginPage   from './pages/LoginPage';
 import SignupPage  from './pages/SignupPage';
 import HomePage    from './pages/HomePage';
@@ -35,16 +36,11 @@ export default function App() {
         if (!session.getKey()) {
           try {
             const snap = await getDoc(doc(db, 'users', firebaseUser.uid));
-            if (snap.exists()) {
-              const data = snap.data();
-              session.setKey(data.splitwise_api_key);
-              session.setPlaid({
-                accessToken:     data.plaid_access_token     || null,
-                itemId:          data.plaid_item_id          || null,
-                cursor:          data.plaid_cursor           || null,
-                institutionName: data.plaid_institution_name || null,
-              });
-            }
+            if (snap.exists()) session.setKey(snap.data().splitwise_api_key);
+          } catch {}
+          try {
+            await migrateLegacyPlaidConnection();
+            session.setPlaidConnections(await loadPlaidConnections());
           } catch {}
         }
         setUser(firebaseUser);

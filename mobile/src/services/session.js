@@ -1,15 +1,13 @@
 // In-memory store for the current user's Splitwise API key and Plaid bank
-// connection. Set on login/signup, cleared on logout.
+// connections. Set on login/signup, cleared on logout.
 let _splitwiseKey = null;
 let _userId       = null;
 
-// Plaid: accessToken is per-connected-account (one Chase card, for now —
-// see PlaidConnect.jsx), cursor tracks /transactions/sync progress so
-// re-syncing only pulls what's changed since last time.
-let _plaidAccessToken     = null;
-let _plaidItemId          = null;
-let _plaidCursor          = null;
-let _plaidInstitutionName = null;
+// Plaid: one entry per connected bank/card (itemId -> connection), so
+// multiple accounts (Chase, Amex, ...) can be connected and synced
+// independently — see PlaidConnect.jsx. cursor tracks each connection's
+// own /transactions/sync progress.
+let _plaidConnections = new Map();
 
 export const session = {
   setKey:    (key) => { _splitwiseKey = key; },
@@ -17,24 +15,24 @@ export const session = {
   setUserId: (id)  => { _userId = id; },
   getUserId: ()    => _userId,
 
-  // Partial update — only fields explicitly passed (not undefined) change,
-  // so e.g. session.setPlaid({ cursor }) after a sync doesn't clobber the
-  // already-stored accessToken/institutionName.
-  setPlaid: ({ accessToken, itemId, cursor, institutionName } = {}) => {
-    if (accessToken     !== undefined) _plaidAccessToken     = accessToken;
-    if (itemId          !== undefined) _plaidItemId          = itemId;
-    if (cursor          !== undefined) _plaidCursor          = cursor;
-    if (institutionName !== undefined) _plaidInstitutionName = institutionName;
+  // Replaces the whole set — used on login/hydration once the full list is
+  // loaded from Firestore.
+  setPlaidConnections: (list = []) => {
+    _plaidConnections = new Map(list.map(c => [c.itemId, c]));
   },
-  getPlaid: () => ({
-    accessToken:     _plaidAccessToken,
-    itemId:          _plaidItemId,
-    cursor:          _plaidCursor,
-    institutionName: _plaidInstitutionName,
-  }),
+  // Partial update to one connection (e.g. just `cursor` after a sync)
+  // without clobbering its other stored fields.
+  upsertPlaidConnection: (conn) => {
+    if (!conn?.itemId) return;
+    const existing = _plaidConnections.get(conn.itemId) || {};
+    _plaidConnections.set(conn.itemId, { ...existing, ...conn });
+  },
+  removePlaidConnection: (itemId) => { _plaidConnections.delete(itemId); },
+  getPlaidConnections: () => Array.from(_plaidConnections.values()),
+  getPlaidConnection:  (itemId) => _plaidConnections.get(itemId) || null,
 
   clear: () => {
     _splitwiseKey = null; _userId = null;
-    _plaidAccessToken = null; _plaidItemId = null; _plaidCursor = null; _plaidInstitutionName = null;
+    _plaidConnections = new Map();
   },
 };

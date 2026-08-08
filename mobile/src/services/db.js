@@ -1,5 +1,5 @@
 import {
-  collection, doc, getDocs, setDoc, deleteDoc,
+  collection, doc, getDoc, getDocs, setDoc, deleteDoc,
   query, orderBy, limit, where, writeBatch,
 } from 'firebase/firestore';
 import { db } from './firebase';
@@ -83,26 +83,63 @@ export async function deleteTransactionsBySource(source) {
   await batch.commit();
 }
 
-// ── Plaid bank connection (see services/plaid.js, components/PlaidConnect.jsx) ──
-// Stored directly on the user doc, same as splitwise_api_key — already
-// covered by that doc's existing per-user Firestore rule, no new rule
-// needed. Partial: only pass the fields that changed (e.g. just `cursor`
-// after a sync) so the others aren't clobbered with undefined.
+// ── Plaid bank connections (see services/plaid.js, components/PlaidConnect.jsx) ──
+// One doc per connected account (Chase, Amex, ...), keyed by Plaid's own
+// itemId — lets each be synced/disconnected independently instead of one
+// connection overwriting another. Partial: only pass the fields that
+// changed (e.g. just `cursor` after a sync) so the others aren't clobbered.
 
 function userDoc() {
   return doc(db, 'users', session.getUserId());
 }
 
-export async function savePlaidConnection({ accessToken, itemId, cursor, institutionName } = {}) {
-  const data = {};
-  if (accessToken     !== undefined) data.plaid_access_token     = accessToken;
-  if (itemId          !== undefined) data.plaid_item_id          = itemId;
-  if (cursor          !== undefined) data.plaid_cursor           = cursor;
-  if (institutionName !== undefined) data.plaid_institution_name = institutionName;
-  await setDoc(userDoc(), data, { merge: true });
+function plaidConnectionsCol() {
+  return collection(db, 'users', session.getUserId(), 'plaidConnections');
 }
 
-export async function clearPlaidConnection() {
+export async function loadPlaidConnections() {
+  try {
+    const snap = await getDocs(plaidConnectionsCol());
+    return snap.docs.map(d => ({ itemId: d.id, ...d.data() }));
+  } catch {
+    return [];
+  }
+}
+
+export async function savePlaidConnection({ itemId, accessToken, cursor, institutionName, accounts } = {}) {
+  if (!itemId) throw new Error('savePlaidConnection requires itemId');
+  const data = {};
+  if (accessToken     !== undefined) data.accessToken     = accessToken;
+  if (cursor          !== undefined) data.cursor          = cursor;
+  if (institutionName !== undefined) data.institutionName = institutionName;
+  // The cards/accounts covered by this one login (e.g. 3 Chase cards under
+  // one Item) — [{ id, name, mask }], captured from Plaid Link's onSuccess
+  // metadata at connect time. Lets synced transactions be split back out
+  // per card instead of lumped into one "Chase" group.
+  if (accounts        !== undefined) data.accounts        = accounts;
+  await setDoc(doc(plaidConnectionsCol(), itemId), data, { merge: true });
+}
+
+export async function deletePlaidConnection(itemId) {
+  await deleteDoc(doc(plaidConnectionsCol(), itemId));
+}
+
+// One-time migration: before multi-account support, the single Plaid
+// connection lived as flat plaid_access_token/plaid_item_id/... fields
+// directly on the user doc. Moves that into the plaidConnections
+// subcollection (as its first entry) so an already-connected account isn't
+// lost, then clears the old fields so this is a no-op on every later call.
+export async function migrateLegacyPlaidConnection() {
+  const snap = await getDoc(userDoc());
+  if (!snap.exists()) return;
+  const data = snap.data();
+  if (!data.plaid_access_token || !data.plaid_item_id) return;
+  await savePlaidConnection({
+    itemId:          data.plaid_item_id,
+    accessToken:     data.plaid_access_token,
+    cursor:          data.plaid_cursor || null,
+    institutionName: data.plaid_institution_name || null,
+  });
   await setDoc(userDoc(), {
     plaid_access_token: null,
     plaid_item_id: null,

@@ -80,6 +80,10 @@ export async function syncTransactions(accessToken, cursor) {
         amount:      t.amount,
         category:    detectCategory(desc),
         isPayment:   isPaymentTransaction(desc),
+        // One Plaid Item (one login) can cover several cards/accounts —
+        // this is what lets PlaidConnect.jsx split a sync's results back
+        // out per account instead of lumping every card into one group.
+        accountId:   t.account_id,
       };
     });
 

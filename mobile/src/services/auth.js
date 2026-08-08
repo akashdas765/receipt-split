@@ -7,6 +7,7 @@ import {
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { session } from './session';
+import { migrateLegacyPlaidConnection, loadPlaidConnections } from './db';
 
 export async function signup(email, password, splitwiseKey) {
   const cred = await createUserWithEmailAndPassword(auth, email, password);
@@ -26,13 +27,11 @@ export async function login(email, password) {
   if (!snap.exists()) throw new Error('User profile not found.');
   const data = snap.data();
   session.setKey(data.splitwise_api_key);
-  session.setPlaid({
-    accessToken:     data.plaid_access_token     || null,
-    itemId:          data.plaid_item_id          || null,
-    cursor:          data.plaid_cursor           || null,
-    institutionName: data.plaid_institution_name || null,
-  });
   session.setUserId(cred.user.uid);
+  try {
+    await migrateLegacyPlaidConnection();
+    session.setPlaidConnections(await loadPlaidConnections());
+  } catch {}
   return cred.user;
 }
 

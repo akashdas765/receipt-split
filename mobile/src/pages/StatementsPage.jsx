@@ -37,6 +37,12 @@ export default function StatementsPage() {
   const [tab,    setTab]    = useState(0);
   const [picker, setPicker] = useState(null); // txn being linked, or null
 
+  // Which loaded statement/account to scope the page to — 'all' or a
+  // `source` id. Each connected card (Plaid) or uploaded file gets its own
+  // source, so with 3 connected cards this doubles as "3 tabs for 3
+  // accounts" without a separate account model to keep in sync.
+  const [accountFilter, setAccountFilter] = useState('all');
+
   const groupName = id => groups.find(g => g.id === id)?.name;
   const monthRange = useMemo(() => getMonthRange(currentMonth), [currentMonth]);
 
@@ -75,9 +81,16 @@ export default function StatementsPage() {
   }, [myId, monthRange.start, monthRange.end]);
 
   // ── Derived data ───────────────────────────────────────────────────────────
+  // Scoped to the selected statement/account (or everything, when 'all') —
+  // computed off the full list so switching the filter never has to re-fetch.
+  const scopedTransactions = useMemo(() =>
+    accountFilter === 'all' ? transactions : transactions.filter(t => t.source === accountFilter),
+    [transactions, accountFilter]
+  );
+
   const monthlyTransactions = useMemo(() =>
-    transactions.filter(t => t.date && t.date.slice(0, 10) >= monthRange.start && t.date.slice(0, 10) <= monthRange.end),
-    [transactions, monthRange]
+    scopedTransactions.filter(t => t.date && t.date.slice(0, 10) >= monthRange.start && t.date.slice(0, 10) <= monthRange.end),
+    [scopedTransactions, monthRange]
   );
   const bankExpenseTxns   = useMemo(() => monthlyTransactions.filter(t => !t.isPayment), [monthlyTransactions]);
   const monthlyPaymentTxns = useMemo(() => monthlyTransactions.filter(t => t.isPayment), [monthlyTransactions]);
@@ -198,6 +211,29 @@ export default function StatementsPage() {
             </div>
           </div>
 
+          {/* Account filter — one chip per loaded statement/connected card */}
+          {statements.length > 1 && (
+            <div className="flex gap-2 overflow-x-auto pb-0.5">
+              <button
+                onClick={() => setAccountFilter('all')}
+                className={`shrink-0 px-3.5 py-1.5 rounded-full text-xs font-bold transition-colors btn-press ${accountFilter === 'all' ? 'text-white' : 'bg-white text-slate-500 border border-slate-200 hover:border-indigo-200'}`}
+                style={accountFilter === 'all' ? { background: INDIGO } : {}}
+              >
+                All accounts
+              </button>
+              {statements.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => setAccountFilter(s.id)}
+                  className={`shrink-0 px-3.5 py-1.5 rounded-full text-xs font-bold transition-colors btn-press whitespace-nowrap ${accountFilter === s.id ? 'text-white' : 'bg-white text-slate-500 border border-slate-200 hover:border-indigo-200'}`}
+                  style={accountFilter === s.id ? { background: INDIGO } : {}}
+                >
+                  {s.name}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Tabs */}
           <div className="flex bg-white rounded-xl p-1 gap-1 border border-slate-100 shadow-sm overflow-x-auto">
             {TABS.map((label, i) => (
@@ -253,10 +289,10 @@ export default function StatementsPage() {
               )}
               {tab === 4 && (
                 <div className="space-y-2">
-                  {transactions.length === 0 ? (
+                  {scopedTransactions.length === 0 ? (
                     <div className="text-center py-8 text-sm text-slate-400">No transactions loaded yet</div>
                   ) : (
-                    transactions.slice().reverse().map(txn => (
+                    scopedTransactions.slice().reverse().map(txn => (
                       <div key={txn.id} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
                         <span className="text-base">{getCategoryIcon(txn.category)}</span>
                         <div className="flex-1 min-w-0">

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Search as SearchIcon, X, Receipt, CheckCheck, Users, AlertCircle } from 'lucide-react';
+import { Search as SearchIcon, X, Receipt, CheckCheck, Users, AlertCircle } from 'lucide-react';
 import { loadReceiptsForInsights, loadTransactions } from '../services/db';
 import { fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { getCategoryIcon } from '../utils/categoryDetector';
 import { formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import BottomNav from '../components/BottomNav';
+import PageHeader from '../components/PageHeader';
 
 const INDIGO  = '#6366f1';
 const EMERALD = '#10b981';
@@ -95,14 +96,7 @@ export default function SearchPage() {
 
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
-      <header className="sticky top-0 z-20 glass">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
-          <button onClick={() => navigate('/')} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-600 btn-press">
-            <ArrowLeft size={20} />
-          </button>
-          <span className="font-extrabold text-slate-800">Search</span>
-        </div>
-      </header>
+      <PageHeader title="Search" onBack={() => navigate('/')} />
 
       <main className="flex-1">
         <div className="max-w-2xl mx-auto px-4 py-4 pb-24 space-y-4">

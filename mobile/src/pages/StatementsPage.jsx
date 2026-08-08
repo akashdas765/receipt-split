@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, AlertCircle, Trash2, CreditCard, Upload, X } from 'lucide-react';
+import { AlertCircle, Trash2, CreditCard, Upload, X } from 'lucide-react';
 import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride } from '../services/db';
 import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { matchTransactions, computeSummary } from '../utils/matcher';
@@ -14,6 +14,7 @@ import StatementsReports from '../components/StatementsReports';
 import SplitwisePickerModal from '../components/SplitwisePickerModal';
 import BottomNav from '../components/BottomNav';
 import MonthSlider from '../components/MonthSlider';
+import PageHeader from '../components/PageHeader';
 
 const INDIGO = '#6366f1';
 
@@ -185,21 +186,14 @@ export default function StatementsPage() {
 
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
-      {/* Header */}
-      <header className="sticky top-0 z-20 glass">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
-          <button onClick={() => navigate('/')} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-600 btn-press">
-            <ArrowLeft size={20} />
-          </button>
-          <span className="font-extrabold text-slate-800 flex-1">Statements</span>
-          <button
-            onClick={() => setUploadOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold text-white btn-gradient btn-press"
-          >
-            <Upload size={13} /> Add
-          </button>
-        </div>
-      </header>
+      <PageHeader title="Statements" onBack={() => navigate('/')}>
+        <button
+          onClick={() => setUploadOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold text-white btn-gradient btn-press shrink-0"
+        >
+          <Upload size={13} /> Add
+        </button>
+      </PageHeader>
 
       <MonthSlider currentMonth={currentMonth} onChange={setCurrentMonth} />
 

@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, CloudUpload, AlertCircle, CheckCircle2, Loader2, Equal } from 'lucide-react';
+import { CloudUpload, AlertCircle, CheckCircle2, Loader2, Equal } from 'lucide-react';
 import { postExpense } from '../services/splitwise';
 import { saveReceipt } from '../services/db';
 import { memberColor } from '../utils/memberColor';
+import PageHeader from '../components/PageHeader';
 
 const INDIGO = '#6366f1';
 
@@ -150,14 +151,7 @@ export default function ApprovePage() {
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
       {/* Header */}
-      <header className="sticky top-0 z-20 glass">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
-          <button onClick={() => navigate(-1)} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-600 btn-press">
-            <ArrowLeft size={20} />
-          </button>
-          <span className="font-extrabold text-slate-800">{existingExpenseId ? 'Review & Update' : 'Review & Post'}</span>
-        </div>
-      </header>
+      <PageHeader title={existingExpenseId ? 'Review & Update' : 'Review & Post'} />
 
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-4 py-4 pb-28 space-y-5">

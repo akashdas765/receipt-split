@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, TrendingUp, Loader2, AlertCircle, Send } from 'lucide-react';
+import { TrendingUp, Loader2, AlertCircle, Send } from 'lucide-react';
 import { loadReceiptsForInsights, loadTransactions } from '../services/db';
 import { fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { computeStats, askInsightsChat } from '../services/insights';
 import { getMonthRange } from '../utils/statementFormatters';
 import BottomNav from '../components/BottomNav';
 import MonthSlider from '../components/MonthSlider';
+import PageHeader from '../components/PageHeader';
 
 const INDIGO  = '#6366f1';
 const EMERALD = '#10b981';
@@ -121,14 +122,7 @@ export default function InsightsPage() {
 
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
-      <header className="sticky top-0 z-20 glass">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
-          <button onClick={() => navigate('/')} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-600 btn-press">
-            <ArrowLeft size={20} />
-          </button>
-          <span className="font-extrabold text-slate-800">Insights</span>
-        </div>
-      </header>
+      <PageHeader title="Insights" onBack={() => navigate('/')} />
 
       <MonthSlider currentMonth={currentMonth} onChange={setCurrentMonth} />
 

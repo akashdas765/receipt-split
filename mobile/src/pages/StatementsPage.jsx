@@ -6,6 +6,7 @@ import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/spl
 import { matchTransactions, computeSummary } from '../utils/matcher';
 import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { isPaymentTransaction } from '../utils/paymentDetector';
+import { session } from '../services/session';
 import StatementUpload from '../components/StatementUpload';
 import PlaidConnect from '../components/PlaidConnect';
 import ManualEntryForm from '../components/ManualEntryForm';
@@ -103,7 +104,13 @@ export default function StatementsPage() {
     scopedTransactions.filter(t => t.date && t.date.slice(0, 10) >= monthRange.start && t.date.slice(0, 10) <= monthRange.end),
     [scopedTransactions, monthRange]
   );
-  const bankExpenseTxns   = useMemo(() => monthlyTransactions.filter(t => !t.isPayment), [monthlyTransactions]);
+  // isBankAccount tags a checking/bank-classified Plaid txn so
+  // matchTransactions() skips auto-matching it against Splitwise (see
+  // session.isBankAccountSource) — manual linking still works regardless.
+  const bankExpenseTxns   = useMemo(() =>
+    monthlyTransactions.filter(t => !t.isPayment).map(t => ({ ...t, isBankAccount: session.isBankAccountSource(t.source) })),
+    [monthlyTransactions]
+  );
   const monthlyPaymentTxns = useMemo(() => monthlyTransactions.filter(t => t.isPayment), [monthlyTransactions]);
 
   const matched = useMemo(() => matchTransactions(bankExpenseTxns, swExpenses), [bankExpenseTxns, swExpenses]);

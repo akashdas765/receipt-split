@@ -1,6 +1,7 @@
 import { auth } from './firebase';
 import { matchTransactions, computeSummary } from '../utils/matcher';
 import { mapReceiptCategory } from '../utils/categoryDetector';
+import { session } from './session';
 
 // Same auth-gated proxy groq.js uses — this just sends a text-only chat
 // completion instead of an image one, so no separate function/route needed.
@@ -34,7 +35,12 @@ export function computeStats({ receipts, myId, transactions = [], splitwiseExpen
   const receiptAmt      = r => r.grandTotal ?? r.total ?? 0;
 
   const hasBankData     = transactions.length > 0;
-  const bankExpenseTxns = transactions.filter(t => !t.isPayment);
+  // isBankAccount tags checking/bank-classified Plaid txns so
+  // matchTransactions() doesn't auto-match them against Splitwise (see
+  // session.isBankAccountSource) — same reasoning as StatementsPage.jsx.
+  const bankExpenseTxns = transactions
+    .filter(t => !t.isPayment)
+    .map(t => ({ ...t, isBankAccount: session.isBankAccountSource(t.source) }));
   // Always run the matcher, even with zero bank transactions — with
   // nothing to match against, every Splitwise expense just falls through
   // as "Splitwise-only" (see matchTransactions), which is exactly what we

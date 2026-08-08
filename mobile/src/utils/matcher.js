@@ -139,7 +139,13 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
     let bestMatch = null;
     let bestScore = 0;
 
-    for (const exp of splitwiseExpenses) {
+    // Bank/checking accounts don't correspond to Splitwise group expenses
+    // the way a credit card charge does (paychecks, rent, ATM withdrawals,
+    // etc. would just produce bogus date/amount coincidences) — left
+    // unscored entirely, falling through as a plain unmatched row below.
+    // Manual linking (section 2, overrideSplitwiseId) is unaffected — that
+    // path never reaches here, so "I'll match it manually" still works.
+    for (const exp of (txn.isBankAccount ? [] : splitwiseExpenses)) {
       if (usedExpenses.has(exp.id)) continue;
       // Only expenses I actually paid toward are plausible matches for a
       // charge on my own card — otherwise a group-mate's expense could get

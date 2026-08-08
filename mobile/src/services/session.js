@@ -31,6 +31,25 @@ export const session = {
   getPlaidConnections: () => Array.from(_plaidConnections.values()),
   getPlaidConnection:  (itemId) => _plaidConnections.get(itemId) || null,
 
+  // Used by matcher.js's callers (StatementsPage.jsx, insights.js) to keep
+  // Splitwise auto-matching off bank/checking accounts — those balances
+  // don't correspond to Splitwise group expenses the way a credit card
+  // charge does, so scoring them just produces bogus matches. Manual
+  // linking (overrideSplitwiseId) still works regardless, since that path
+  // in matcher.js never calls this. Non-Plaid sources (CSV/PDF/manual —
+  // always credit card statements in this app) and any Plaid account not
+  // yet tagged 'bank' in PlaidConnect.jsx's chip UI default to false, so
+  // this only ever narrows matching, never silently breaks it.
+  isBankAccountSource: (source) => {
+    if (!source || !source.startsWith('plaid-')) return false;
+    for (const conn of _plaidConnections.values()) {
+      for (const acct of conn.accounts || []) {
+        if (source === `plaid-${conn.itemId}-${acct.id}`) return acct.accountType === 'bank';
+      }
+    }
+    return false;
+  },
+
   clear: () => {
     _splitwiseKey = null; _userId = null;
     _plaidConnections = new Map();

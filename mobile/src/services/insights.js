@@ -15,7 +15,7 @@ const MODEL = 'openai/gpt-oss-20b';
 // a conversation grows without capping what's shown in the UI.
 const MAX_HISTORY_TURNS = 10;
 
-const CHAT_SYSTEM = `You are a friendly personal finance assistant inside ReceiptSplit, an app that combines receipt scanning, Splitwise, and bank statement import into one expense picture. You're given aggregated JSON stats that combine — where available — the user's scanned receipts, their full Splitwise expense history (not just receipts posted through this app), and their imported bank transactions reconciled against Splitwise (matched transactions count only the user's owed share, not the full amount). You'll see which sources contributed (hasBankData, receiptCount, transactionCount) — factor that into how confident you sound about coverage. Fields: total spend, the user's Splitwise share, spending by merchant, spending by category, and spending by month. Answer the user's questions using this data — be specific and cite real numbers. If something can't be answered from the data (e.g. a specific individual purchase not reflected in the aggregates), say so honestly instead of guessing. Keep answers concise: a few sentences, plain text, no markdown headers.`;
+const CHAT_SYSTEM = `You are a friendly personal finance assistant inside ReceiptSplit, an app that combines receipt scanning, Splitwise, and bank statement import into one expense picture. You're given JSON for one month combining — where available — the user's scanned receipts, their full Splitwise expense history (not just receipts posted through this app), and their imported bank transactions reconciled against Splitwise (matched transactions count only the user's owed share, not the full amount). You'll see which sources contributed (hasBankData, receiptCount, transactionCount) — factor that into how confident you sound about coverage. Fields: totalSpent, mySplitwiseShare, topMerchants, topCategories (pre-aggregated sums), monthly, and itemizedTransactions — the actual line items (each with date, description, category, amount, source) behind those sums, so you CAN list or filter individual transactions (e.g. "what's in Other", "list my Splitwise expenses") instead of only reporting totals — do that whenever asked, don't claim you lack the detail when itemizedTransactions has it. Be specific and cite real numbers. If something genuinely isn't in the data (e.g. a purchase never scanned or imported at all), say so honestly instead of guessing. Keep answers concise: a few sentences or a short list, plain text, no markdown headers.`;
 
 // Combines every data source this app has for "where did my money go":
 //   - receipts: Firestore receipt docs scanned through this app (item-level
@@ -120,6 +120,41 @@ export function computeStats({ receipts, myId, transactions = [], splitwiseExpen
     .sort((a, b) => b[1] - a[1])
     .map(([category, amount]) => ({ category, amount }));
 
+  // Line-item detail, so the chat can actually answer "what's in Other" or
+  // "list my Splitwise transactions" instead of only ever seeing the
+  // aggregated sums above — those alone have no way to answer a drill-down
+  // question since the individual entries were never in its context.
+  // Receipt items give the most granular data available (each item's own
+  // category, not the whole receipt as one line); everything else is at
+  // expense/transaction granularity. Same postedExpenseIds dedup as above.
+  const itemizedTransactions = [];
+  receipts.forEach(r => {
+    (r.items || []).forEach(item => {
+      const amt = parseFloat(item.amount) || 0;
+      if (amt <= 0) return;
+      itemizedTransactions.push({
+        date:        r.date || r.scanned_at?.slice(0, 10) || null,
+        description: `${item.description || 'Item'} (${r.merchant || 'receipt'})`,
+        category:    mapReceiptCategory(item.category),
+        amount:      amt,
+        source:      r.approved ? 'receipt' : 'receipt (pending, not yet split)',
+      });
+    });
+  });
+  matched.forEach(t => {
+    if (postedExpenseIds.has(t.splitwiseId)) return; // already listed above via its receipt's items
+    itemizedTransactions.push({
+      date:        t.date || null,
+      description: t.description || 'Unknown',
+      category:    t.category || 'Other',
+      amount:      t.effectiveAmount || 0,
+      source:      t.isSplitOnly ? 'Splitwise' : t.isSplitwised ? 'bank (Splitwise-matched)' : 'bank (personal)',
+    });
+  });
+  itemizedTransactions.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const MAX_ITEMIZED = 300; // defensive cap — data is already month-scoped by callers
+  const itemized = itemizedTransactions.slice(0, MAX_ITEMIZED);
+
   // Monthly mirrors totalSpent's logic so the two numbers stay consistent.
   const byMonth = {};
   const monthlySource = hasBankData
@@ -151,6 +186,7 @@ export function computeStats({ receipts, myId, transactions = [], splitwiseExpen
     topMerchants,
     topCategories,
     monthly,
+    itemizedTransactions: itemized,
   };
 }
 
@@ -176,7 +212,15 @@ export async function askInsightsChat(stats, messages) {
         { role: 'system', content: `${CHAT_SYSTEM}\n\nSpending data:\n${JSON.stringify(stats)}` },
         ...messages.slice(-MAX_HISTORY_TURNS),
       ],
-      max_tokens: 400,
+      // gpt-oss-20b is a reasoning model — unlike qwen3.6-27b (see groq.js),
+      // it doesn't support reasoning_effort: 'none', only low/medium/high,
+      // and its reasoning tokens count against max_tokens same as content.
+      // Left at the default (unset ≈ medium) with the itemized-transactions
+      // payload added, a longer enumeration question could burn the whole
+      // budget on reasoning before ever writing to `content`, coming back
+      // as a silent empty reply. 'low' leaves more headroom for content.
+      reasoning_effort: 'low',
+      max_tokens: 1024,
     }),
   });
 
@@ -185,5 +229,11 @@ export async function askInsightsChat(stats, messages) {
     const message = typeof data?.error === 'string' ? data.error : data?.error?.message;
     throw new Error(message || 'Could not get a response.');
   }
-  return data.choices[0].message.content.trim();
+  const content = data.choices[0].message.content?.trim();
+  if (content) return content;
+  // A "successful" response with empty content previously rendered as a
+  // silent, blank chat bubble — e.g. when the model spends its whole
+  // max_tokens budget on the separate `reasoning` field (see above) before
+  // ever writing an answer. Surface that as a real, visible error instead.
+  throw new Error('The model didn\'t return an answer — try asking again, maybe more specifically.');
 }

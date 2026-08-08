@@ -26,7 +26,7 @@ export default function MonthSlider({ currentMonth, onChange }) {
 
   return (
     <div className="sticky top-14 z-10 glass border-t border-slate-100/60">
-      <div ref={sliderRef} className="max-w-2xl mx-auto flex gap-2 overflow-x-auto px-4 py-2.5">
+      <div ref={sliderRef} className="max-w-2xl mx-auto flex gap-2 overflow-x-auto no-scrollbar px-4 py-2.5">
         {monthOptions.map(d => {
           const selected = isSameMonth(d, currentMonth);
           return (

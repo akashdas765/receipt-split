@@ -48,10 +48,30 @@ export async function exchangePublicToken(publicToken) {
 // Backfills the linked-account list (name/mask per card) for connections
 // made before this app captured that from Link's onSuccess metadata —
 // that metadata only ever fires once, at connect time, so this is the only
-// way an already-linked Item can recover its account list.
+// way an already-linked Item can recover its account list. `type` (Plaid's
+// own 'depository'/'credit'/... classification) is included so callers can
+// default the bank-vs-credit-card tag from it, rather than starting blank.
 export async function fetchAccounts(accessToken) {
   const data = await plaidFetch('get_accounts', { access_token: accessToken });
-  return (data.accounts || []).map(a => ({ id: a.account_id, name: a.name, mask: a.mask }));
+  return (data.accounts || []).map(a => ({ id: a.account_id, name: a.name, mask: a.mask, type: a.type }));
+}
+
+// Live balances for every account under one Item — used by HomePage's net
+// worth card. `current` is what's actually in a depository account, or
+// what's owed on a credit account (both non-negative from Plaid; the
+// caller decides sign/direction based on the account's bank-vs-credit tag,
+// since Plaid's own field doesn't carry that meaning).
+export async function fetchAccountBalances(accessToken) {
+  const data = await plaidFetch('get_balances', { access_token: accessToken });
+  return (data.accounts || []).map(a => ({
+    id:              a.account_id,
+    name:            a.name,
+    mask:            a.mask,
+    type:            a.type,
+    current:         a.balances?.current ?? null,
+    available:       a.balances?.available ?? null,
+    isoCurrencyCode: a.balances?.iso_currency_code || 'USD',
+  }));
 }
 
 // Pages through every added/removed transaction since `cursor` (omit on

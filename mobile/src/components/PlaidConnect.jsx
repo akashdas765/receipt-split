@@ -23,6 +23,16 @@ function accountLabel(acct) {
   return acct.mask ? `${name} ...${acct.mask}` : name;
 }
 
+// Plaid's own account type is a reliable default for the bank-vs-credit
+// tag (used by HomePage's net worth card) — the manual toggle in the chip
+// UI still lets the user correct it, this just means a freshly-connected
+// account doesn't start out wrongly classified.
+function defaultAccountType(plaidType) {
+  if (plaidType === 'depository') return 'bank';
+  if (plaidType === 'credit') return 'credit';
+  return undefined;
+}
+
 // Auto-import via Plaid Link — an alternative to manual CSV/PDF upload
 // (StatementUpload.jsx). Reuses the same onAdd callback StatementsPage
 // already passes to StatementUpload, so synced transactions flow through
@@ -125,7 +135,10 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
         // captured now since Link's onSuccess is the only place this
         // (name/mask) is available; /transactions/sync only returns bare
         // account_ids, not human-readable labels.
-        const accounts = (metadata?.accounts || []).map(a => ({ id: a.id, name: a.name, mask: a.mask }));
+        const accounts = (metadata?.accounts || []).map(a => ({
+          id: a.id, name: a.name, mask: a.mask,
+          ...(defaultAccountType(a.type) ? { accountType: defaultAccountType(a.type) } : {}),
+        }));
         const conn = { itemId, accessToken, cursor: null, institutionName, accounts };
         session.upsertPlaidConnection(conn);
         await savePlaidConnection(conn);
@@ -192,8 +205,12 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
   useEffect(() => {
     if (!active || (active.accounts && active.accounts.length > 0)) return;
     let cancelled = false;
-    fetchAccounts(active.accessToken).then(async accounts => {
-      if (cancelled || !accounts.length) return;
+    fetchAccounts(active.accessToken).then(async rawAccounts => {
+      if (cancelled || !rawAccounts.length) return;
+      const accounts = rawAccounts.map(({ type, ...a }) => ({
+        ...a,
+        ...(defaultAccountType(type) ? { accountType: defaultAccountType(type) } : {}),
+      }));
       session.upsertPlaidConnection({ itemId: active.itemId, accounts });
       await savePlaidConnection({ itemId: active.itemId, accounts });
       refreshConnections();

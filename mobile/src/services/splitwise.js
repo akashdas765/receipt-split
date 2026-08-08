@@ -48,6 +48,27 @@ export async function fetchCurrentUser() {
   return { id: String(data.user.id), name: data.user.first_name };
 }
 
+// Your overall Splitwise position, live from Splitwise's own per-friend
+// balances rather than summed from fetchAllExpenses (which is paginated
+// and date-range-limited — not reliable for a true all-time total).
+// Splitwise's sign convention already matches net worth's: positive =
+// friends owe you (an asset), negative = you owe them (a liability) — used
+// as-is by HomePage's net worth card, no sign flip needed. Non-USD
+// balances are skipped so they don't silently corrupt the $ total, same
+// as fetchAllExpenses's currency split.
+export async function fetchNetBalance() {
+  const res  = await swFetch('/get_friends');
+  const data = await res.json();
+  if (!res.ok || data?.error) throw new Error(data?.error || 'Could not load your Splitwise balance.');
+  let net = 0;
+  for (const friend of data.friends || []) {
+    for (const b of friend.balance || []) {
+      if ((b.currency_code || 'USD') === 'USD') net += parseFloat(b.amount || 0);
+    }
+  }
+  return net;
+}
+
 const SKIP_DESC = /settle|settlement|reimburs|payback|pay back|paid back/i;
 
 // Full Splitwise expense history (not just receipts scanned through this

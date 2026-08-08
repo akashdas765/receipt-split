@@ -37,6 +37,14 @@ const ACTIONS = {
     if (!payload.access_token) throw new Error('Missing access_token');
     return ['/accounts/get', { access_token: payload.access_token }];
   },
+  // Separate from get_accounts: /accounts/get can return a cached balance,
+  // while /accounts/balances/get forces a fresh pull from the institution
+  // — worth the extra round trip for the net-worth card on HomePage, where
+  // a stale number would be misleading in a way a stale account name isn't.
+  get_balances: (uid, payload) => {
+    if (!payload.access_token) throw new Error('Missing access_token');
+    return ['/accounts/balances/get', { access_token: payload.access_token }];
+  },
 };
 
 // Requires a valid Firebase Auth ID token — without this, the endpoint

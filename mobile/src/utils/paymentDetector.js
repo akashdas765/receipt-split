@@ -55,3 +55,29 @@ export function isPaymentTransaction(description = '') {
   if (EXPENSE_OVERRIDES.some(r => r.test(desc))) return false;
   return PAYMENT_PATTERNS.some(r => r.test(desc));
 }
+
+// Narrower than isPaymentTransaction(): only "you paid your bill"
+// confirmations, where money is unambiguously coming INTO this card
+// account. Transfers/loan payments also count as isPayment (excluded from
+// spend totals) but are money leaving somewhere else, not a credit to
+// this account, so they're deliberately not in this list. Used to safely
+// infer isCredit for transactions whose original signed amount wasn't
+// preserved (older records only ever stored a positive magnitude).
+const CREDIT_CONFIRMATION_PATTERNS = [
+  /payment\s+thank\s+you/i,
+  /thank\s+you\s+payment/i,
+  /autopay/i,
+  /auto\s+pay/i,
+  /online\s+payment/i,
+  /mobile\s+payment/i,
+  /ach\s+payment/i,
+  /credit\s+card\s+pay/i,
+  /card\s+payment/i,
+  /e-payment/i,
+];
+
+export function isCreditConfirmation(description = '') {
+  const desc = description.trim();
+  if (EXPENSE_OVERRIDES.some(r => r.test(desc))) return false;
+  return CREDIT_CONFIRMATION_PATTERNS.some(r => r.test(desc));
+}

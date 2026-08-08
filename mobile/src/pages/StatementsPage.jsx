@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, CreditCard, Upload, X } from 'lucide-react';
-import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride } from '../services/db';
+import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride, reclassifyPayments } from '../services/db';
 import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { matchTransactions, computeSummary } from '../utils/matcher';
 import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
+import { isPaymentTransaction } from '../utils/paymentDetector';
 import StatementUpload from '../components/StatementUpload';
 import PlaidConnect from '../components/PlaidConnect';
 import ManualEntryForm from '../components/ManualEntryForm';
@@ -131,6 +132,16 @@ export default function StatementsPage() {
   const paymentTotal = monthlyPaymentTxns.reduce((s, t) => s + (t.amount || 0), 0);
   const unmatchedCt  = matchedBankOnly.filter(t => !t.isSplitwised).length;
 
+  // Transactions saved before their description was checked against the
+  // payment patterns (isPayment is stamped once at write time, not
+  // recomputed live) — surfaced so the user can fix them without a full
+  // re-sync/re-upload. Checked across ALL loaded transactions, not just
+  // this month, since a stale row could be from any past statement.
+  const fixableCount = useMemo(() =>
+    transactions.filter(t => !t.isPayment && isPaymentTransaction(t.description)).length,
+    [transactions]
+  );
+
   // ── Mutations ──────────────────────────────────────────────────────────────
   // Upserts by id rather than blind-appending: a Plaid full-history re-sync
   // (see PlaidConnect.jsx's "Re-split older transactions by card") re-adds
@@ -172,6 +183,13 @@ export default function StatementsPage() {
     await setTransactionOverride(txnId, fields);
     setTransactions(prev => prev.map(t => t.id === txnId ? { ...t, ...fields } : t));
   }, []);
+
+  const handleFixPaymentLabels = useCallback(async () => {
+    const fixed = await reclassifyPayments(transactions);
+    if (!fixed.length) return;
+    const fixedMap = new Map(fixed.map(f => [f.id, f.fields]));
+    setTransactions(prev => prev.map(t => fixedMap.has(t.id) ? { ...t, ...fixedMap.get(t.id) } : t));
+  }, [transactions]);
 
   const handleUnlink = txn => applyOverride(txn.id, { overrideForcedUnmatched: true, overrideSplitwiseId: null, overrideExpenseData: null });
   const handleClearOverride = txn => applyOverride(txn.id, { overrideForcedUnmatched: null, overrideSplitwiseId: null, overrideExpenseData: null });
@@ -301,17 +319,29 @@ export default function StatementsPage() {
                     {[0, 1, 2].map(i => <div key={i} className="h-16 rounded-2xl skeleton" />)}
                   </div>
                 ) : (
-                  <TransactionsList
-                    matched={matchedBankOnly}
-                    creditTxns={monthlyPaymentTxns}
-                    groupName={groupName}
-                    monthRange={monthRange}
-                    onLink={setPicker}
-                    onUnlink={handleUnlink}
-                    onClearOverride={handleClearOverride}
-                    onConfirmSuggestion={handleConfirmSuggestion}
-                    onDelete={handleRemoveTxn}
-                  />
+                  <>
+                    {fixableCount > 0 && (
+                      <div className="flex items-center justify-between gap-3 bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2.5 mb-3">
+                        <p className="text-xs text-indigo-600 font-medium">
+                          {fixableCount} transaction{fixableCount !== 1 ? 's' : ''} look{fixableCount === 1 ? 's' : ''} like a payment but {fixableCount === 1 ? "isn't" : "aren't"} labeled that way yet.
+                        </p>
+                        <button onClick={handleFixPaymentLabels} className="shrink-0 text-xs font-bold text-white px-3 py-1.5 rounded-full btn-gradient btn-press">
+                          Fix now
+                        </button>
+                      </div>
+                    )}
+                    <TransactionsList
+                      matched={matchedBankOnly}
+                      creditTxns={monthlyPaymentTxns}
+                      groupName={groupName}
+                      monthRange={monthRange}
+                      onLink={setPicker}
+                      onUnlink={handleUnlink}
+                      onClearOverride={handleClearOverride}
+                      onConfirmSuggestion={handleConfirmSuggestion}
+                      onDelete={handleRemoveTxn}
+                    />
+                  </>
                 )
               )}
               {tab === 2 && (

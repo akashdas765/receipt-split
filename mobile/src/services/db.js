@@ -4,6 +4,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { session } from './session';
+import { isPaymentTransaction, isCreditConfirmation } from '../utils/paymentDetector';
 
 function receiptsCol() {
   return collection(db, 'users', session.getUserId(), 'receipts');
@@ -85,6 +86,27 @@ export async function deleteTransactionsBySource(source) {
   const batch = writeBatch(db);
   snap.docs.forEach(d => batch.delete(d.ref));
   await batch.commit();
+}
+
+// One-time fix for transactions saved before their description was
+// checked against the payment patterns (e.g. "Payment Thank You" entries
+// synced before Plaid credits were even kept — see services/plaid.js) —
+// isPayment is stamped once per doc at write time, not recomputed live, so
+// already-stored rows stay misclassified until something corrects them.
+// `transactions` is the caller's already-loaded full list (avoids a second
+// fetch); returns [{id, fields}] for whichever rows were actually updated.
+export async function reclassifyPayments(transactions) {
+  const toFix = transactions
+    .filter(t => !t.isPayment && isPaymentTransaction(t.description))
+    .map(t => ({
+      id:     t.id,
+      fields: { isPayment: true, ...(isCreditConfirmation(t.description) ? { isCredit: true } : {}) },
+    }));
+  if (!toFix.length) return [];
+  const batch = writeBatch(db);
+  toFix.forEach(({ id, fields }) => batch.update(doc(transactionsCol(), id), fields));
+  await batch.commit();
+  return toFix;
 }
 
 // Relabels every already-stored transaction from one statement/card (e.g.

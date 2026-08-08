@@ -87,6 +87,17 @@ export async function deleteTransactionsBySource(source) {
   await batch.commit();
 }
 
+// Relabels every already-stored transaction from one statement/card (e.g.
+// after the user nicknames a Plaid-linked card) — without this, a rename
+// would only take effect for future syncs, since sourceName is stamped
+// once per transaction doc at addTransactions() time, not looked up live.
+export async function renameTransactionsSource(source, sourceName) {
+  const snap  = await getDocs(query(transactionsCol(), where('source', '==', source)));
+  const batch = writeBatch(db);
+  snap.docs.forEach(d => batch.update(d.ref, { sourceName }));
+  await batch.commit();
+}
+
 // ── Plaid bank connections (see services/plaid.js, components/PlaidConnect.jsx) ──
 // One doc per connected account (Chase, Amex, ...), keyed by Plaid's own
 // itemId — lets each be synced/disconnected independently instead of one

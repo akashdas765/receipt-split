@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { usePlaidLink } from 'react-plaid-link';
-import { Landmark, Loader2, CheckCircle2, RefreshCw, Unlink, AlertCircle, Plus, CreditCard } from 'lucide-react';
+import { Landmark, Loader2, CheckCircle2, RefreshCw, Unlink, AlertCircle, Plus, CreditCard, Pencil } from 'lucide-react';
 import { session } from '../services/session';
 import { createLinkToken, exchangePublicToken, syncTransactions, fetchAccounts } from '../services/plaid';
-import { savePlaidConnection, deletePlaidConnection, deleteTransaction } from '../services/db';
+import { savePlaidConnection, deletePlaidConnection, deleteTransaction, renameTransactionsSource } from '../services/db';
 
 const INDIGO = '#6366f1';
 
@@ -13,8 +13,12 @@ const INDIGO = '#6366f1';
 // survive in storage rather than a variable.
 const OAUTH_STORAGE_KEY = 'plaid_oauth_link_token';
 
+// A user-set nickname always wins over Plaid's own name/mask — that's the
+// whole point of letting them rename "Chase Sapphire ...1234" to "Travel
+// card" or similar.
 function accountLabel(acct) {
   if (!acct) return 'Account';
+  if (acct.nickname) return acct.nickname;
   const name = acct.name || acct.official_name || 'Account';
   return acct.mask ? `${name} ...${acct.mask}` : name;
 }
@@ -30,7 +34,7 @@ function accountLabel(acct) {
 // separates those cards apart (in Loaded Statements, All Transactions,
 // Reports, everywhere downstream) is doSync() splitting one sync's results
 // back out per account before handing them to onAdd — see below.
-export default function PlaidConnect({ onAdd }) {
+export default function PlaidConnect({ onAdd, onRenameSource }) {
   const [connections,  setConnections]  = useState(() => session.getPlaidConnections());
   const [activeItemId, setActiveItemId] = useState(() => session.getPlaidConnections()[0]?.itemId || null);
   const [linkToken,     setLinkToken]     = useState(null);
@@ -39,6 +43,7 @@ export default function PlaidConnect({ onAdd }) {
   const [fullSyncId,    setFullSyncId]    = useState(null); // itemId currently doing a full-history re-sync
   const [errors,        setErrors]        = useState({}); // itemId (or 'new') -> message
   const [lastSyncedMap, setLastSyncedMap] = useState({});
+  const [editingAccountId, setEditingAccountId] = useState(null); // account id currently being renamed
 
   // Set once at mount — Plaid appends this after redirecting back from an
   // OAuth institution's own login page (Sandbox never does this, so this
@@ -196,6 +201,33 @@ export default function PlaidConnect({ onAdd }) {
     return () => { cancelled = true; };
   }, [active?.itemId, active?.accessToken]);
 
+  // Renaming a card updates its stored nickname (so future syncs use it)
+  // and relabels every transaction already synced from it (so existing
+  // Loaded Statements/Reports tabs pick up the new name immediately,
+  // instead of only from the next sync onward).
+  const saveNickname = useCallback(async (acct, rawValue) => {
+    setEditingAccountId(null);
+    const nickname = rawValue.trim();
+    if (nickname === (acct.nickname || '')) return;
+    if (!active) return;
+
+    // Firestore rejects explicit `undefined` field values, so clearing a
+    // nickname has to drop the key entirely rather than null it out.
+    const updatedAccounts = (active.accounts || []).map(a => {
+      if (a.id !== acct.id) return a;
+      const { nickname: _old, ...rest } = a;
+      return nickname ? { ...rest, nickname } : rest;
+    });
+    session.upsertPlaidConnection({ itemId: active.itemId, accounts: updatedAccounts });
+    await savePlaidConnection({ itemId: active.itemId, accounts: updatedAccounts });
+    refreshConnections();
+
+    const source = `plaid-${active.itemId}-${acct.id}`;
+    const label  = accountLabel({ ...acct, nickname });
+    await renameTransactionsSource(source, label);
+    onRenameSource?.(source, label);
+  }, [active, onRenameSource]);
+
   return (
     <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-3">
       <div className="flex items-center gap-2.5">
@@ -249,9 +281,30 @@ export default function PlaidConnect({ onAdd }) {
           {active.accounts?.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {active.accounts.map(a => (
-                <span key={a.id} className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-2 py-1">
-                  <CreditCard size={10} /> {accountLabel(a)}
-                </span>
+                editingAccountId === a.id ? (
+                  <input
+                    key={a.id}
+                    autoFocus
+                    defaultValue={a.nickname || ''}
+                    placeholder={accountLabel({ ...a, nickname: undefined })}
+                    onBlur={e => saveNickname(a, e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') e.currentTarget.blur();
+                      if (e.key === 'Escape') setEditingAccountId(null);
+                    }}
+                    className="text-[11px] font-semibold text-slate-700 bg-white border-2 rounded-full px-2 py-1 outline-none w-32"
+                    style={{ borderColor: INDIGO }}
+                  />
+                ) : (
+                  <button
+                    key={a.id}
+                    onClick={() => setEditingAccountId(a.id)}
+                    title="Tap to rename this card"
+                    className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-2 py-1 hover:border-indigo-200 hover:text-indigo-500 transition-colors"
+                  >
+                    <CreditCard size={10} /> {accountLabel(a)} <Pencil size={9} className="opacity-50" />
+                  </button>
+                )
               ))}
             </div>
           )}

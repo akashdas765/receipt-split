@@ -145,6 +145,14 @@ export default function StatementsPage() {
     setTransactions(prev => prev.filter(t => t.source !== sourceId));
   }, []);
 
+  // PlaidConnect already persists the rename + relabels stored transactions
+  // server-side (renameTransactionsSource) — this just mirrors that into
+  // local state so the Loaded Statements/account-filter tabs update
+  // immediately instead of on next reload.
+  const handleRenameSource = useCallback((sourceId, sourceName) => {
+    setTransactions(prev => prev.map(t => t.source === sourceId ? { ...t, sourceName } : t));
+  }, []);
+
   const handleRemoveTxn = useCallback(async (id) => {
     await deleteTransaction(id);
     setTransactions(prev => prev.filter(t => t.id !== id));
@@ -274,7 +282,7 @@ export default function StatementsPage() {
             <>
               {tab === 0 && (
                 <div className="space-y-4">
-                  <PlaidConnect onAdd={handleAdd} />
+                  <PlaidConnect onAdd={handleAdd} onRenameSource={handleRenameSource} />
                   <StatementUpload statements={statements} onAdd={handleAdd} onRemoveSource={handleRemoveSource} onUploaded={() => setTab(2)} />
                 </div>
               )}

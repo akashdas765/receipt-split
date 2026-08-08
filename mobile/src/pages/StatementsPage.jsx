@@ -1,16 +1,18 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ChevronLeft, ChevronRight, AlertCircle, Trash2 } from 'lucide-react';
+import { ArrowLeft, AlertCircle, Trash2 } from 'lucide-react';
 import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride } from '../services/db';
 import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { matchTransactions, computeSummary } from '../utils/matcher';
-import { getMonthRange, prevMonth, nextMonth, formatCurrency, formatShortDate } from '../utils/statementFormatters';
+import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { getCategoryIcon } from '../utils/categoryDetector';
 import StatementUpload from '../components/StatementUpload';
 import ManualEntryForm from '../components/ManualEntryForm';
 import MatchReview from '../components/MatchReview';
 import StatementsReports from '../components/StatementsReports';
 import SplitwisePickerModal from '../components/SplitwisePickerModal';
+import BottomNav from '../components/BottomNav';
+import MonthSlider from '../components/MonthSlider';
 
 const INDIGO = '#6366f1';
 
@@ -143,20 +145,13 @@ export default function StatementsPage() {
             <ArrowLeft size={20} />
           </button>
           <span className="font-extrabold text-slate-800 flex-1">Statements</span>
-          <div className="flex items-center gap-1">
-            <button onClick={() => setCurrentMonth(prevMonth)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 btn-press">
-              <ChevronLeft size={18} />
-            </button>
-            <span className="text-xs font-bold text-slate-600 w-24 text-center">{monthRange.label}</span>
-            <button onClick={() => setCurrentMonth(nextMonth)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 btn-press">
-              <ChevronRight size={18} />
-            </button>
-          </div>
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto px-4 py-4 pb-10 space-y-4">
+      <MonthSlider currentMonth={currentMonth} onChange={setCurrentMonth} />
+
+      <main className="flex-1">
+        <div className="max-w-2xl mx-auto px-4 py-4 pb-24 space-y-4">
 
           {swError && (
             <div className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl px-4 py-3 anim-pop">
@@ -321,6 +316,8 @@ export default function StatementsPage() {
           onClose={() => setPicker(null)}
         />
       )}
+
+      <BottomNav />
     </div>
   );
 }

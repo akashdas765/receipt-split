@@ -4,6 +4,9 @@ import { ArrowLeft, TrendingUp, Loader2, AlertCircle, Send } from 'lucide-react'
 import { loadReceiptsForInsights, loadTransactions } from '../services/db';
 import { fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { computeStats, askInsightsChat } from '../services/insights';
+import { getMonthRange } from '../utils/statementFormatters';
+import BottomNav from '../components/BottomNav';
+import MonthSlider from '../components/MonthSlider';
 
 const INDIGO  = '#6366f1';
 const EMERALD = '#10b981';
@@ -16,9 +19,18 @@ const SUGGESTIONS = [
 
 export default function InsightsPage() {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState('');
-  const [stats,   setStats]   = useState(null);
+
+  // Full receipt/transaction history, loaded once — filtered to the
+  // selected month client-side, same pattern HomePage uses.
+  const [receipts,     setReceipts]     = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [myId,         setMyId]         = useState(null);
+  const [initialLoading, setInitialLoading] = useState(true);
+
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [stats, setStats] = useState(null);
 
   const [messages,   setMessages]   = useState([]); // [{ role, content }]
   const [input,      setInput]      = useState('');
@@ -29,35 +41,61 @@ export default function InsightsPage() {
   useEffect(() => {
     (async () => {
       try {
-        const [receipts, me] = await Promise.all([
+        const [receiptsList, txns, me] = await Promise.all([
           loadReceiptsForInsights(),
+          loadTransactions(),
           fetchCurrentUser().catch(() => null),
         ]);
-
-        // Full Splitwise history + imported bank transactions require the
-        // resolved Splitwise user id, so these run after the above rather
-        // than in the same Promise.all.
-        let transactions = [];
-        let splitwiseExpenses = [];
-        if (me?.id) {
-          const oneYearAgo = new Date();
-          oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-          const [txns, sw] = await Promise.all([
-            loadTransactions(),
-            fetchAllExpenses(me.id, { datedAfter: oneYearAgo.toISOString().slice(0, 10) }).catch(() => ({ expenses: [] })),
-          ]);
-          transactions = txns;
-          splitwiseExpenses = sw.expenses;
-        }
-
-        setStats(computeStats({ receipts, myId: me?.id, transactions, splitwiseExpenses }));
+        setReceipts(receiptsList);
+        setTransactions(txns);
+        setMyId(me?.id || null);
       } catch (err) {
         setError(err?.message || 'Could not load your expense history.');
       } finally {
-        setLoading(false);
+        setInitialLoading(false);
       }
     })();
   }, []);
+
+  // Re-scopes Splitwise history to the selected month and recomputes stats
+  // — mirrors HomePage/Statements' per-month fetch pattern.
+  useEffect(() => {
+    if (initialLoading) return;
+    let cancelled = false;
+    (async () => {
+      setStatsLoading(true);
+      try {
+        const { start, end } = getMonthRange(currentMonth);
+        let splitwiseExpenses = [];
+        if (myId) {
+          const sw = await fetchAllExpenses(myId, { datedAfter: start, datedBefore: end }).catch(() => ({ expenses: [] }));
+          splitwiseExpenses = sw.expenses;
+        }
+        const monthlyReceipts = receipts.filter(r => {
+          const d = (r.date || r.scanned_at || '').slice(0, 10);
+          return d >= start && d <= end;
+        });
+        const monthlyTxns = transactions.filter(t => t.date && t.date.slice(0, 10) >= start && t.date.slice(0, 10) <= end);
+        if (!cancelled) {
+          setStats(computeStats({ receipts: monthlyReceipts, myId, transactions: monthlyTxns, splitwiseExpenses }));
+        }
+      } catch (err) {
+        if (!cancelled) setError(err?.message || 'Could not load your expense history.');
+      } finally {
+        if (!cancelled) setStatsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [initialLoading, currentMonth, myId, receipts, transactions]);
+
+  // The chat's context is tied to whichever month's stats it was sent —
+  // switching months mid-conversation would otherwise leave earlier answers
+  // referencing a different period than newer ones, so start fresh instead.
+  useEffect(() => {
+    setMessages([]);
+  }, [currentMonth]);
+
+  const loading = initialLoading || statsLoading;
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -92,8 +130,10 @@ export default function InsightsPage() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto px-4 py-4 pb-10 space-y-5">
+      <MonthSlider currentMonth={currentMonth} onChange={setCurrentMonth} />
+
+      <main className="flex-1">
+        <div className="max-w-2xl mx-auto px-4 py-4 pb-24 space-y-5">
           {loading ? (
             <div className="flex flex-col gap-3 pt-8">
               {[0, 1].map(i => <div key={i} className="h-24 rounded-2xl skeleton" />)}
@@ -188,24 +228,6 @@ export default function InsightsPage() {
                 </div>
               )}
 
-              {/* Monthly */}
-              {stats.monthly.length > 0 && (
-                <div className="anim-fade-up">
-                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">By month</p>
-                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 flex items-end gap-3 h-32">
-                    {stats.monthly.map(m => {
-                      const max = Math.max(...stats.monthly.map(x => x.amount), 1);
-                      return (
-                        <div key={m.month} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end">
-                          <div className="w-full rounded-t-lg" style={{ height: `${Math.max((m.amount / max) * 100, 3)}%`, background: EMERALD }} />
-                          <span className="text-[10px] text-slate-400 font-semibold">{m.month.slice(5)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
               {/* Chat */}
               <div className="anim-fade-up">
                 <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Ask about your spending</p>
@@ -278,6 +300,8 @@ export default function InsightsPage() {
           )}
         </div>
       </main>
+
+      <BottomNav />
     </div>
   );
 }

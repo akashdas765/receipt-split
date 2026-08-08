@@ -29,9 +29,6 @@ export function getMonthRange(date = new Date()) {
   };
 }
 
-export function prevMonth(date) { return new Date(date.getFullYear(), date.getMonth() - 1, 1); }
-export function nextMonth(date) { return new Date(date.getFullYear(), date.getMonth() + 1, 1); }
-
 export function parseDate(str) {
   if (!str) return null;
   const d = new Date(str);

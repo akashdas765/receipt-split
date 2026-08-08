@@ -68,22 +68,35 @@ export async function fetchAllExpenses(myId, { datedAfter, datedBefore, groupId 
 
   const rawExpenses = data.expenses || [];
 
-  const expenses = rawExpenses
+  const allExpenses = rawExpenses
     .filter(e => !e.deleted_at && !e.payment && !SKIP_DESC.test(e.description || ''))
     .map(e => {
       const userShare = (e.users || []).find(u => String(u.user_id) === String(myId));
       return {
-        id:           e.id,
-        description:  e.description,
-        cost:         parseFloat(e.cost),
-        date:         e.date,
-        group_id:     e.group_id,
-        category:     e.category?.name || 'Other',
-        myPaidShare:  parseFloat(userShare?.paid_share  || 0),
-        myOwedShare:  parseFloat(userShare?.owed_share  || 0),
-        myNetBalance: parseFloat(userShare?.net_balance || 0),
+        id:            e.id,
+        description:   e.description,
+        cost:          parseFloat(e.cost),
+        currency_code: e.currency_code || 'USD',
+        date:          e.date,
+        group_id:      e.group_id,
+        category:      e.category?.name || 'Other',
+        addedBy:       e.created_by?.first_name || null,
+        myPaidShare:   parseFloat(userShare?.paid_share  || 0),
+        myOwedShare:   parseFloat(userShare?.owed_share  || 0),
+        myNetBalance:  parseFloat(userShare?.net_balance || 0),
       };
     });
+
+  // Splitwise groups can mix currencies (e.g. a trip expense logged in
+  // INR alongside everyday USD ones). Every $ total in this app — home
+  // screen, Insights, Statements — assumes USD; blending in a foreign-
+  // currency `cost` as if it were dollars would silently corrupt those
+  // totals (a ₹3600 expense showing up as $3600). Split those out here so
+  // every caller gets a safe-to-sum USD-only list by default, with the
+  // excluded ones available separately for callers that want to surface
+  // them (marked, not blended into totals) rather than just dropping them.
+  const expenses              = allExpenses.filter(e => e.currency_code === 'USD');
+  const otherCurrencyExpenses = allExpenses.filter(e => e.currency_code !== 'USD');
 
   // Payments *received* from others (e.g. a settle-up) — not an expense,
   // shown separately so it doesn't inflate spend totals.
@@ -104,7 +117,7 @@ export async function fetchAllExpenses(myId, { datedAfter, datedBefore, groupId 
       }];
     });
 
-  return { expenses, paymentsReceived };
+  return { expenses, otherCurrencyExpenses, paymentsReceived };
 }
 
 export async function postExpense({ description, details, groupId, paidAmounts = {}, personTotals, members, expenseId }) {

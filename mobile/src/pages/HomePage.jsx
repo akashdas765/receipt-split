@@ -2,12 +2,14 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Receipt, LogOut, Trash2, CheckCheck, AlertTriangle, X, Users, AlertCircle, Landmark, CreditCard, Loader2 } from 'lucide-react';
 import { logout } from '../services/auth';
-import { loadReceiptsForInsights, deleteReceipt } from '../services/db';
+import { loadReceiptsForInsights, deleteReceipt, loadManualAccounts, saveManualAccount, deleteManualAccount } from '../services/db';
 import { fetchCurrentUser, fetchAllExpenses, fetchGroups, fetchNetBalance } from '../services/splitwise';
 import { fetchAccountBalances } from '../services/plaid';
 import { session } from '../services/session';
+import { accountLabel } from '../utils/accountLabel';
 import { getMonthRange } from '../utils/statementFormatters';
 import BottomNav from '../components/BottomNav';
+import NetWorthDetail from '../components/NetWorthDetail';
 import MonthSlider from '../components/MonthSlider';
 
 const INDIGO = '#6366f1';
@@ -54,14 +56,17 @@ export default function HomePage() {
   const [swAuthError, setSwAuthError] = useState('');
 
   // Net worth card: live Plaid balances (per account, tagged bank/credit
-  // via PlaidConnect.jsx's classification) + Splitwise's own net balance.
+  // via PlaidConnect.jsx's classification) + Splitwise's own net balance +
+  // manually-entered accounts (rewards, cash, ... — no transaction feed).
   // Point-in-time, not month-scoped — unlike everything else on this page,
   // it deliberately doesn't depend on currentMonth.
-  const [plaidBalances,   setPlaidBalances]   = useState([]); // [{id, current, isoCurrencyCode, accountType}]
+  const [plaidBalances,   setPlaidBalances]   = useState([]); // [{id, label, institutionName, current, isoCurrencyCode, accountType}]
   const [loadingBalances, setLoadingBalances] = useState(true);
   const [balanceError,    setBalanceError]    = useState('');
   const [splitwiseNet,    setSplitwiseNet]    = useState(0);
   const [loadingNet,      setLoadingNet]      = useState(true);
+  const [manualAccounts,  setManualAccounts]  = useState([]);
+  const [netWorthOpen,    setNetWorthOpen]    = useState(false);
 
   useEffect(() => {
     loadReceiptsForInsights().then(list => { setReceipts(list); setLoadingReceipts(false); });
@@ -76,6 +81,7 @@ export default function HomePage() {
         setSwAuthError(err?.message || 'Could not connect to Splitwise — your share and Splitwise expenses won\'t show until this is fixed.');
       });
     fetchNetBalance().then(setSplitwiseNet).catch(() => {}).finally(() => setLoadingNet(false));
+    loadManualAccounts().then(setManualAccounts).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -108,7 +114,14 @@ export default function HomePage() {
           // see defaultAccountType there — was never persisted).
           const accountType = meta?.accountType
             || (b.type === 'depository' ? 'bank' : b.type === 'credit' ? 'credit' : undefined);
-          flat.push({ id: b.id, current: b.current, isoCurrencyCode: b.isoCurrencyCode, accountType });
+          flat.push({
+            id:              b.id,
+            label:           accountLabel({ name: b.name, mask: b.mask, nickname: meta?.nickname }),
+            institutionName: conn.institutionName,
+            current:         b.current,
+            isoCurrencyCode: b.isoCurrencyCode,
+            accountType,
+          });
         }
       }
       setPlaidBalances(flat);
@@ -202,7 +215,33 @@ export default function HomePage() {
       .reduce((s, b) => s + b.current, 0),
     [plaidBalances]
   );
-  const netWorth = bankTotal - creditDebtTotal + splitwiseNet;
+  // Manual accounts (rewards, cash, a loan tracked by hand, ...) — no
+  // transaction feed, just a name/balance/type the user enters directly.
+  const manualAssetTotal = useMemo(() =>
+    manualAccounts.filter(a => a.type !== 'liability').reduce((s, a) => s + (a.balance || 0), 0),
+    [manualAccounts]
+  );
+  const manualLiabilityTotal = useMemo(() =>
+    manualAccounts.filter(a => a.type === 'liability').reduce((s, a) => s + (a.balance || 0), 0),
+    [manualAccounts]
+  );
+  const netWorth = bankTotal - creditDebtTotal + splitwiseNet + manualAssetTotal - manualLiabilityTotal;
+  const hasNetWorthData = hasPlaidAccounts || manualAccounts.length > 0;
+
+  const handleSaveManualAccount = async (fields) => {
+    const id = await saveManualAccount(fields);
+    setManualAccounts(prev => {
+      const existing = prev.some(a => a.id === id);
+      return existing
+        ? prev.map(a => a.id === id ? { ...a, ...fields, id } : a)
+        : [...prev, { ...fields, id }];
+    });
+  };
+
+  const handleDeleteManualAccount = async (id) => {
+    await deleteManualAccount(id);
+    setManualAccounts(prev => prev.filter(a => a.id !== id));
+  };
 
   const reloadMonth = () => {
     if (!myId) return;
@@ -312,13 +351,15 @@ export default function HomePage() {
               </div>
             )}
 
-            {/* Net worth — bank balances + Splitwise net position, live from
-                Plaid/Splitwise rather than anything stored, since a stale
-                number here would be actively misleading. Point-in-time, not
-                scoped to the month slider above. */}
-            {hasPlaidAccounts && (
-              <div
-                className="rounded-2xl p-4 mb-4 border border-emerald-100 anim-fade-up"
+            {/* Net worth — bank balances + Splitwise net position + manual
+                accounts, live from Plaid/Splitwise rather than anything
+                stored, since a stale number here would be actively
+                misleading. Point-in-time, not scoped to the month slider
+                above. Tap for the per-account breakdown. */}
+            {hasNetWorthData && (
+              <button
+                onClick={() => setNetWorthOpen(true)}
+                className="w-full text-left rounded-2xl p-4 mb-4 border border-emerald-100 anim-fade-up card-lift"
                 style={{ background: 'linear-gradient(135deg, #ecfdf5, #f0fdfa)' }}
               >
                 <div className="flex items-center justify-between gap-3 mb-1">
@@ -328,10 +369,12 @@ export default function HomePage() {
                 <p className="text-2xl font-extrabold text-slate-800">{formatWithCurrency(netWorth, 'USD')}</p>
 
                 <div className="mt-3 pt-3 border-t border-emerald-100/60 space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="flex items-center gap-1.5 text-slate-500"><Landmark size={12} /> Bank balance</span>
-                    <span className="font-semibold text-slate-700">{formatWithCurrency(bankTotal, 'USD')}</span>
-                  </div>
+                  {hasPlaidAccounts && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="flex items-center gap-1.5 text-slate-500"><Landmark size={12} /> Bank balance</span>
+                      <span className="font-semibold text-slate-700">{formatWithCurrency(bankTotal, 'USD')}</span>
+                    </div>
+                  )}
                   {creditDebtTotal > 0 && (
                     <div className="flex items-center justify-between text-xs">
                       <span className="flex items-center gap-1.5 text-slate-500"><CreditCard size={12} /> Credit card debt</span>
@@ -344,9 +387,18 @@ export default function HomePage() {
                       {splitwiseNet >= 0 ? '+' : ''}{formatWithCurrency(splitwiseNet, 'USD')}
                     </span>
                   </div>
+                  {manualAccounts.length > 0 && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-500">Other accounts</span>
+                      <span className="font-semibold text-slate-700">
+                        {formatWithCurrency(manualAssetTotal - manualLiabilityTotal, 'USD')}
+                      </span>
+                    </div>
+                  )}
                 </div>
-                {balanceError && <p className="text-[10px] text-amber-500 mt-2">{balanceError}</p>}
-              </div>
+                <p className="text-[10px] text-emerald-600/70 mt-2 font-semibold">Tap for details</p>
+                {balanceError && <p className="text-[10px] text-amber-500 mt-1">{balanceError}</p>}
+              </button>
             )}
 
             {/* Month total */}
@@ -542,6 +594,18 @@ export default function HomePage() {
           </>
         )}
       </main>
+
+      {netWorthOpen && (
+        <NetWorthDetail
+          netWorth={netWorth}
+          plaidBalances={plaidBalances}
+          splitwiseNet={splitwiseNet}
+          manualAccounts={manualAccounts}
+          onSaveAccount={handleSaveManualAccount}
+          onDeleteAccount={handleDeleteManualAccount}
+          onClose={() => setNetWorthOpen(false)}
+        />
+      )}
 
       <BottomNav />
     </div>

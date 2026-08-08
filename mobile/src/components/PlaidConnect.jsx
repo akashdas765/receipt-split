@@ -4,6 +4,7 @@ import { Landmark, Loader2, CheckCircle2, RefreshCw, Unlink, AlertCircle, Plus, 
 import { session } from '../services/session';
 import { createLinkToken, exchangePublicToken, syncTransactions, fetchAccounts } from '../services/plaid';
 import { savePlaidConnection, deletePlaidConnection, deleteTransaction, renameTransactionsSource } from '../services/db';
+import { accountLabel } from '../utils/accountLabel';
 
 const INDIGO = '#6366f1';
 
@@ -12,16 +13,6 @@ const INDIGO = '#6366f1';
 // login and back, which clears normal component state, so this has to
 // survive in storage rather than a variable.
 const OAUTH_STORAGE_KEY = 'plaid_oauth_link_token';
-
-// A user-set nickname always wins over Plaid's own name/mask — that's the
-// whole point of letting them rename "Chase Sapphire ...1234" to "Travel
-// card" or similar.
-function accountLabel(acct) {
-  if (!acct) return 'Account';
-  if (acct.nickname) return acct.nickname;
-  const name = acct.name || acct.official_name || 'Account';
-  return acct.mask ? `${name} ...${acct.mask}` : name;
-}
 
 // Plaid's own account type is a reliable default for the bank-vs-credit
 // tag (used by HomePage's net worth card) — the manual toggle in the chip

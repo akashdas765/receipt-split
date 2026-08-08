@@ -184,3 +184,36 @@ export async function migrateLegacyPlaidConnection() {
     plaid_institution_name: null,
   }, { merge: true });
 }
+
+// ── Manual net-worth accounts (see components/NetWorthDetail.jsx) ──────────
+// For balances with no transaction feed at all (rewards points, cash, a
+// loan you're tracking by hand, ...) — just a name/balance/type the user
+// enters directly, folded into HomePage's net worth total alongside the
+// live Plaid/Splitwise numbers. type: 'asset' adds to net worth, 'liability'
+// subtracts.
+
+function manualAccountsCol() {
+  return collection(db, 'users', session.getUserId(), 'manualAccounts');
+}
+
+export async function loadManualAccounts() {
+  try {
+    const snap = await getDocs(manualAccountsCol());
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch {
+    return [];
+  }
+}
+
+// Omit `id` to create a new account (Firestore assigns the id); pass it to
+// update an existing one.
+export async function saveManualAccount({ id, name, balance, type }) {
+  const data = { name, balance, type };
+  const ref  = id ? doc(manualAccountsCol(), id) : doc(manualAccountsCol());
+  await setDoc(ref, data, { merge: true });
+  return ref.id;
+}
+
+export async function deleteManualAccount(id) {
+  await deleteDoc(doc(manualAccountsCol(), id));
+}

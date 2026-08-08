@@ -228,6 +228,19 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
     onRenameSource?.(source, label);
   }, [active, onRenameSource]);
 
+  // Plaid doesn't reliably expose "is this checking or a credit card" the
+  // same way across every institution, so it's a plain user-set tag —
+  // toggled by tapping the chip's icon, independent of renaming. Doesn't
+  // touch stored transactions (unlike nickname), just the account's own
+  // metadata, since nothing downstream keys off it yet.
+  const saveAccountType = useCallback(async (acct, accountType) => {
+    if (!active) return;
+    const updatedAccounts = (active.accounts || []).map(a => a.id === acct.id ? { ...a, accountType } : a);
+    session.upsertPlaidConnection({ itemId: active.itemId, accounts: updatedAccounts });
+    await savePlaidConnection({ itemId: active.itemId, accounts: updatedAccounts });
+    refreshConnections();
+  }, [active]);
+
   return (
     <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-3">
       <div className="flex items-center gap-2.5">
@@ -296,14 +309,25 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
                     style={{ borderColor: INDIGO }}
                   />
                 ) : (
-                  <button
+                  <span
                     key={a.id}
-                    onClick={() => setEditingAccountId(a.id)}
-                    title="Tap to rename this card"
-                    className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-2 py-1 hover:border-indigo-200 hover:text-indigo-500 transition-colors"
+                    className="flex items-center gap-0.5 text-[11px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 rounded-full pl-1 pr-2 py-1"
                   >
-                    <CreditCard size={10} /> {accountLabel(a)} <Pencil size={9} className="opacity-50" />
-                  </button>
+                    <button
+                      onClick={() => saveAccountType(a, a.accountType === 'bank' ? 'credit' : 'bank')}
+                      title={a.accountType === 'bank' ? 'Bank account — tap to mark as credit card' : 'Credit card — tap to mark as bank account'}
+                      className="flex items-center justify-center w-5 h-5 rounded-full hover:bg-slate-200 hover:text-indigo-500 transition-colors shrink-0"
+                    >
+                      {a.accountType === 'bank' ? <Landmark size={10} /> : <CreditCard size={10} />}
+                    </button>
+                    <button
+                      onClick={() => setEditingAccountId(a.id)}
+                      title="Tap to rename this card"
+                      className="flex items-center gap-1 pl-0.5 hover:text-indigo-500 transition-colors"
+                    >
+                      {accountLabel(a)} <Pencil size={9} className="opacity-50" />
+                    </button>
+                  </span>
                 )
               ))}
             </div>

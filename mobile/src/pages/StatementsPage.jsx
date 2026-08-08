@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, AlertCircle, Trash2, CreditCard } from 'lucide-react';
+import { ArrowLeft, AlertCircle, Trash2, CreditCard, Upload, X } from 'lucide-react';
 import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride } from '../services/db';
 import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { matchTransactions, computeSummary } from '../utils/matcher';
@@ -17,7 +17,11 @@ import MonthSlider from '../components/MonthSlider';
 
 const INDIGO = '#6366f1';
 
-const TABS = ['Upload', 'Manual', 'Review', 'Reports', 'All', 'Payments'];
+// 'Upload' isn't a tab — connecting a bank / dropping a statement isn't
+// something you switch to and browse, it's a one-off action, so it lives
+// behind its own "Add" button (opens a bottom sheet) instead of competing
+// for space with the tabs you actually flip between day to day.
+const TABS = ['Manual', 'Review', 'Reports', 'All', 'Payments'];
 
 export default function StatementsPage() {
   const navigate = useNavigate();
@@ -34,8 +38,9 @@ export default function StatementsPage() {
   const [loadingSw,    setLoadingSw]    = useState(true);
   const [swError,      setSwError]      = useState('');
 
-  const [tab,    setTab]    = useState(0);
+  const [tab,    setTab]    = useState(1); // 'Review' — Upload moved out of the tab bar, so it's no longer the default landing tab
   const [picker, setPicker] = useState(null); // txn being linked, or null
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   // Which loaded statement/account to scope the page to — 'all' or a
   // `source` id. Each connected card (Plaid) or uploaded file gets its own
@@ -187,6 +192,12 @@ export default function StatementsPage() {
             <ArrowLeft size={20} />
           </button>
           <span className="font-extrabold text-slate-800 flex-1">Statements</span>
+          <button
+            onClick={() => setUploadOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold text-white btn-gradient btn-press"
+          >
+            <Upload size={13} /> Add
+          </button>
         </div>
       </header>
 
@@ -285,14 +296,8 @@ export default function StatementsPage() {
             </div>
           ) : (
             <>
-              {tab === 0 && (
-                <div className="space-y-4">
-                  <PlaidConnect onAdd={handleAdd} onRenameSource={handleRenameSource} />
-                  <StatementUpload statements={statements} onAdd={handleAdd} onRemoveSource={handleRemoveSource} onUploaded={() => setTab(2)} />
-                </div>
-              )}
-              {tab === 1 && <ManualEntryForm onAdd={handleAdd} />}
-              {tab === 2 && (
+              {tab === 0 && <ManualEntryForm onAdd={handleAdd} />}
+              {tab === 1 && (
                 loadingSw ? (
                   <div className="flex flex-col gap-3 pt-4">
                     {[0, 1, 2].map(i => <div key={i} className="h-16 rounded-2xl skeleton" />)}
@@ -309,10 +314,10 @@ export default function StatementsPage() {
                   />
                 )
               )}
-              {tab === 3 && (
+              {tab === 2 && (
                 <StatementsReports matched={matched} splitwiseOwed={splitwiseOwed} personalTotal={personalTotal} monthRange={monthRange} />
               )}
-              {tab === 4 && (
+              {tab === 3 && (
                 <div className="space-y-2">
                   {scopedTransactions.length === 0 ? (
                     <div className="text-center py-8 text-sm text-slate-400">No transactions loaded yet</div>
@@ -333,7 +338,7 @@ export default function StatementsPage() {
                   )}
                 </div>
               )}
-              {tab === 5 && (
+              {tab === 4 && (
                 <div className="space-y-4">
                   <div>
                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Card payments & transfers — {monthRange.label}</p>
@@ -389,6 +394,34 @@ export default function StatementsPage() {
           onSelect={handlePickerSelect}
           onClose={() => setPicker(null)}
         />
+      )}
+
+      {uploadOpen && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40 anim-fade-in"
+          onClick={e => e.target === e.currentTarget && setUploadOpen(false)}
+        >
+          <div className="bg-white rounded-t-3xl max-h-[85vh] flex flex-col anim-sheet-up">
+            <div className="flex justify-center pt-3 pb-1">
+              <div className="w-10 h-1 rounded-full bg-slate-200" />
+            </div>
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+              <p className="font-extrabold text-slate-800 text-sm">Add transactions</p>
+              <button onClick={() => setUploadOpen(false)} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="overflow-y-auto px-4 py-4 space-y-4">
+              <PlaidConnect onAdd={handleAdd} onRenameSource={handleRenameSource} />
+              <StatementUpload
+                statements={statements}
+                onAdd={handleAdd}
+                onRemoveSource={handleRemoveSource}
+                onUploaded={() => { setUploadOpen(false); setTab(1); }}
+              />
+            </div>
+          </div>
+        </div>
       )}
 
       <BottomNav />

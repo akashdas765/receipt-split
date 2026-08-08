@@ -48,6 +48,65 @@ export async function fetchCurrentUser() {
   return { id: String(data.user.id), name: data.user.first_name };
 }
 
+const SKIP_DESC = /settle|settlement|reimburs|payback|pay back|paid back/i;
+
+// Full Splitwise expense history (not just receipts scanned through this
+// app), enriched with the current user's paid/owed/net share of each —
+// used by the Statements/bank-reconciliation feature to figure out which
+// bank transactions are already covered by a Splitwise split. myId: the
+// user's own Splitwise member id (see fetchCurrentUser).
+export async function fetchAllExpenses(myId, { datedAfter, datedBefore, groupId } = {}) {
+  const params = new URLSearchParams();
+  if (datedAfter)  params.set('dated_after',  datedAfter);
+  if (datedBefore) params.set('dated_before', datedBefore);
+  if (groupId)     params.set('group_id',     String(groupId));
+  params.set('limit', '500');
+
+  const res  = await swFetch(`/get_expenses?${params.toString()}`);
+  const data = await res.json();
+  if (!res.ok || data?.error) throw new Error(data?.error || 'Could not load Splitwise expenses.');
+
+  const rawExpenses = data.expenses || [];
+
+  const expenses = rawExpenses
+    .filter(e => !e.deleted_at && !e.payment && !SKIP_DESC.test(e.description || ''))
+    .map(e => {
+      const userShare = (e.users || []).find(u => String(u.user_id) === String(myId));
+      return {
+        id:           e.id,
+        description:  e.description,
+        cost:         parseFloat(e.cost),
+        date:         e.date,
+        group_id:     e.group_id,
+        category:     e.category?.name || 'Other',
+        myPaidShare:  parseFloat(userShare?.paid_share  || 0),
+        myOwedShare:  parseFloat(userShare?.owed_share  || 0),
+        myNetBalance: parseFloat(userShare?.net_balance || 0),
+      };
+    });
+
+  // Payments *received* from others (e.g. a settle-up) — not an expense,
+  // shown separately so it doesn't inflate spend totals.
+  const paymentsReceived = rawExpenses
+    .filter(e => !e.deleted_at && e.payment === true)
+    .flatMap(e => {
+      const userShare = (e.users || []).find(u => String(u.user_id) === String(myId));
+      const received  = parseFloat(userShare?.owed_share || 0);
+      if (received <= 0) return [];
+      const payer = (e.users || []).find(u => parseFloat(u.paid_share || 0) > 0);
+      return [{
+        id:          e.id,
+        description: e.description || 'Payment',
+        amount:      received,
+        date:        e.date,
+        paidBy:      payer?.user?.first_name || 'Someone',
+        group_id:    e.group_id,
+      }];
+    });
+
+  return { expenses, paymentsReceived };
+}
+
 export async function postExpense({ description, details, groupId, paidAmounts = {}, personTotals, members, expenseId }) {
   // personTotals: { memberId: amount } — only members who owe something
   // paidAmounts:  { memberId: amount } — how much each payer contributed

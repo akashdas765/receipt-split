@@ -7,6 +7,7 @@ const SW_BASE = 'https://secure.splitwise.com/api/v3.0';
 const ALLOWED_PATHS = [
   /^\/get_groups$/,
   /^\/get_current_user$/,
+  /^\/get_expenses(\?.*)?$/,
   /^\/create_expense$/,
   /^\/update_expense\/\d+$/,
 ];

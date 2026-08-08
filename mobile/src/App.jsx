@@ -11,6 +11,7 @@ import ScanPage    from './pages/ScanPage';
 import DetailPage  from './pages/DetailPage';
 import ApprovePage from './pages/ApprovePage';
 import InsightsPage from './pages/InsightsPage';
+import StatementsPage from './pages/StatementsPage';
 
 function Spinner() {
   return (
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="/detail"  element={<DetailPage />} />
             <Route path="/approve" element={<ApprovePage />} />
             <Route path="/insights" element={<InsightsPage />} />
+            <Route path="/statements" element={<StatementsPage />} />
             <Route path="*"        element={<Navigate to="/" replace />} />
           </>
         ) : (

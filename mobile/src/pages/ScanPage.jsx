@@ -3,24 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Camera, ImagePlus, Sparkles, X, AlertCircle, Loader2, FileText, Plus } from 'lucide-react';
 import { parseReceiptImage } from '../services/groq';
 import { saveReceipt } from '../services/db';
+import { loadPdfjs } from '../utils/pdfjsLoader';
 
 const INDIGO = '#6366f1';
-
-// pdfjs-dist + its ~1MB worker are only needed by the (uncommon) PDF upload
-// path — load them on first use instead of bundling into the initial page load.
-let pdfjsLibPromise = null;
-function loadPdfjs() {
-  if (!pdfjsLibPromise) {
-    pdfjsLibPromise = Promise.all([
-      import('pdfjs-dist'),
-      import('pdfjs-dist/build/pdf.worker.min.js?url'),
-    ]).then(([pdfjsLib, workerUrlModule]) => {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrlModule.default;
-      return pdfjsLib;
-    });
-  }
-  return pdfjsLibPromise;
-}
 
 // Merge items from multiple parsed images, removing cross-image duplicates.
 // Items within the same image are kept as-is (same item can legitimately

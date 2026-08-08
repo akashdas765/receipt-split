@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Store, Calendar, List, DollarSign, Trash2, Plus, ChevronDown, CheckCircle2, AlertCircle, X, Pencil } from 'lucide-react';
+import { Store, Calendar, List, DollarSign, Trash2, Plus, ChevronDown, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { fetchGroups } from '../services/splitwise';
 import { memberColor } from '../utils/memberColor';
+import { normalizeItems, lineAmount } from '../utils/receiptItems';
 import PageHeader from '../components/PageHeader';
 
 const INDIGO  = '#6366f1';
@@ -16,55 +17,10 @@ function isTaxable(item, isGrocery) {
   return true;
 }
 
-// Normalize items coming from Firestore (old format used split_members string[])
-// and from OCR (which only has quantity + line-total amount, no unit price).
-function normalizeItems(rawItems) {
-  return (rawItems || []).map(item => {
-    const qty = parseFloat(item.quantity) || 1;
-    return {
-      ...item,
-      split_shares: item.split_shares ||
-        Object.fromEntries((item.split_members || []).map(id => [id, 1])),
-      unit_price: item.unit_price ?? (parseFloat(item.amount) || 0) / qty,
-      split_mode: item.split_mode || 'whole',
-      unit_shares: item.unit_shares || Array.from({ length: Math.max(1, Math.round(qty)) }, () => ({})),
-    };
-  });
-}
-
-// Source of truth for an item's pre-tax total: unit price × quantity, both
-// kept as the raw strings the user is typing so editing one field never
-// clobbers mid-edit text in the other (see updateItem — no parsing on keystroke).
-function lineAmount(item) {
-  return (parseFloat(item.unit_price) || 0) * (parseFloat(item.quantity) || 1);
-}
-
-// Collapses either split shape (whole-item split_shares, or per-unit
-// unit_shares) into one {memberId: totalShareCount} map — used by the
-// read-only view mode, which shows "who's on this item" without needing
-// the full per-unit editing UI.
-function flattenShares(item) {
-  if (item.split_mode === 'unit' && item.unit_shares?.length) {
-    const combined = {};
-    item.unit_shares.forEach(u => {
-      Object.keys(u).forEach(id => {
-        if ((u[id] || 0) > 0) combined[id] = (combined[id] || 0) + u[id];
-      });
-    });
-    return combined;
-  }
-  return item.split_shares || {};
-}
-
 export default function DetailPage() {
   const navigate     = useNavigate();
   const { state: receipt } = useLocation();
 
-  // Already-posted receipts land on a read-only summary instead of
-  // dropping straight into the full edit form — "Edit" switches to the
-  // same form a pending receipt always used. Pending receipts (never
-  // approved) skip straight to edit, same as before this existed.
-  const [mode,          setMode]          = useState(receipt?.approved ? 'view' : 'edit');
   const [items,         setItems]         = useState(normalizeItems(receipt?.items));
   const [merchant,      setMerchant]      = useState(receipt?.merchant || '');
   const [date,          setDate]          = useState(receipt?.date     || new Date().toISOString().split('T')[0]);
@@ -228,110 +184,6 @@ export default function DetailPage() {
   };
 
   if (!receipt) return null;
-
-  if (mode === 'view') {
-    const groupName          = groups.find(g => g.id === receipt.groupId)?.name;
-    const viewMembers        = receipt.members || members;
-    const personTotals       = receipt.personTotals || {};
-    const membersWithAmounts = viewMembers
-      .map(m => ({ ...m, amount: personTotals[String(m.id)] || 0 }))
-      .filter(m => m.amount > 0);
-    const total = receipt.grandTotal ?? receipt.total ?? 0;
-
-    return (
-      <div className="min-h-screen flex flex-col aurora-bg">
-        <PageHeader title="Receipt Details" onBack={() => navigate('/')}>
-          <button
-            onClick={() => setMode('edit')}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold text-white btn-gradient btn-press shrink-0"
-          >
-            <Pencil size={13} /> Edit
-          </button>
-        </PageHeader>
-
-        <main className="flex-1 overflow-y-auto">
-          <div className="max-w-2xl mx-auto px-4 py-4 pb-10 space-y-5">
-
-            {/* Total card */}
-            <div className="bg-white rounded-3xl p-6 flex flex-col items-center border border-slate-100 shadow-sm anim-scale-in"
-              style={{ boxShadow: '0 16px 40px rgba(99,102,241,0.10)' }}>
-              <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3"
-                style={{ background: 'linear-gradient(135deg, #d1fae5, #ccfbf1)' }}>
-                <CheckCircle2 size={26} className="text-emerald-500" />
-              </div>
-              <p className="font-bold text-slate-600 text-sm mb-1">{merchant || 'Receipt'}</p>
-              <p className="font-extrabold text-4xl mb-1 text-gradient">${total.toFixed(2)}</p>
-              <div className="flex items-center gap-2 text-xs text-slate-400">
-                <span>{date}</span>
-                {groupName && <><span className="text-slate-200">·</span><span>{groupName}</span></>}
-              </div>
-              <span className="mt-2 text-xs font-bold text-emerald-500 bg-emerald-50 px-2.5 py-1 rounded-full">
-                Posted to Splitwise
-              </span>
-            </div>
-
-            {/* Split breakdown */}
-            <div className="anim-fade-up delay-1">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Split breakdown</p>
-              <div className="flex flex-col gap-2 stagger">
-                {membersWithAmounts.map(m => {
-                  const color = memberColor(m.id, viewMembers);
-                  return (
-                    <div key={m.id} className="bg-white rounded-xl px-4 py-3 flex items-center gap-3 border border-slate-100 shadow-sm anim-fade-up">
-                      <div className="w-9 h-9 rounded-full flex items-center justify-center text-white font-extrabold text-sm shrink-0"
-                        style={{ background: color }}>
-                        {m.name?.[0]?.toUpperCase()}
-                      </div>
-                      <span className="flex-1 font-semibold text-sm text-slate-700">{m.name}</span>
-                      <span className="font-extrabold text-base" style={{ color }}>${m.amount.toFixed(2)}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Items */}
-            <div className="anim-fade-up delay-2">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Items</p>
-              <div className="flex flex-col gap-2 stagger">
-                {items.map(item => {
-                  const shares      = flattenShares(item);
-                  const assignedIds = Object.keys(shares).filter(id => shares[id] > 0);
-                  return (
-                    <div key={item.id} className="bg-white rounded-xl p-3.5 border border-slate-100 shadow-sm anim-fade-up">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-semibold text-sm text-slate-800 truncate">{item.description}</p>
-                        <p className="font-bold text-sm text-slate-800 shrink-0">${lineAmount(item).toFixed(2)}</p>
-                      </div>
-                      <p className="text-xs text-slate-400 mt-0.5">
-                        {item.quantity} × ${(parseFloat(item.unit_price) || 0).toFixed(2)}
-                      </p>
-                      {assignedIds.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {assignedIds.map(id => {
-                            const m     = viewMembers.find(mm => String(mm.id) === id);
-                            const color = memberColor(id, viewMembers);
-                            const count = shares[id];
-                            return (
-                              <span key={id} className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                                style={{ background: color + '22', color }}>
-                                {m?.name || id}{count > 1 ? ` ×${count}` : ''}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-          </div>
-        </main>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen flex flex-col aurora-bg">

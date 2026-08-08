@@ -11,6 +11,7 @@ import { getMonthRange } from '../utils/statementFormatters';
 import BottomNav from '../components/BottomNav';
 import NetWorthDetail from '../components/NetWorthDetail';
 import SplitwiseExpenseDetail from '../components/SplitwiseExpenseDetail';
+import ReceiptDetail from '../components/ReceiptDetail';
 import MonthSlider from '../components/MonthSlider';
 
 const INDIGO = '#6366f1';
@@ -49,6 +50,7 @@ export default function HomePage() {
 
   const [confirmTarget, setConfirmTarget] = useState(null); // { id, merchant } | null
   const [openExpense,   setOpenExpense]   = useState(null); // Splitwise-only expense being viewed | null
+  const [openReceipt,   setOpenReceipt]   = useState(null); // posted receipt being viewed | null
   const [deleting,      setDeleting]      = useState(false);
 
   // Surfaced instead of silently swallowed — if this fails, myId never
@@ -450,7 +452,7 @@ export default function HomePage() {
                 {monthlyReceipts.map(r => (
                   <button
                     key={r.id}
-                    onClick={() => navigate('/detail', { state: r })}
+                    onClick={() => r.approved ? setOpenReceipt(r) : navigate('/detail', { state: r })}
                     className="w-full text-left bg-white rounded-2xl p-4 border border-slate-100 shadow-sm hover:border-indigo-100 card-lift anim-fade-up"
                   >
                     <div className="flex items-center gap-3">
@@ -477,6 +479,12 @@ export default function HomePage() {
                           </span>
                           <span className="text-slate-200">·</span>
                           <span className="text-xs text-slate-400">{r.items?.length || 0} items</span>
+                          {groupName(r.groupId) && (
+                            <>
+                              <span className="text-slate-200">·</span>
+                              <span className="text-xs text-slate-400 truncate">{groupName(r.groupId)}</span>
+                            </>
+                          )}
                         </div>
                       </div>
 
@@ -616,6 +624,15 @@ export default function HomePage() {
           expense={openExpense}
           groupName={groupName(openExpense.group_id)}
           onClose={() => setOpenExpense(null)}
+        />
+      )}
+
+      {openReceipt && (
+        <ReceiptDetail
+          receipt={openReceipt}
+          groupName={groupName(openReceipt.groupId)}
+          onEdit={() => navigate('/detail', { state: openReceipt })}
+          onClose={() => setOpenReceipt(null)}
         />
       )}
 

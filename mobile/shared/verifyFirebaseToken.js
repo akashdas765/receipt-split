@@ -10,7 +10,6 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 // crashed the actual deployed function with FUNCTION_INVOCATION_FAILED
 // before our own code even ran. jose is a small, dependency-free JWT
 // library built for exactly this kind of edge/serverless environment.
-const projectId = process.env.VITE_FIREBASE_PROJECT_ID;
 const JWKS = createRemoteJWKSet(
   new URL('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com')
 );
@@ -18,6 +17,13 @@ const JWKS = createRemoteJWKSet(
 // Returns the decoded token payload (with `sub` as the uid) if idToken is a
 // valid, current Firebase Auth ID token for this project, or null otherwise.
 export async function verifyFirebaseToken(idToken) {
+  // Read at call time, not module load time: in local dev, vite.config.js's
+  // dev-server middleware imports this module (transitively) before its own
+  // config factory function runs, and that factory is where
+  // process.env.VITE_FIREBASE_PROJECT_ID actually gets set — a module-level
+  // `const` here would have permanently captured `undefined` from before
+  // that assignment ever happened.
+  const projectId = process.env.VITE_FIREBASE_PROJECT_ID;
   if (!idToken || !projectId) return null;
   try {
     const { payload } = await jwtVerify(idToken, JWKS, {
@@ -25,7 +31,13 @@ export async function verifyFirebaseToken(idToken) {
       audience: projectId,
     });
     return payload.sub ? payload : null;
-  } catch {
+  } catch (err) {
+    // Logged server-side only (never sent to the client) — the catch-all
+    // here previously made every failure mode (bad signature, expired
+    // token, clock skew, JWKS fetch blocked by network/firewall, wrong
+    // project id) look identical from the outside, which made this class
+    // of bug unnecessarily hard to diagnose.
+    console.error('verifyFirebaseToken failed:', err?.code || err?.message || err);
     return null;
   }
 }

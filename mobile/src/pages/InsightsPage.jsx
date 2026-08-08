@@ -1,12 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, TrendingUp, Sparkles, Loader2, AlertCircle } from 'lucide-react';
+import { ArrowLeft, TrendingUp, Loader2, AlertCircle, Send } from 'lucide-react';
 import { loadReceiptsForInsights } from '../services/db';
 import { fetchCurrentUser } from '../services/splitwise';
-import { computeStats, fetchInsights } from '../services/insights';
+import { computeStats, askInsightsChat } from '../services/insights';
 
 const INDIGO  = '#6366f1';
 const EMERALD = '#10b981';
+
+const SUGGESTIONS = [
+  'Where am I spending the most?',
+  'How does my share compare to the group total?',
+  'Any trends month to month?',
+];
 
 export default function InsightsPage() {
   const navigate = useNavigate();
@@ -14,9 +20,11 @@ export default function InsightsPage() {
   const [error,   setError]   = useState('');
   const [stats,   setStats]   = useState(null);
 
-  const [aiText,    setAiText]    = useState('');
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiError,   setAiError]   = useState('');
+  const [messages,   setMessages]   = useState([]); // [{ role, content }]
+  const [input,      setInput]      = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError,   setChatError]   = useState('');
+  const scrollRef = useRef(null);
 
   useEffect(() => {
     (async () => {
@@ -34,15 +42,25 @@ export default function InsightsPage() {
     })();
   }, []);
 
-  const generateInsights = async () => {
-    if (!stats) return;
-    setAiLoading(true); setAiError(''); setAiText('');
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, chatLoading]);
+
+  const send = async (text) => {
+    const question = (text ?? input).trim();
+    if (!question || chatLoading || !stats) return;
+    const next = [...messages, { role: 'user', content: question }];
+    setMessages(next);
+    setInput('');
+    setChatLoading(true);
+    setChatError('');
     try {
-      setAiText(await fetchInsights(stats));
+      const reply = await askInsightsChat(stats, next);
+      setMessages(m => [...m, { role: 'assistant', content: reply }]);
     } catch (err) {
-      setAiError(err?.message || 'Could not generate insights.');
+      setChatError(err?.message || 'Could not get a response.');
     } finally {
-      setAiLoading(false);
+      setChatLoading(false);
     }
   };
 
@@ -121,6 +139,29 @@ export default function InsightsPage() {
                 </div>
               )}
 
+              {/* Top categories */}
+              {stats.topCategories.length > 0 && (
+                <div className="anim-fade-up">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">By category</p>
+                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                    {stats.topCategories.map((c, i) => {
+                      const pct = stats.topCategories[0].amount ? (c.amount / stats.topCategories[0].amount) * 100 : 0;
+                      return (
+                        <div key={c.category} className={`px-4 py-3 ${i < stats.topCategories.length - 1 ? 'border-b border-slate-100' : ''}`}>
+                          <div className="flex items-center justify-between mb-1.5 gap-2">
+                            <span className="text-sm font-semibold text-slate-700 capitalize">{c.category}</span>
+                            <span className="text-sm font-bold text-slate-800 shrink-0">${c.amount.toFixed(2)}</span>
+                          </div>
+                          <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                            <div className="h-full rounded-full" style={{ width: `${pct}%`, background: EMERALD }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Monthly */}
               {stats.monthly.length > 0 && (
                 <div className="anim-fade-up">
@@ -139,30 +180,72 @@ export default function InsightsPage() {
                 </div>
               )}
 
-              {/* AI insights */}
+              {/* Chat */}
               <div className="anim-fade-up">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">AI insights</p>
-                  {!aiLoading && (
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Ask about your spending</p>
+                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex flex-col">
+                  <div ref={scrollRef} className="max-h-80 overflow-y-auto p-4 space-y-3">
+                    {messages.length === 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {SUGGESTIONS.map(s => (
+                          <button
+                            key={s}
+                            onClick={() => send(s)}
+                            className="text-left text-xs font-semibold px-3 py-2 rounded-xl border border-slate-200 text-slate-500 hover:border-indigo-200 hover:text-indigo-500 transition-colors"
+                          >
+                            {s}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      messages.map((m, i) => (
+                        <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                          <div
+                            className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-line ${
+                              m.role === 'user'
+                                ? 'text-white rounded-br-md'
+                                : 'bg-slate-50 text-slate-700 rounded-bl-md'
+                            }`}
+                            style={m.role === 'user' ? { background: INDIGO } : {}}
+                          >
+                            {m.content}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                    {chatLoading && (
+                      <div className="flex justify-start">
+                        <div className="bg-slate-50 rounded-2xl rounded-bl-md px-3.5 py-2.5 flex items-center gap-2 text-slate-400 text-sm">
+                          <Loader2 size={14} className="animate-spin" /> Thinking…
+                        </div>
+                      </div>
+                    )}
+                    {chatError && (
+                      <div className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
+                        <AlertCircle size={14} className="text-red-500 shrink-0" />
+                        <p className="text-xs text-red-600 font-medium">{chatError}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 p-3 border-t border-slate-100">
+                    <input
+                      value={input}
+                      onChange={e => setInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') send(); }}
+                      placeholder="Ask a question…"
+                      disabled={chatLoading}
+                      className="flex-1 text-sm bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-indigo-200 disabled:opacity-60"
+                    />
                     <button
-                      onClick={generateInsights}
-                      className="flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-lg transition-colors hover:bg-indigo-50"
-                      style={{ color: INDIGO }}
+                      onClick={() => send()}
+                      disabled={chatLoading || !input.trim()}
+                      className="w-10 h-10 rounded-xl flex items-center justify-center text-white shrink-0 btn-press disabled:opacity-40"
+                      style={{ background: INDIGO }}
                     >
-                      <Sparkles size={12} /> {aiText ? 'Regenerate' : 'Generate'}
+                      <Send size={16} />
                     </button>
-                  )}
-                </div>
-                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 min-h-[76px] flex items-center">
-                  {aiLoading ? (
-                    <div className="flex items-center gap-2 text-slate-400 text-sm"><Loader2 size={16} className="animate-spin" /> Thinking…</div>
-                  ) : aiError ? (
-                    <p className="text-sm text-red-500">{aiError}</p>
-                  ) : aiText ? (
-                    <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">{aiText}</p>
-                  ) : (
-                    <p className="text-sm text-slate-400">Tap Generate for a quick AI summary of your spending.</p>
-                  )}
+                  </div>
                 </div>
               </div>
             </>

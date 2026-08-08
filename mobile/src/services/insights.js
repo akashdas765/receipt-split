@@ -4,12 +4,16 @@ import { auth } from './firebase';
 // completion instead of an image one, so no separate function/route needed.
 const PROXY = '/.netlify/functions/groq';
 
-// Small, fast text model — good fit for a short summarization prompt where
-// latency matters more than depth. Groq deprecates models periodically;
-// check console.groq.com/docs/models if this starts 404ing.
+// Small, fast text model — good fit for chat where latency matters more
+// than depth. Groq deprecates models periodically; check
+// console.groq.com/docs/models if this starts 404ing.
 const MODEL = 'openai/gpt-oss-20b';
 
-const INSIGHTS_SYSTEM = `You are a friendly personal finance assistant inside a receipt-splitting app. You'll be given aggregated JSON stats about a user's shared expenses: total group spend, the user's own share, spending by merchant, and spending by month. Write a short analysis — 2-4 sentences, plain text, no markdown headers or preamble — pointing out real observations from the numbers given (trends, the biggest merchant, how their share compares to the group total, anything notable). Be specific and cite numbers from the data.`;
+// Only the last N turns are sent to the model — bounds prompt size/cost as
+// a conversation grows without capping what's shown in the UI.
+const MAX_HISTORY_TURNS = 10;
+
+const CHAT_SYSTEM = `You are a friendly personal finance assistant inside a receipt-splitting app called ReceiptSplit. You're given aggregated JSON stats about the user's shared expense history: total group spend, the user's own share, spending by merchant, spending by category (food, drink, alcohol, fee, tip, other), and spending by month. Answer the user's questions about their spending using this data — be specific and cite real numbers. If something can't be answered from the data (e.g. a specific individual purchase not reflected in the aggregates), say so honestly instead of guessing. Keep answers concise: a few sentences, plain text, no markdown headers.`;
 
 // receipts: Firestore receipt docs. myId: the user's own Splitwise member id
 // (string), or undefined if it couldn't be resolved.
@@ -38,6 +42,18 @@ export function computeStats(receipts, myId) {
     .slice(0, 5)
     .map(([merchant, amount]) => ({ merchant, amount }));
 
+  const byCategory = {};
+  receipts.forEach(r => {
+    (r.items || []).forEach(item => {
+      const cat = (item.category || 'other').toLowerCase();
+      const amt = parseFloat(item.amount) || 0;
+      byCategory[cat] = (byCategory[cat] || 0) + amt;
+    });
+  });
+  const topCategories = Object.entries(byCategory)
+    .sort((a, b) => b[1] - a[1])
+    .map(([category, amount]) => ({ category, amount }));
+
   const byMonth = {};
   receipts.forEach(r => {
     const dateStr = r.date || r.scanned_at?.slice(0, 10);
@@ -58,11 +74,14 @@ export function computeStats(receipts, myId) {
     myShareCount,
     hasMyShare: !!myId,
     topMerchants,
+    topCategories,
     monthly,
   };
 }
 
-export async function fetchInsights(stats) {
+// messages: prior conversation as [{ role: 'user' | 'assistant', content }],
+// already including the new user turn. Returns the assistant's reply text.
+export async function askInsightsChat(stats, messages) {
   let idToken;
   try {
     idToken = await auth.currentUser?.getIdToken();
@@ -79,8 +98,8 @@ export async function fetchInsights(stats) {
     body: JSON.stringify({
       model: MODEL,
       messages: [
-        { role: 'system', content: INSIGHTS_SYSTEM },
-        { role: 'user', content: JSON.stringify(stats) },
+        { role: 'system', content: `${CHAT_SYSTEM}\n\nSpending data:\n${JSON.stringify(stats)}` },
+        ...messages.slice(-MAX_HISTORY_TURNS),
       ],
       max_tokens: 400,
     }),
@@ -89,7 +108,7 @@ export async function fetchInsights(stats) {
   const data = await res.json();
   if (!res.ok) {
     const message = typeof data?.error === 'string' ? data.error : data?.error?.message;
-    throw new Error(message || 'Could not generate insights.');
+    throw new Error(message || 'Could not get a response.');
   }
   return data.choices[0].message.content.trim();
 }

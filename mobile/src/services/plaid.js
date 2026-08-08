@@ -45,6 +45,15 @@ export async function exchangePublicToken(publicToken) {
   return { accessToken: data.access_token, itemId: data.item_id };
 }
 
+// Backfills the linked-account list (name/mask per card) for connections
+// made before this app captured that from Link's onSuccess metadata —
+// that metadata only ever fires once, at connect time, so this is the only
+// way an already-linked Item can recover its account list.
+export async function fetchAccounts(accessToken) {
+  const data = await plaidFetch('get_accounts', { access_token: accessToken });
+  return (data.accounts || []).map(a => ({ id: a.account_id, name: a.name, mask: a.mask }));
+}
+
 // Pages through every added/removed transaction since `cursor` (omit on
 // first sync = full history), turning Plaid's shape into this app's own —
 // reusing the same client-side category/payment detection csvParser.js and

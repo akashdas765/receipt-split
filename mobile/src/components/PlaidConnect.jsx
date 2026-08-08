@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { usePlaidLink } from 'react-plaid-link';
 import { Landmark, Loader2, CheckCircle2, RefreshCw, Unlink, AlertCircle, Plus, CreditCard } from 'lucide-react';
 import { session } from '../services/session';
-import { createLinkToken, exchangePublicToken, syncTransactions } from '../services/plaid';
+import { createLinkToken, exchangePublicToken, syncTransactions, fetchAccounts } from '../services/plaid';
 import { savePlaidConnection, deletePlaidConnection, deleteTransaction } from '../services/db';
 
 const INDIGO = '#6366f1';
@@ -36,6 +36,7 @@ export default function PlaidConnect({ onAdd }) {
   const [linkToken,     setLinkToken]     = useState(null);
   const [connecting,    setConnecting]    = useState(false);
   const [syncingId,     setSyncingId]     = useState(null);
+  const [fullSyncId,    setFullSyncId]    = useState(null); // itemId currently doing a full-history re-sync
   const [errors,        setErrors]        = useState({}); // itemId (or 'new') -> message
   const [lastSyncedMap, setLastSyncedMap] = useState({});
 
@@ -55,12 +56,18 @@ export default function PlaidConnect({ onAdd }) {
 
   const refreshConnections = () => setConnections(session.getPlaidConnections());
 
-  const doSync = useCallback(async (conn) => {
+  const doSync = useCallback(async (conn, { full = false } = {}) => {
     setSyncingId(conn.itemId);
+    if (full) setFullSyncId(conn.itemId);
     setErrors(e => ({ ...e, [conn.itemId]: '' }));
     try {
       const current = session.getPlaidConnection(conn.itemId) || conn;
-      const result  = await syncTransactions(current.accessToken, current.cursor);
+      // full=true re-pulls the whole history from scratch (cursor reset to
+      // null) instead of only what's new since the stored cursor — used to
+      // re-tag transactions synced before per-card splitting existed, so
+      // they pick up the right accountId/source without creating
+      // duplicates (transaction ids are stable, and addTransactions merges).
+      const result  = await syncTransactions(current.accessToken, full ? null : current.cursor);
 
       if (result.transactions.length) {
         // Split one sync's results back out per card — a single login can
@@ -93,6 +100,7 @@ export default function PlaidConnect({ onAdd }) {
       setErrors(e => ({ ...e, [conn.itemId]: err?.message || 'Could not sync transactions.' }));
     } finally {
       setSyncingId(null);
+      setFullSyncId(null);
     }
   }, [onAdd]);
 
@@ -171,6 +179,23 @@ export default function PlaidConnect({ onAdd }) {
 
   const active = connections.find(c => c.itemId === activeItemId) || null;
 
+  // Backfills accounts for connections made before this app captured Link's
+  // onSuccess metadata (that only fires once, at connect time) — without
+  // this, an older connection would show generic single-labeled entries
+  // even after a full re-sync, since doSync's per-card labels come from
+  // this list.
+  useEffect(() => {
+    if (!active || (active.accounts && active.accounts.length > 0)) return;
+    let cancelled = false;
+    fetchAccounts(active.accessToken).then(async accounts => {
+      if (cancelled || !accounts.length) return;
+      session.upsertPlaidConnection({ itemId: active.itemId, accounts });
+      await savePlaidConnection({ itemId: active.itemId, accounts });
+      refreshConnections();
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [active?.itemId, active?.accessToken]);
+
   return (
     <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-3">
       <div className="flex items-center gap-2.5">
@@ -246,7 +271,7 @@ export default function PlaidConnect({ onAdd }) {
               className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-bold border-2 transition-colors btn-press disabled:opacity-60"
               style={{ borderColor: '#c7d2fe', color: INDIGO }}
             >
-              {syncingId === active.itemId ? <><Loader2 size={15} className="animate-spin" /> Syncing…</> : <><RefreshCw size={14} /> Sync now</>}
+              {syncingId === active.itemId && !fullSyncId ? <><Loader2 size={15} className="animate-spin" /> Syncing…</> : <><RefreshCw size={14} /> Sync now</>}
             </button>
             <button
               onClick={() => disconnect(active.itemId)}
@@ -256,6 +281,15 @@ export default function PlaidConnect({ onAdd }) {
               <Unlink size={15} />
             </button>
           </div>
+          {active.accounts?.length > 1 && (
+            <button
+              onClick={() => doSync(active, { full: true })}
+              disabled={syncingId === active.itemId}
+              className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold text-indigo-500 hover:bg-indigo-50 transition-colors btn-press disabled:opacity-60"
+            >
+              {fullSyncId === active.itemId ? <><Loader2 size={12} className="animate-spin" /> Re-tagging past transactions by card…</> : 'Re-split older transactions by card'}
+            </button>
+          )}
         </div>
       ) : (
         <button

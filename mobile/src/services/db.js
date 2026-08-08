@@ -56,12 +56,16 @@ export async function loadTransactions() {
 
 // transactions: parsed/manual entries missing only sourceName/uploadedAt,
 // which get stamped on here so the Upload tab can group and label them.
+// merge:true so re-adding an already-stored transaction (e.g. a Plaid full
+// history re-sync, re-tagging older rows with the right per-card source)
+// updates its fields without wiping any overrideSplitwiseId/etc. the user
+// already set via setTransactionOverride.
 export async function addTransactions(transactions, sourceName) {
   const batch      = writeBatch(db);
   const uploadedAt = new Date().toISOString();
   transactions.forEach(txn => {
     const { id, ...data } = txn;
-    batch.set(doc(transactionsCol(), id), { ...data, sourceName, uploadedAt });
+    batch.set(doc(transactionsCol(), id), { ...data, sourceName, uploadedAt }, { merge: true });
   });
   await batch.commit();
 }

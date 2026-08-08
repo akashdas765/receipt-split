@@ -29,6 +29,14 @@ const ACTIONS = {
       count:        500,
     }];
   },
+  // Used to backfill per-card labels (name/mask) for connections made
+  // before this app started capturing Link's onSuccess metadata — that
+  // metadata only ever fires once, at connect time, so an already-linked
+  // Item has no other way to learn its account list.
+  get_accounts: (uid, payload) => {
+    if (!payload.access_token) throw new Error('Missing access_token');
+    return ['/accounts/get', { access_token: payload.access_token }];
+  },
 };
 
 // Requires a valid Firebase Auth ID token — without this, the endpoint

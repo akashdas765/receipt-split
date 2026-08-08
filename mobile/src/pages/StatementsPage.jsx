@@ -122,10 +122,22 @@ export default function StatementsPage() {
   const unmatchedCt  = matchedBankOnly.filter(t => !t.isSplitwised).length;
 
   // ── Mutations ──────────────────────────────────────────────────────────────
+  // Upserts by id rather than blind-appending: a Plaid full-history re-sync
+  // (see PlaidConnect.jsx's "Re-split older transactions by card") re-adds
+  // transactions already in state to re-tag their source/accountId, and
+  // addTransactions merges those fields server-side rather than overwriting
+  // — this keeps local state consistent with that (no duplicate rows, and
+  // any overrideSplitwiseId/etc. already applied locally survives).
   const handleAdd = useCallback(async (newTxns, sourceName) => {
     await addTransactions(newTxns, sourceName);
     const uploadedAt = new Date().toISOString();
-    setTransactions(prev => [...prev, ...newTxns.map(t => ({ ...t, sourceName, uploadedAt }))]);
+    setTransactions(prev => {
+      const byId = new Map(prev.map(t => [t.id, t]));
+      for (const t of newTxns) {
+        byId.set(t.id, { ...byId.get(t.id), ...t, sourceName, uploadedAt });
+      }
+      return Array.from(byId.values());
+    });
   }, []);
 
   const handleRemoveSource = useCallback(async (sourceId) => {

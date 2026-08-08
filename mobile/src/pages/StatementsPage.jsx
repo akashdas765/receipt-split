@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, AlertCircle, Trash2 } from 'lucide-react';
+import { ArrowLeft, AlertCircle, Trash2, CreditCard } from 'lucide-react';
 import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride } from '../services/db';
 import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { matchTransactions, computeSummary } from '../utils/matcher';
@@ -231,22 +231,27 @@ export default function StatementsPage() {
             </div>
           </div>
 
-          {/* Account filter — one chip per loaded statement/connected card */}
+          {/* Card filter — deliberately styled unlike the month slider above:
+              month is the page's global time scope, but which card to show
+              is a separate, orthogonal filter (it combines with whatever
+              month is selected, it doesn't drill into it), so it gets a
+              muted/outline treatment instead of matching indigo pills. */}
           {statements.length > 1 && (
-            <div className="flex gap-2 overflow-x-auto pb-0.5">
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+              <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wide pr-0.5">
+                <CreditCard size={11} /> Card
+              </span>
               <button
                 onClick={() => setAccountFilter('all')}
-                className={`shrink-0 px-3.5 py-1.5 rounded-full text-xs font-bold transition-colors btn-press ${accountFilter === 'all' ? 'text-white' : 'bg-white text-slate-500 border border-slate-200 hover:border-indigo-200'}`}
-                style={accountFilter === 'all' ? { background: INDIGO } : {}}
+                className={`shrink-0 px-3 py-1 rounded-full text-xs font-semibold border transition-colors btn-press ${accountFilter === 'all' ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}
               >
-                All accounts
+                All
               </button>
               {statements.map(s => (
                 <button
                   key={s.id}
                   onClick={() => setAccountFilter(s.id)}
-                  className={`shrink-0 px-3.5 py-1.5 rounded-full text-xs font-bold transition-colors btn-press whitespace-nowrap ${accountFilter === s.id ? 'text-white' : 'bg-white text-slate-500 border border-slate-200 hover:border-indigo-200'}`}
-                  style={accountFilter === s.id ? { background: INDIGO } : {}}
+                  className={`shrink-0 px-3 py-1 rounded-full text-xs font-semibold border transition-colors btn-press whitespace-nowrap ${accountFilter === s.id ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}
                 >
                   {s.name}
                 </button>

@@ -89,9 +89,16 @@ export default function HomePage() {
       );
       if (cancelled) return;
       const flat = [];
-      let anyFailed = false;
-      for (const r of results) {
-        if (r.status !== 'fulfilled') { anyFailed = true; continue; }
+      const failures = [];
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        if (r.status !== 'fulfilled') {
+          // Institution name + the real Plaid error (e.g.
+          // ITEM_LOGIN_REQUIRED) instead of a generic banner — otherwise
+          // "some accounts failed" gives no way to tell which one or why.
+          failures.push(`${connections[i].institutionName || 'a connection'}: ${r.reason?.message || 'unknown error'}`);
+          continue;
+        }
         const { conn, balances } = r.value;
         const accountMeta = conn.accounts || [];
         for (const b of balances) {
@@ -105,7 +112,7 @@ export default function HomePage() {
         }
       }
       setPlaidBalances(flat);
-      if (anyFailed) setBalanceError('Some accounts could not be refreshed.');
+      if (failures.length) setBalanceError(failures.join(' · '));
       setLoadingBalances(false);
     })();
     return () => { cancelled = true; };

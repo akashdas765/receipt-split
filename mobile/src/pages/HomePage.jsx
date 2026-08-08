@@ -10,6 +10,7 @@ import { accountLabel } from '../utils/accountLabel';
 import { getMonthRange } from '../utils/statementFormatters';
 import BottomNav from '../components/BottomNav';
 import NetWorthDetail from '../components/NetWorthDetail';
+import SplitwiseExpenseDetail from '../components/SplitwiseExpenseDetail';
 import MonthSlider from '../components/MonthSlider';
 
 const INDIGO = '#6366f1';
@@ -47,6 +48,7 @@ export default function HomePage() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
 
   const [confirmTarget, setConfirmTarget] = useState(null); // { id, merchant } | null
+  const [openExpense,   setOpenExpense]   = useState(null); // Splitwise-only expense being viewed | null
   const [deleting,      setDeleting]      = useState(false);
 
   // Surfaced instead of silently swallowed — if this fails, myId never
@@ -504,7 +506,8 @@ export default function HomePage() {
                     distinct (teal, Users icon, "Splitwise" badge) so it's
                     clear these weren't scanned here. */}
                 {splitwiseOnly.map(e => (
-                  <div key={e.id} className="w-full bg-white rounded-2xl p-4 border border-teal-100 shadow-sm anim-fade-up flex items-center gap-3">
+                  <button key={e.id} onClick={() => setOpenExpense(e)}
+                    className="w-full text-left bg-white rounded-2xl p-4 border border-teal-100 shadow-sm hover:border-teal-200 card-lift anim-fade-up flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
                       style={{ background: 'linear-gradient(135deg, #14b8a6, #0ea5e9)' }}>
                       <Users size={18} color="#fff" />
@@ -535,7 +538,7 @@ export default function HomePage() {
                         <p className="text-[10px] text-slate-400">of ${e.cost.toFixed(2)}</p>
                       )}
                     </div>
-                  </div>
+                  </button>
                 ))}
 
                 {/* Splitwise expenses logged in a non-USD currency — shown
@@ -543,7 +546,8 @@ export default function HomePage() {
                     the $ totals above (mixing currencies would misreport
                     them, e.g. a ₹3600 expense is not $3600). */}
                 {foreignCurrencyOnly.map(e => (
-                  <div key={e.id} className="w-full bg-white rounded-2xl p-4 border border-amber-100 shadow-sm anim-fade-up flex items-center gap-3">
+                  <button key={e.id} onClick={() => setOpenExpense(e)}
+                    className="w-full text-left bg-white rounded-2xl p-4 border border-amber-100 shadow-sm hover:border-amber-200 card-lift anim-fade-up flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
                       style={{ background: 'linear-gradient(135deg, #f59e0b, #f97316)' }}>
                       <Users size={18} color="#fff" />
@@ -575,7 +579,7 @@ export default function HomePage() {
                       )}
                       <p className="text-[10px] text-amber-500">not in totals</p>
                     </div>
-                  </div>
+                  </button>
                 ))}
 
                 {loadingSw && (
@@ -604,6 +608,14 @@ export default function HomePage() {
           onSaveAccount={handleSaveManualAccount}
           onDeleteAccount={handleDeleteManualAccount}
           onClose={() => setNetWorthOpen(false)}
+        />
+      )}
+
+      {openExpense && (
+        <SplitwiseExpenseDetail
+          expense={openExpense}
+          groupName={groupName(openExpense.group_id)}
+          onClose={() => setOpenExpense(null)}
         />
       )}
 

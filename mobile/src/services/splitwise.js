@@ -105,6 +105,15 @@ export async function fetchAllExpenses(myId, { datedAfter, datedBefore, groupId 
         myPaidShare:   parseFloat(userShare?.paid_share  || 0),
         myOwedShare:   parseFloat(userShare?.owed_share  || 0),
         myNetBalance:  parseFloat(userShare?.net_balance || 0),
+        // Full per-member breakdown (not just the current user's own
+        // share) — used by SplitwiseExpenseDetail's view-only detail sheet
+        // to show who else is on the expense and what they paid/owe.
+        splits: (e.users || []).map(u => ({
+          id:         u.user_id,
+          name:       [u.user?.first_name, u.user?.last_name].filter(Boolean).join(' ') || 'Someone',
+          paidShare:  parseFloat(u.paid_share || 0),
+          owedShare:  parseFloat(u.owed_share || 0),
+        })),
       };
     });
 

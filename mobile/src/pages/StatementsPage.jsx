@@ -107,11 +107,16 @@ export default function StatementsPage() {
   // isBankAccount tags a checking/bank-classified Plaid txn so
   // matchTransactions() skips auto-matching it against Splitwise (see
   // session.isBankAccountSource) — manual linking still works regardless.
+  // Pending transactions are excluded here too — their amount isn't final
+  // yet, so matching/counting them against Splitwise now could need
+  // unwinding once they post (or vanish, if the pending charge is
+  // cancelled) — see pendingTxns below for where they do show up.
   const bankExpenseTxns   = useMemo(() =>
-    monthlyTransactions.filter(t => !t.isPayment).map(t => ({ ...t, isBankAccount: session.isBankAccountSource(t.source) })),
+    monthlyTransactions.filter(t => !t.isPayment && !t.isPending).map(t => ({ ...t, isBankAccount: session.isBankAccountSource(t.source) })),
     [monthlyTransactions]
   );
   const monthlyPaymentTxns = useMemo(() => monthlyTransactions.filter(t => t.isPayment), [monthlyTransactions]);
+  const pendingTxns = useMemo(() => monthlyTransactions.filter(t => t.isPending && !t.isPayment), [monthlyTransactions]);
 
   const matched = useMemo(() => matchTransactions(bankExpenseTxns, swExpenses), [bankExpenseTxns, swExpenses]);
   const matchedBankOnly = useMemo(() => matched.filter(t => !t.isSplitOnly), [matched]);
@@ -340,6 +345,7 @@ export default function StatementsPage() {
                     <TransactionsList
                       matched={matchedBankOnly}
                       creditTxns={monthlyPaymentTxns}
+                      pendingTxns={pendingTxns}
                       groupName={groupName}
                       monthRange={monthRange}
                       onLink={setPicker}

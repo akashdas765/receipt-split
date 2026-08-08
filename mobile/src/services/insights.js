@@ -38,8 +38,11 @@ export function computeStats({ receipts, myId, transactions = [], splitwiseExpen
   // isBankAccount tags checking/bank-classified Plaid txns so
   // matchTransactions() doesn't auto-match them against Splitwise (see
   // session.isBankAccountSource) — same reasoning as StatementsPage.jsx.
+  // Pending transactions are excluded too — amount isn't final until they
+  // post, so they shouldn't factor into spend totals or Splitwise matching
+  // yet (see StatementsPage.jsx's pendingTxns for where they're surfaced).
   const bankExpenseTxns = transactions
-    .filter(t => !t.isPayment)
+    .filter(t => !t.isPayment && !t.isPending)
     .map(t => ({ ...t, isBankAccount: session.isBankAccountSource(t.source) }));
   // Always run the matcher, even with zero bank transactions — with
   // nothing to match against, every Splitwise expense just falls through

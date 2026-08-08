@@ -107,11 +107,17 @@ export async function syncTransactions(accessToken, cursor) {
   // opposite of some other systems. Credits used to be dropped entirely
   // here; they're now kept (as a positive magnitude + isCredit) so bill
   // payments/refunds actually show up instead of vanishing at sync time.
-  // Pending transactions get a new transaction_id once they post, so
-  // importing them now would just leave an orphaned duplicate row once the
-  // real one arrives.
+  //
+  // Pending transactions used to be dropped too, for a real reason: they
+  // get a NEW transaction_id once they post, so a naive import would leave
+  // an orphaned row behind. That's already handled correctly though — when
+  // a pending charge posts, Plaid's sync sends a `removed` for the old
+  // pending id alongside the `added` for the new posted one, and this
+  // function's caller (PlaidConnect.jsx's doSync) already deletes
+  // everything in `removed`. So they're kept now (tagged isPending),
+  // excluded from Splitwise matching/spend totals until they post (see
+  // StatementsPage.jsx/insights.js) since the amount isn't final yet.
   const transactions = allAdded
-    .filter(t => !t.pending)
     .map(t => {
       const desc = t.merchant_name || t.name || 'Unknown';
       const isCredit = (t.amount || 0) < 0;
@@ -126,6 +132,7 @@ export async function syncTransactions(accessToken, cursor) {
         // transfers/payments from Splitwise matching and spend totals.
         isPayment:   isCredit || isPaymentTransaction(desc),
         isCredit,
+        isPending:   !!t.pending,
         // One Plaid Item (one login) can cover several cards/accounts —
         // this is what lets PlaidConnect.jsx split a sync's results back
         // out per account instead of lumping every card into one group.

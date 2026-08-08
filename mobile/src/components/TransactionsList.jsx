@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2 } from 'lucide-react';
+import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2, Clock } from 'lucide-react';
 import { formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { getCategoryIcon } from '../utils/categoryDetector';
 
@@ -10,12 +10,14 @@ const INDIGO = '#6366f1';
 // rows (matched: bank rows only, isSplitOnly already filtered out by the
 // caller, run through utils/matcher.js) keep the match-review workflow
 // (link/unlink/confirm a Splitwise expense); credit rows (creditTxns —
-// bill payments, refunds, never eligible for Splitwise matching) are
-// listed alongside them as simple, non-expandable entries. Previously two
-// separate tabs (Review + All) — merged here so "all my card activity" and
-// "what still needs matching" live in one list instead of two.
-export default function TransactionsList({ matched, creditTxns, groupName, monthRange, onLink, onUnlink, onClearOverride, onConfirmSuggestion, onDelete }) {
-  const [filter,   setFilter]   = useState(0); // 0=All 1=Unmatched 2=Matched 3=Credits
+// bill payments, refunds, never eligible for Splitwise matching) and
+// pending rows (pendingTxns — not yet posted, amount not final, also never
+// matched) are listed alongside them as simple, non-expandable entries.
+// Previously two separate tabs (Review + All) — merged here so "all my
+// card activity" and "what still needs matching" live in one list instead
+// of two.
+export default function TransactionsList({ matched, creditTxns, pendingTxns = [], groupName, monthRange, onLink, onUnlink, onClearOverride, onConfirmSuggestion, onDelete }) {
+  const [filter,   setFilter]   = useState(0); // 0=All 1=Unmatched 2=Matched 3=Credits 4=Pending
   const [expanded, setExpanded] = useState({});
 
   const matchedTxns   = matched.filter(t => t.isSplitwised);
@@ -24,15 +26,16 @@ export default function TransactionsList({ matched, creditTxns, groupName, month
   const displayed =
     filter === 1 ? unmatchedTxns :
     filter === 2 ? matchedTxns :
-    filter === 3 ? [] :
+    (filter === 3 || filter === 4) ? [] :
     matched;
   const showCredits = filter === 0 || filter === 3;
+  const showPending = filter === 0 || filter === 4;
 
   const effectiveTotal = matched.reduce((s, t) => s + (t.effectiveAmount || 0), 0);
   const grossTotal     = matched.reduce((s, t) => s + (t.originalAmount || t.amount || 0), 0);
   const savedTotal     = matchedTxns.reduce((s, t) => s + (t.savings || 0), 0);
 
-  if (!matched.length && !creditTxns.length) {
+  if (!matched.length && !creditTxns.length && !pendingTxns.length) {
     return (
       <div className="text-center py-10 text-sm text-slate-400">
         <p>Upload a bank statement first,</p>
@@ -63,19 +66,23 @@ export default function TransactionsList({ matched, creditTxns, groupName, month
             <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min((effectiveTotal / grossTotal) * 100, 100)}%`, background: INDIGO }} />
           </div>
         )}
-        <p className="text-xs text-slate-400 mt-1.5">{matchedTxns.length} matched · {unmatchedTxns.length} unmatched · {creditTxns.length} credit{creditTxns.length !== 1 ? 's' : ''}</p>
+        <p className="text-xs text-slate-400 mt-1.5">
+          {matchedTxns.length} matched · {unmatchedTxns.length} unmatched · {creditTxns.length} credit{creditTxns.length !== 1 ? 's' : ''}
+          {pendingTxns.length > 0 && <> · {pendingTxns.length} pending</>}
+        </p>
       </div>
 
-      {/* Filter chips */}
-      <div className="grid grid-cols-4 gap-1.5">
+      {/* Filter chips — wraps instead of scrolling horizontally */}
+      <div className="flex flex-wrap gap-1.5">
         {[
-          { label: 'All', value: matched.length + creditTxns.length, active: filter === 0, onClick: () => setFilter(0), color: 'text-slate-800' },
+          { label: 'All', value: matched.length + creditTxns.length + pendingTxns.length, active: filter === 0, onClick: () => setFilter(0), color: 'text-slate-800' },
           { label: '✅ Matched', value: matchedTxns.length, active: filter === 2, onClick: () => setFilter(2), color: 'text-emerald-500' },
           { label: '⚠️ Unmatched', value: unmatchedTxns.length, active: filter === 1, onClick: () => setFilter(1), color: 'text-amber-500' },
           { label: '💳 Credits', value: creditTxns.length, active: filter === 3, onClick: () => setFilter(3), color: 'text-emerald-500' },
+          ...(pendingTxns.length > 0 ? [{ label: '🕒 Pending', value: pendingTxns.length, active: filter === 4, onClick: () => setFilter(4), color: 'text-slate-500' }] : []),
         ].map(c => (
           <button key={c.label} onClick={c.onClick}
-            className={`rounded-xl px-1.5 py-2.5 text-center border transition-colors ${c.active ? 'border-indigo-200 bg-indigo-50' : 'border-slate-100 bg-white hover:border-slate-200'}`}>
+            className={`flex-1 min-w-[70px] rounded-xl px-1.5 py-2.5 text-center border transition-colors ${c.active ? 'border-indigo-200 bg-indigo-50' : 'border-slate-100 bg-white hover:border-slate-200'}`}>
             <p className={`font-extrabold text-sm ${c.color}`}>{c.value}</p>
             <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">{c.label}</p>
           </button>
@@ -103,6 +110,23 @@ export default function TransactionsList({ matched, creditTxns, groupName, month
               <p className="text-xs text-slate-400 mt-0.5 truncate">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
             </div>
             <p className="text-sm font-bold text-emerald-500 shrink-0">+{formatCurrency(txn.amount)}</p>
+            <button onClick={() => onDelete(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
+              <Trash2 size={14} />
+            </button>
+          </div>
+        ))}
+
+        {showPending && pendingTxns.map(txn => (
+          <div key={txn.id} className="rounded-2xl border border-slate-200 border-dashed bg-white p-3 flex items-center gap-3">
+            <Clock size={16} className="text-slate-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm font-semibold text-slate-600 truncate">{txn.description}</p>
+                <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 rounded-full shrink-0">Pending</span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5 truncate">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
+            </div>
+            <p className="text-sm font-bold text-slate-500 shrink-0">-{formatCurrency(txn.amount)}</p>
             <button onClick={() => onDelete(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
               <Trash2 size={14} />
             </button>

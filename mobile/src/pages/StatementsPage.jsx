@@ -7,6 +7,7 @@ import { matchTransactions, computeSummary } from '../utils/matcher';
 import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { getCategoryIcon } from '../utils/categoryDetector';
 import StatementUpload from '../components/StatementUpload';
+import PlaidConnect from '../components/PlaidConnect';
 import ManualEntryForm from '../components/ManualEntryForm';
 import MatchReview from '../components/MatchReview';
 import StatementsReports from '../components/StatementsReports';
@@ -216,7 +217,10 @@ export default function StatementsPage() {
           ) : (
             <>
               {tab === 0 && (
-                <StatementUpload statements={statements} onAdd={handleAdd} onRemoveSource={handleRemoveSource} onUploaded={() => setTab(2)} />
+                <div className="space-y-4">
+                  <PlaidConnect onAdd={handleAdd} />
+                  <StatementUpload statements={statements} onAdd={handleAdd} onRemoveSource={handleRemoveSource} onUploaded={() => setTab(2)} />
+                </div>
               )}
               {tab === 1 && <ManualEntryForm onAdd={handleAdd} />}
               {tab === 2 && (

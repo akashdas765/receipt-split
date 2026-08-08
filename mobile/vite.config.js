@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { proxySplitwise } from './shared/splitwiseProxy.js';
 import { proxyGroq } from './shared/groqProxy.js';
+import { proxyPlaid } from './shared/plaidProxy.js';
 
 async function readBody(req) {
   const chunks = [];
@@ -59,6 +60,27 @@ function localFunctionsProxy() {
           return;
         }
 
+        if (url.pathname === '/.netlify/functions/plaid') {
+          if (req.method !== 'POST') {
+            res.statusCode = 405;
+            res.end(JSON.stringify({ error: 'Method not allowed' }));
+            return;
+          }
+          const authHeader = req.headers['authorization'];
+          const idToken    = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+          try {
+            const { status, bodyText } = await proxyPlaid({ idToken, body: await readBody(req) });
+            res.statusCode = status;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(bodyText);
+          } catch (err) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: err.message || 'Unexpected proxy error' }));
+          }
+          return;
+        }
+
         next();
       });
     },
@@ -79,6 +101,9 @@ export default defineConfig(({ mode }) => {
   process.env.GROQ_API_KEY            ??= env.GROQ_API_KEY;
   process.env.NVIDIA_API_KEY          ??= env.NVIDIA_API_KEY;
   process.env.VITE_FIREBASE_PROJECT_ID ??= env.VITE_FIREBASE_PROJECT_ID;
+  process.env.PLAID_CLIENT_ID         ??= env.PLAID_CLIENT_ID;
+  process.env.PLAID_SECRET            ??= env.PLAID_SECRET;
+  process.env.PLAID_ENV               ??= env.PLAID_ENV;
 
   return {
     plugins: [react(), localFunctionsProxy()],

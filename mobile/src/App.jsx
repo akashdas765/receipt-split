@@ -35,7 +35,16 @@ export default function App() {
         if (!session.getKey()) {
           try {
             const snap = await getDoc(doc(db, 'users', firebaseUser.uid));
-            if (snap.exists()) session.setKey(snap.data().splitwise_api_key);
+            if (snap.exists()) {
+              const data = snap.data();
+              session.setKey(data.splitwise_api_key);
+              session.setPlaid({
+                accessToken:     data.plaid_access_token     || null,
+                itemId:          data.plaid_item_id          || null,
+                cursor:          data.plaid_cursor           || null,
+                institutionName: data.plaid_institution_name || null,
+              });
+            }
           } catch {}
         }
         setUser(firebaseUser);

@@ -2,10 +2,11 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Every user's data — profile doc (splitwise_api_key), their receipts
-    // subcollection, and their bank/manual transactions subcollection (the
-    // Statements feature — bank statement data, more sensitive than
-    // receipts, gets the same per-user isolation) — is only
+    // Every user's data — profile doc (splitwise_api_key, plaid_access_token
+    // and friends — see services/db.js's savePlaidConnection), their
+    // receipts subcollection, and their bank/manual transactions
+    // subcollection (the Statements feature — bank statement data, more
+    // sensitive than receipts, gets the same per-user isolation) — is only
     // readable/writable by that same authenticated user. See
     // src/services/db.js and src/services/auth.js for the exact paths
     // this must match.

@@ -82,3 +82,31 @@ export async function deleteTransactionsBySource(source) {
   snap.docs.forEach(d => batch.delete(d.ref));
   await batch.commit();
 }
+
+// ── Plaid bank connection (see services/plaid.js, components/PlaidConnect.jsx) ──
+// Stored directly on the user doc, same as splitwise_api_key — already
+// covered by that doc's existing per-user Firestore rule, no new rule
+// needed. Partial: only pass the fields that changed (e.g. just `cursor`
+// after a sync) so the others aren't clobbered with undefined.
+
+function userDoc() {
+  return doc(db, 'users', session.getUserId());
+}
+
+export async function savePlaidConnection({ accessToken, itemId, cursor, institutionName } = {}) {
+  const data = {};
+  if (accessToken     !== undefined) data.plaid_access_token     = accessToken;
+  if (itemId          !== undefined) data.plaid_item_id          = itemId;
+  if (cursor          !== undefined) data.plaid_cursor           = cursor;
+  if (institutionName !== undefined) data.plaid_institution_name = institutionName;
+  await setDoc(userDoc(), data, { merge: true });
+}
+
+export async function clearPlaidConnection() {
+  await setDoc(userDoc(), {
+    plaid_access_token: null,
+    plaid_item_id: null,
+    plaid_cursor: null,
+    plaid_institution_name: null,
+  }, { merge: true });
+}

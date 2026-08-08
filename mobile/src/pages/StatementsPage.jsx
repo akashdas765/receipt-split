@@ -264,7 +264,7 @@ export default function StatementsPage() {
               month is selected, it doesn't drill into it), so it gets a
               muted/outline treatment instead of matching indigo pills. */}
           {statements.length > 1 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wide pr-0.5">
                 <CreditCard size={11} /> Card
               </span>
@@ -287,7 +287,7 @@ export default function StatementsPage() {
           )}
 
           {/* Tabs */}
-          <div className="flex bg-white rounded-xl p-1 gap-1 border border-slate-100 shadow-sm overflow-x-auto">
+          <div className="flex bg-white rounded-xl p-1 gap-1 border border-slate-100 shadow-sm">
             {TABS.map((label, i) => (
               <button
                 key={i}

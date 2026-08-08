@@ -283,7 +283,7 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
       )}
 
       {connections.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto pb-0.5">
+        <div className="flex flex-wrap gap-2">
           {connections.map(c => (
             <button
               key={c.itemId}

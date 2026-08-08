@@ -88,6 +88,11 @@ function parsePdfText(text) {
       amount,
       category:    isPayment ? 'Payment' : detectCategory(desc),
       isPayment,
+      // Section-based only (not isPaymentTransaction's description
+      // fallback), since a description match can also catch real debits
+      // like an outgoing transfer — those are excluded from spend totals
+      // via isPayment, but aren't genuinely money coming in.
+      isCredit:    inPaymentSection,
       source:      'pdf',
     });
   }

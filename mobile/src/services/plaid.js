@@ -75,20 +75,28 @@ export async function syncTransactions(accessToken, cursor) {
 
   // Plaid's sign convention: positive amount = money OUT of the account
   // (an expense), negative = money in (a payment/refund/credit) — the
-  // opposite of some other systems. Pending transactions get a new
-  // transaction_id once they post, so importing them now would just leave
-  // an orphaned duplicate row once the real one arrives.
+  // opposite of some other systems. Credits used to be dropped entirely
+  // here; they're now kept (as a positive magnitude + isCredit) so bill
+  // payments/refunds actually show up instead of vanishing at sync time.
+  // Pending transactions get a new transaction_id once they post, so
+  // importing them now would just leave an orphaned duplicate row once the
+  // real one arrives.
   const transactions = allAdded
-    .filter(t => !t.pending && (t.amount || 0) > 0)
+    .filter(t => !t.pending)
     .map(t => {
       const desc = t.merchant_name || t.name || 'Unknown';
+      const isCredit = (t.amount || 0) < 0;
       return {
         id:          `plaid-${t.transaction_id}`,
         date:        t.date,
         description: desc,
-        amount:      t.amount,
+        amount:      Math.abs(t.amount || 0),
         category:    detectCategory(desc),
-        isPayment:   isPaymentTransaction(desc),
+        // A credit is never a personal purchase, so it rides the same
+        // isPayment bucket that already excludes description-detected
+        // transfers/payments from Splitwise matching and spend totals.
+        isPayment:   isCredit || isPaymentTransaction(desc),
+        isCredit,
         // One Plaid Item (one login) can cover several cards/accounts —
         // this is what lets PlaidConnect.jsx split a sync's results back
         // out per account instead of lumping every card into one group.

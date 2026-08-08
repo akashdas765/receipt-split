@@ -84,14 +84,21 @@ export function parseCsv(text, sourceName = 'csv') {
           if (!desc) continue;
 
           let amount = parseAmount(rawAmt);
+          let isCreditRow = false;
 
-          if ((amount == null || amount === 0) && rawCredit) {
+          // Negative in the amount column, or any value in a dedicated
+          // credit/deposit column, means money came IN (a payment/refund)
+          // rather than out — kept as a credit now instead of being
+          // dropped, so bill payments/refunds actually show up.
+          if (amount != null && amount < 0) {
+            isCreditRow = true;
+            amount = Math.abs(amount);
+          } else if ((amount == null || amount === 0) && rawCredit) {
             const cr = parseAmount(rawCredit);
-            if (cr != null && cr < 0) amount = Math.abs(cr);
+            if (cr != null && cr !== 0) { isCreditRow = true; amount = Math.abs(cr); }
           }
 
-          if (amount == null) continue;
-          if (amount <= 0) continue; // Only include expenses (positive = money spent)
+          if (amount == null || amount === 0) continue;
 
           transactions.push({
             id:          `${sourceName}-${idxCounter++}-${Date.now()}`,
@@ -99,8 +106,9 @@ export function parseCsv(text, sourceName = 'csv') {
             description: desc,
             amount,
             source:      sourceName,
-            category:    detectCategory(desc),
-            isPayment:   isPaymentTransaction(desc),
+            category:    isCreditRow ? 'Payment' : detectCategory(desc),
+            isPayment:   isCreditRow || isPaymentTransaction(desc),
+            isCredit:    isCreditRow,
           });
         }
 

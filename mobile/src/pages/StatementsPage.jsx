@@ -1,15 +1,14 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, Trash2, CreditCard, Upload, X } from 'lucide-react';
+import { AlertCircle, CreditCard, Upload, X } from 'lucide-react';
 import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride } from '../services/db';
 import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { matchTransactions, computeSummary } from '../utils/matcher';
 import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
-import { getCategoryIcon } from '../utils/categoryDetector';
 import StatementUpload from '../components/StatementUpload';
 import PlaidConnect from '../components/PlaidConnect';
 import ManualEntryForm from '../components/ManualEntryForm';
-import MatchReview from '../components/MatchReview';
+import TransactionsList from '../components/TransactionsList';
 import StatementsReports from '../components/StatementsReports';
 import SplitwisePickerModal from '../components/SplitwisePickerModal';
 import BottomNav from '../components/BottomNav';
@@ -22,7 +21,12 @@ const INDIGO = '#6366f1';
 // something you switch to and browse, it's a one-off action, so it lives
 // behind its own "Add" button (opens a bottom sheet) instead of competing
 // for space with the tabs you actually flip between day to day.
-const TABS = ['Manual', 'Review', 'Reports', 'All', 'Payments'];
+//
+// 'Transactions' replaces the old separate 'Review' + 'All' tabs — one
+// list of every card transaction (credit or debit) for the month, with
+// the Splitwise match-review workflow available as a filter within it
+// instead of a whole separate tab.
+const TABS = ['Manual', 'Transactions', 'Reports', 'Payments'];
 
 export default function StatementsPage() {
   const navigate = useNavigate();
@@ -39,7 +43,7 @@ export default function StatementsPage() {
   const [loadingSw,    setLoadingSw]    = useState(true);
   const [swError,      setSwError]      = useState('');
 
-  const [tab,    setTab]    = useState(1); // 'Review' — Upload moved out of the tab bar, so it's no longer the default landing tab
+  const [tab,    setTab]    = useState(1); // 'Transactions' — Upload moved out of the tab bar, so it's no longer the default landing tab
   const [picker, setPicker] = useState(null); // txn being linked, or null
   const [uploadOpen, setUploadOpen] = useState(false);
 
@@ -274,7 +278,7 @@ export default function StatementsPage() {
                 style={tab === i ? { background: INDIGO } : {}}
               >
                 {label}
-                {label === 'Review' && unmatchedCt > 0 && tab !== i && (
+                {label === 'Transactions' && unmatchedCt > 0 && tab !== i && (
                   <span className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 text-white text-[10px] rounded-full flex items-center justify-center font-bold">
                     {unmatchedCt > 9 ? '9+' : unmatchedCt}
                   </span>
@@ -297,14 +301,16 @@ export default function StatementsPage() {
                     {[0, 1, 2].map(i => <div key={i} className="h-16 rounded-2xl skeleton" />)}
                   </div>
                 ) : (
-                  <MatchReview
+                  <TransactionsList
                     matched={matchedBankOnly}
+                    creditTxns={monthlyPaymentTxns}
                     groupName={groupName}
                     monthRange={monthRange}
                     onLink={setPicker}
                     onUnlink={handleUnlink}
                     onClearOverride={handleClearOverride}
                     onConfirmSuggestion={handleConfirmSuggestion}
+                    onDelete={handleRemoveTxn}
                   />
                 )
               )}
@@ -312,27 +318,6 @@ export default function StatementsPage() {
                 <StatementsReports matched={matched} splitwiseOwed={splitwiseOwed} personalTotal={personalTotal} monthRange={monthRange} />
               )}
               {tab === 3 && (
-                <div className="space-y-2">
-                  {scopedTransactions.length === 0 ? (
-                    <div className="text-center py-8 text-sm text-slate-400">No transactions loaded yet</div>
-                  ) : (
-                    scopedTransactions.slice().reverse().map(txn => (
-                      <div key={txn.id} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
-                        <span className="text-base">{getCategoryIcon(txn.category)}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-slate-700 truncate">{txn.description}</p>
-                          <p className="text-xs text-slate-400">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
-                        </div>
-                        <p className="text-sm font-bold text-slate-800">{formatCurrency(txn.amount)}</p>
-                        <button onClick={() => handleRemoveTxn(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-              {tab === 4 && (
                 <div className="space-y-4">
                   <div>
                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Card payments & transfers — {monthRange.label}</p>

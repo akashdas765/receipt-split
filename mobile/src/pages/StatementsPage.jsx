@@ -136,6 +136,14 @@ export default function StatementsPage() {
     applyOverride(picker.id, { overrideSplitwiseId: exp.id, overrideForcedUnmatched: null, overrideExpenseData: exp });
     setPicker(null);
   };
+  // One-tap accept for matcher.js's suggested-match tier — same override
+  // shape as picking one manually via the picker, just sourced from the
+  // suggestion already computed on the transaction instead of a fresh pick.
+  const handleConfirmSuggestion = txn => {
+    const exp = txn.suggestedMatch?.expense;
+    if (!exp) return;
+    applyOverride(txn.id, { overrideSplitwiseId: exp.id, overrideForcedUnmatched: null, overrideExpenseData: exp });
+  };
 
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
@@ -236,6 +244,7 @@ export default function StatementsPage() {
                     onLink={setPicker}
                     onUnlink={handleUnlink}
                     onClearOverride={handleClearOverride}
+                    onConfirmSuggestion={handleConfirmSuggestion}
                   />
                 )
               )}

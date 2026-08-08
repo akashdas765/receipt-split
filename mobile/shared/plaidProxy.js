@@ -32,18 +32,16 @@ const ACTIONS = {
   // Used to backfill per-card labels (name/mask) for connections made
   // before this app started capturing Link's onSuccess metadata — that
   // metadata only ever fires once, at connect time, so an already-linked
-  // Item has no other way to learn its account list.
+  // Item has no other way to learn its account list. Also doubles as the
+  // balance source for HomePage's net worth card — /accounts/balances/get
+  // would give a guaranteed-fresh pull, but it's gated behind Plaid's
+  // separate "Balance" product, which a Trial-plan Item connected only for
+  // Transactions doesn't have (confirmed: /transactions/sync works,
+  // /accounts/balances/get doesn't). /accounts/get's balances are just
+  // periodically refreshed instead of real-time — an acceptable tradeoff.
   get_accounts: (uid, payload) => {
     if (!payload.access_token) throw new Error('Missing access_token');
     return ['/accounts/get', { access_token: payload.access_token }];
-  },
-  // Separate from get_accounts: /accounts/get can return a cached balance,
-  // while /accounts/balances/get forces a fresh pull from the institution
-  // — worth the extra round trip for the net-worth card on HomePage, where
-  // a stale number would be misleading in a way a stale account name isn't.
-  get_balances: (uid, payload) => {
-    if (!payload.access_token) throw new Error('Missing access_token');
-    return ['/accounts/balances/get', { access_token: payload.access_token }];
   },
 };
 

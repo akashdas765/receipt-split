@@ -56,13 +56,22 @@ export async function fetchAccounts(accessToken) {
   return (data.accounts || []).map(a => ({ id: a.account_id, name: a.name, mask: a.mask, type: a.type }));
 }
 
-// Live balances for every account under one Item — used by HomePage's net
-// worth card. `current` is what's actually in a depository account, or
-// what's owed on a credit account (both non-negative from Plaid; the
-// caller decides sign/direction based on the account's bank-vs-credit tag,
-// since Plaid's own field doesn't carry that meaning).
+// Balances for every account under one Item — used by HomePage's net worth
+// card. `current` is what's actually in a depository account, or what's
+// owed on a credit account (both non-negative from Plaid; the caller
+// decides sign/direction based on the account's bank-vs-credit tag, since
+// Plaid's own field doesn't carry that meaning).
+//
+// Reuses get_accounts (/accounts/get) rather than the dedicated
+// /accounts/balances/get — that endpoint forces a real-time refresh from
+// the institution and is gated behind Plaid's separate "Balance" product,
+// which a Trial-plan Item connected only for Transactions doesn't have
+// (confirmed: /transactions/sync works fine, /accounts/balances/get
+// doesn't). /accounts/get returns the same balances object, just
+// periodically refreshed rather than guaranteed-instant — an acceptable
+// tradeoff for a net worth figure vs. the feature not working at all.
 export async function fetchAccountBalances(accessToken) {
-  const data = await plaidFetch('get_balances', { access_token: accessToken });
+  const data = await plaidFetch('get_accounts', { access_token: accessToken });
   return (data.accounts || []).map(a => ({
     id:              a.account_id,
     name:            a.name,

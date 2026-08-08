@@ -141,6 +141,10 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
 
     for (const exp of splitwiseExpenses) {
       if (usedExpenses.has(exp.id)) continue;
+      // Only expenses I actually paid toward are plausible matches for a
+      // charge on my own card — otherwise a group-mate's expense could get
+      // linked to my bank transaction just because dates/amounts line up.
+      if (!(exp.myPaidShare > 0)) continue;
 
       const expDate   = parseDate(exp.date) || new Date();
       const expAmount = parseFloat(exp.cost || 0);

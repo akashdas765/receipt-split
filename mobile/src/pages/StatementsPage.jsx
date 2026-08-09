@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, CreditCard, Upload, X } from 'lucide-react';
-import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride, reclassifyPayments } from '../services/db';
+import { AlertCircle, CreditCard, Landmark, HelpCircle, Wallet, Upload, X } from 'lucide-react';
+import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride, reclassifyPayments, savePlaidConnection, TXN_MAX } from '../services/db';
 import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
+import { syncPlaidConnection } from '../services/plaidSync';
 import { matchTransactions, computeSummary } from '../utils/matcher';
 import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { isPaymentTransaction } from '../utils/paymentDetector';
@@ -13,6 +14,7 @@ import ManualEntryForm from '../components/ManualEntryForm';
 import TransactionsList from '../components/TransactionsList';
 import StatementsReports from '../components/StatementsReports';
 import SplitwisePickerModal from '../components/SplitwisePickerModal';
+import AccountsOverview from '../components/AccountsOverview';
 import BottomNav from '../components/BottomNav';
 import MonthSlider from '../components/MonthSlider';
 import PageHeader from '../components/PageHeader';
@@ -48,12 +50,18 @@ export default function StatementsPage() {
   const [tab,    setTab]    = useState(1); // 'Transactions' — Upload moved out of the tab bar, so it's no longer the default landing tab
   const [picker, setPicker] = useState(null); // txn being linked, or null
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [accountsOpen, setAccountsOpen] = useState(false);
 
   // Which loaded statement/account to scope the page to — 'all' or a
   // `source` id. Each connected card (Plaid) or uploaded file gets its own
-  // source, so with 3 connected cards this doubles as "3 tabs for 3
-  // accounts" without a separate account model to keep in sync.
+  // source — see AccountsOverview.jsx for the grouped bank/credit view this
+  // doubles as a drill-down target for.
   const [accountFilter, setAccountFilter] = useState('all');
+
+  // Tracks Plaid connections currently being auto-fixed (see the
+  // legacy-source effect below) so a re-render mid-fix doesn't fire a
+  // second concurrent resync for the same connection.
+  const autoFixingRef = useRef(new Set());
 
   const groupName = id => groups.find(g => g.id === id)?.name;
   const monthRange = useMemo(() => getMonthRange(currentMonth), [currentMonth]);
@@ -141,6 +149,16 @@ export default function StatementsPage() {
     return Object.values(map);
   }, [transactions]);
 
+  // Same month scoping as monthlyTransactions, but NOT narrowed by
+  // accountFilter — AccountsOverview needs every account's this-month
+  // activity simultaneously (to show all of them at once), not just
+  // whichever single account happens to be selected in the page's own
+  // filter right now.
+  const monthlyTransactionsAllAccounts = useMemo(() =>
+    transactions.filter(t => t.date && t.date.slice(0, 10) >= monthRange.start && t.date.slice(0, 10) <= monthRange.end),
+    [transactions, monthRange]
+  );
+
   const paymentTotal = monthlyPaymentTxns.reduce((s, t) => s + (t.amount || 0), 0);
   const unmatchedCt  = matchedBankOnly.filter(t => !t.isSplitwised).length;
 
@@ -172,6 +190,39 @@ export default function StatementsPage() {
       return Array.from(byId.values());
     });
   }, []);
+
+  // Auto-fixes transactions still carrying the pre-per-account-split source
+  // format (`plaid-${itemId}`, no accountId suffix — from before this app's
+  // Plaid integration split one login's transactions apart by card). Those
+  // rows never match any account's `plaid-${itemId}-${accountId}` pattern,
+  // so session.getAccountType silently treats them as credit-eligible
+  // regardless of their real account, and they show up as a phantom extra
+  // "card" in the filter chips alongside the correctly-split ones. Runs a
+  // full re-sync (same mechanism as PlaidConnect.jsx's manual "Re-split"
+  // button) the moment legacy rows are detected, instead of leaving this
+  // buried behind a button the user has to find. Silent by design — this
+  // is a data-correctness fix, not something that needs a banner — but
+  // failures are logged so they're not entirely invisible.
+  useEffect(() => {
+    if (loadingTxns) return;
+    for (const conn of session.getPlaidConnections()) {
+      const legacySource = `plaid-${conn.itemId}`;
+      const hasLegacy = transactions.some(t => t.source === legacySource);
+      if (!hasLegacy || autoFixingRef.current.has(conn.itemId)) continue;
+      autoFixingRef.current.add(conn.itemId);
+      (async () => {
+        try {
+          const { cursor } = await syncPlaidConnection(conn, { full: true, onAdd: handleAdd });
+          session.upsertPlaidConnection({ itemId: conn.itemId, cursor });
+          await savePlaidConnection({ itemId: conn.itemId, cursor });
+        } catch (err) {
+          console.error(`Auto re-split failed for Plaid connection ${conn.itemId}:`, err);
+        } finally {
+          autoFixingRef.current.delete(conn.itemId);
+        }
+      })();
+    }
+  }, [transactions, loadingTxns, handleAdd]);
 
   const handleRemoveSource = useCallback(async (sourceId) => {
     await deleteTransactionsBySource(sourceId);
@@ -221,6 +272,15 @@ export default function StatementsPage() {
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
       <PageHeader title="Statements" onBack={() => navigate('/')}>
+        {statements.length > 0 && (
+          <button
+            onClick={() => setAccountsOpen(true)}
+            title="Accounts"
+            className="p-2 rounded-full text-slate-500 hover:bg-slate-100 transition-colors shrink-0"
+          >
+            <Wallet size={16} />
+          </button>
+        )}
         <button
           onClick={() => setUploadOpen(true)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold text-white btn-gradient btn-press shrink-0"
@@ -238,6 +298,18 @@ export default function StatementsPage() {
             <div className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl px-4 py-3 anim-pop">
               <AlertCircle size={15} className="text-red-500 shrink-0" />
               <p className="text-sm text-red-600 font-medium">{swError}</p>
+            </div>
+          )}
+
+          {/* loadTransactions() is a single flat query capped at TXN_MAX —
+              hitting the cap means older transactions (from any account)
+              may be silently missing rather than truncation being visible. */}
+          {transactions.length >= TXN_MAX && (
+            <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+              <AlertCircle size={15} className="text-amber-500 shrink-0" />
+              <p className="text-xs text-amber-700 font-medium">
+                Showing your most recent {TXN_MAX.toLocaleString()} transactions — older ones across all accounts may not be loaded.
+              </p>
             </div>
           )}
 
@@ -274,29 +346,41 @@ export default function StatementsPage() {
               month is the page's global time scope, but which card to show
               is a separate, orthogonal filter (it combines with whatever
               month is selected, it doesn't drill into it), so it gets a
-              muted/outline treatment instead of matching indigo pills. */}
-          {statements.length > 1 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wide pr-0.5">
-                <CreditCard size={11} /> Card
-              </span>
-              <button
-                onClick={() => setAccountFilter('all')}
-                className={`shrink-0 px-3 py-1 rounded-full text-xs font-semibold border transition-colors btn-press ${accountFilter === 'all' ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}
-              >
-                All
-              </button>
-              {statements.map(s => (
-                <button
-                  key={s.id}
-                  onClick={() => setAccountFilter(s.id)}
-                  className={`shrink-0 px-3 py-1 rounded-full text-xs font-semibold border transition-colors btn-press whitespace-nowrap ${accountFilter === s.id ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}
-                >
-                  {s.name}
-                </button>
-              ))}
-            </div>
-          )}
+              muted/outline treatment instead of matching indigo pills.
+              Grouped by bank/credit/uncategorized (see AccountsOverview.jsx
+              for where that classification is actually set) instead of one
+              flat row, so "which account" and "what kind of account" read
+              together instead of needing the separate Accounts sheet. */}
+          {statements.length > 1 && (() => {
+            const chipClass = id =>
+              `shrink-0 px-3 py-1 rounded-full text-xs font-semibold border transition-colors btn-press whitespace-nowrap ${
+                accountFilter === id ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+              }`;
+            const groups = [
+              { key: 'bank',   label: 'Bank',   icon: Landmark,    items: statements.filter(s => session.getAccountType(s.id) === 'bank') },
+              { key: 'credit', label: 'Credit',  icon: CreditCard, items: statements.filter(s => session.getAccountType(s.id) === 'credit') },
+              { key: 'other',  label: 'Other',   icon: HelpCircle, items: statements.filter(s => !session.getAccountType(s.id)) },
+            ].filter(g => g.items.length > 0);
+            return (
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button onClick={() => setAccountFilter('all')} className={chipClass('all')}>All accounts</button>
+                </div>
+                {groups.map(g => (
+                  <div key={g.key} className="flex flex-wrap items-center gap-1.5">
+                    <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wide pr-0.5 w-14">
+                      <g.icon size={11} /> {g.label}
+                    </span>
+                    {g.items.map(s => (
+                      <button key={s.id} onClick={() => setAccountFilter(s.id)} className={chipClass(s.id)}>
+                        {s.name}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
 
           {/* Tabs */}
           <div className="flex bg-white rounded-xl p-1 gap-1 border border-slate-100 shadow-sm">
@@ -444,6 +528,16 @@ export default function StatementsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {accountsOpen && (
+        <AccountsOverview
+          statements={statements}
+          monthlyTransactions={monthlyTransactionsAllAccounts}
+          monthRange={monthRange}
+          onSelectAccount={sourceId => { setAccountFilter(sourceId); setTab(1); setAccountsOpen(false); }}
+          onClose={() => setAccountsOpen(false)}
+        />
       )}
 
       <BottomNav />

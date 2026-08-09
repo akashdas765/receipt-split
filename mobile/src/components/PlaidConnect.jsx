@@ -2,8 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { usePlaidLink } from 'react-plaid-link';
 import { Landmark, Loader2, CheckCircle2, RefreshCw, Unlink, AlertCircle, Plus, CreditCard, Pencil } from 'lucide-react';
 import { session } from '../services/session';
-import { createLinkToken, exchangePublicToken, syncTransactions, fetchAccounts } from '../services/plaid';
-import { savePlaidConnection, deletePlaidConnection, deleteTransaction, renameTransactionsSource } from '../services/db';
+import { createLinkToken, exchangePublicToken, fetchAccounts } from '../services/plaid';
+import { syncPlaidConnection } from '../services/plaidSync';
+import { savePlaidConnection, deletePlaidConnection, renameTransactionsSource } from '../services/db';
 import { accountLabel } from '../utils/accountLabel';
 
 const INDIGO = '#6366f1';
@@ -68,38 +69,10 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
     setErrors(e => ({ ...e, [conn.itemId]: '' }));
     try {
       const current = session.getPlaidConnection(conn.itemId) || conn;
-      // full=true re-pulls the whole history from scratch (cursor reset to
-      // null) instead of only what's new since the stored cursor — used to
-      // re-tag transactions synced before per-card splitting existed, so
-      // they pick up the right accountId/source without creating
-      // duplicates (transaction ids are stable, and addTransactions merges).
-      const result  = await syncTransactions(current.accessToken, full ? null : current.cursor);
+      const { cursor } = await syncPlaidConnection(current, { full, onAdd });
 
-      if (result.transactions.length) {
-        // Split one sync's results back out per card — a single login can
-        // cover several accounts, so lumping them all under one source
-        // would undo the whole point of telling them apart.
-        const byAccount = new Map();
-        result.transactions.forEach(t => {
-          const key = t.accountId || 'unknown';
-          if (!byAccount.has(key)) byAccount.set(key, []);
-          byAccount.get(key).push(t);
-        });
-        const accounts = current.accounts || [];
-        for (const [accountId, txns] of byAccount) {
-          const acct  = accounts.find(a => a.id === accountId);
-          const label = acct ? accountLabel(acct) : (current.institutionName || 'Bank (Plaid)');
-          const withSource = txns.map(t => ({ ...t, source: `plaid-${conn.itemId}-${accountId}` }));
-          await onAdd(withSource, label);
-        }
-      }
-
-      for (const id of result.removedIds) {
-        await deleteTransaction(id).catch(() => {});
-      }
-
-      session.upsertPlaidConnection({ itemId: conn.itemId, cursor: result.cursor });
-      await savePlaidConnection({ itemId: conn.itemId, cursor: result.cursor });
+      session.upsertPlaidConnection({ itemId: conn.itemId, cursor });
+      await savePlaidConnection({ itemId: conn.itemId, cursor });
       refreshConnections();
       setLastSyncedMap(m => ({ ...m, [conn.itemId]: new Date() }));
     } catch (err) {
@@ -366,15 +339,19 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
               <Unlink size={15} />
             </button>
           </div>
-          {active.accounts?.length > 1 && (
-            <button
-              onClick={() => doSync(active, { full: true })}
-              disabled={syncingId === active.itemId}
-              className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold text-indigo-500 hover:bg-indigo-50 transition-colors btn-press disabled:opacity-60"
-            >
-              {fullSyncId === active.itemId ? <><Loader2 size={12} className="animate-spin" /> Re-tagging past transactions by card…</> : 'Re-split older transactions by card'}
-            </button>
-          )}
+          {/* Manual fallback — StatementsPage.jsx auto-detects and fixes
+              legacy-format transactions (pre-per-account-split) on load, so
+              this shouldn't normally be needed, but stays as a way to force
+              a full re-sync regardless of account count (a single-account
+              connection can carry the legacy format just as easily as a
+              multi-account one — no reason to gate this on account count). */}
+          <button
+            onClick={() => doSync(active, { full: true })}
+            disabled={syncingId === active.itemId}
+            className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold text-indigo-500 hover:bg-indigo-50 transition-colors btn-press disabled:opacity-60"
+          >
+            {fullSyncId === active.itemId ? <><Loader2 size={12} className="animate-spin" /> Re-tagging past transactions by card…</> : 'Re-split older transactions by card'}
+          </button>
         </div>
       ) : (
         <button

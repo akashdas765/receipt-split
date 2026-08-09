@@ -158,7 +158,7 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
                       {isOverridden && <span className="text-xs bg-indigo-50 px-1.5 rounded-full shrink-0" style={{ color: INDIGO }}>manual</span>}
                     </div>
                     <p className="text-xs text-slate-400 mt-0.5 truncate">
-                      {formatShortDate(txn.date)}
+                      {formatShortDate(txn.date)} · {txn.sourceName || txn.source}
                       {txn.isSplitwised && (
                         <span className="ml-1.5 text-emerald-500">
                           · {txn.splitwiseDesc}{groupName(txn.groupId) ? ` · ${groupName(txn.groupId)}` : ''}

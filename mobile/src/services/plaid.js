@@ -83,11 +83,12 @@ export async function fetchAccountBalances(accessToken) {
   }));
 }
 
-// Pages through every added/removed transaction since `cursor` (omit on
-// first sync = full history), turning Plaid's shape into this app's own —
-// reusing the same client-side category/payment detection csvParser.js and
-// statementPdfParser.js already use, rather than reconciling yet another
-// category taxonomy on top of the ones those already juggle.
+// Pages through every added/removed/modified transaction since `cursor`
+// (omit on first sync = full history), turning Plaid's shape into this
+// app's own — reusing the same client-side category/payment detection
+// csvParser.js and statementPdfParser.js already use, rather than
+// reconciling yet another category taxonomy on top of the ones those
+// already juggle.
 export async function syncTransactions(accessToken, cursor) {
   let allAdded = [];
   let allRemovedIds = [];
@@ -96,7 +97,12 @@ export async function syncTransactions(accessToken, cursor) {
 
   while (hasMore) {
     const data = await plaidFetch('sync_transactions', { access_token: accessToken, cursor: nextCursor });
-    allAdded = allAdded.concat(data.added || []);
+    // `modified` (e.g. a pending charge's amount changing before it posts)
+    // is folded in alongside `added` rather than ignored — addTransactions
+    // writes with merge:true keyed by the transaction's own stable id, so a
+    // modified transaction naturally overwrites the stale stored copy with
+    // no other handling needed.
+    allAdded = allAdded.concat(data.added || [], data.modified || []);
     allRemovedIds = allRemovedIds.concat((data.removed || []).map(t => `plaid-${t.transaction_id}`));
     nextCursor = data.next_cursor;
     hasMore = data.has_more;

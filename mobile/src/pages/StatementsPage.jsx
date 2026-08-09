@@ -232,13 +232,16 @@ export default function StatementsPage() {
   // surface as a suggestion, but (same lesson as the transfer false-
   // positive) never confident enough to silently change a total on its own
   // — so it's a candidate needing one tap to confirm, same shape as
-  // transfers. Bank accounts don't get this treatment: a bank credit
-  // matching this text (rare) is scoped out via accountType === 'credit'.
+  // transfers. Bank accounts don't get this treatment — scoped via
+  // "not bank" rather than "=== 'credit'" since plenty of real card
+  // accounts never get an explicit accountType (unclassified/'other'
+  // sources are still cards, same convention accountSummary uses below
+  // for its bank-vs-card split).
   const monthlyPaymentTxns = useMemo(() =>
     monthlyTransactions
       .filter(t => t.isPayment)
       .map(t => {
-        const isPaymentCandidate = t.isCredit && isCreditConfirmation(t.description) && session.getAccountType(t.source) === 'credit';
+        const isPaymentCandidate = t.isCredit && isCreditConfirmation(t.description) && session.getAccountType(t.source) !== 'bank';
         return {
           ...t,
           isTransfer: transferLabelById.has(t.id),

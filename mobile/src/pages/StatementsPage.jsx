@@ -581,21 +581,38 @@ export default function StatementsPage() {
               {tab === 3 && (
                 <div className="space-y-4">
                   <div>
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Card payments — {monthRange.label}</p>
+                    {/* "Card payment" only makes sense for a credit card
+                        (paying down what you owe) -- the same isPayment
+                        bucket also holds bank-account credits like interest
+                        paid or a Zelle/person-to-person receipt, which read
+                        as money coming IN, not a payment going out. Labeled
+                        per-account-type like accountSummary below; when
+                        viewing "All accounts" each row is judged on its own
+                        source since the list mixes both. */}
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
+                      {accountSummary.type === 'bank' ? 'Money received' : accountSummary.type === 'card' ? 'Card payments' : 'Payments & money received'} — {monthRange.label}
+                    </p>
                     {monthlyPaymentTxns.length === 0 ? (
                       <div className="text-center py-6 text-sm text-slate-400 bg-white rounded-2xl border border-slate-100">Nothing this month</div>
                     ) : (
                       <div className="space-y-2">
-                        {monthlyPaymentTxns.map(txn => (
-                          <div key={txn.id} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
-                            <span className="text-base">💳</span>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm text-slate-700 truncate">{txn.description}</p>
-                              <p className="text-xs text-slate-400">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
+                        {monthlyPaymentTxns.map(txn => {
+                          const isBankTxn = accountSummary.type === 'all'
+                            ? session.getAccountType(txn.source) === 'bank'
+                            : accountSummary.type === 'bank';
+                          return (
+                            <div key={txn.id} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
+                              <span className="text-base">{isBankTxn ? '💰' : '💳'}</span>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm text-slate-700 truncate">{txn.description}</p>
+                                <p className="text-xs text-slate-400">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
+                              </div>
+                              <p className={`text-sm font-semibold ${isBankTxn ? 'text-emerald-500' : 'text-slate-600'}`}>
+                                {isBankTxn ? '+' : ''}{formatCurrency(txn.amount)}
+                              </p>
                             </div>
-                            <p className="text-sm font-semibold text-slate-600">{formatCurrency(txn.amount)}</p>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                     <p className="text-xs text-slate-400 mt-1.5">Not counted in expense totals.</p>

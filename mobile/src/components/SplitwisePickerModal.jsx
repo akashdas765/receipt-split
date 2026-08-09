@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Search, X, Loader2 } from 'lucide-react';
+import { Search, X, Loader2, DollarSign, Clock } from 'lucide-react';
 import { formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { getCategoryIcon } from '../utils/categoryDetector';
 import { fetchAllExpenses } from '../services/splitwise';
@@ -13,8 +13,17 @@ export default function SplitwisePickerModal({ transaction, myId, groups, initia
   const [paidOnly, setPaidOnly] = useState(true);
   const [allExpenses, setAllExpenses] = useState(initialExpenses || []);
   const [loading, setLoading] = useState(true);
+  // 'amount' (closest cost to the bank txn — a good default when browsing)
+  // or 'date' (newest first — what you actually want once you've typed a
+  // search, since by then you already know it's e.g. "Enterprise Rent-A-
+  // Car" and just want the recent one, not whichever past visit happened
+  // to cost the closest amount).
+  const [sortBy, setSortBy] = useState('amount');
 
   const groupName = id => groups.find(g => g.id === id)?.name;
+
+  const hasSearch = search.trim().length > 0;
+  useEffect(() => { setSortBy(hasSearch ? 'date' : 'amount'); }, [hasSearch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,20 +42,22 @@ export default function SplitwisePickerModal({ transaction, myId, groups, initia
 
   const sorted = useMemo(() => {
     const txnAmt = Math.abs(transaction.amount || 0);
-    return [...allExpenses]
-      .filter(e => {
-        if (paidOnly && !(e.myPaidShare > 0)) return false;
-        if (!search) return true;
-        const q = search.toLowerCase();
-        return e.description?.toLowerCase().includes(q) || groupName(e.group_id)?.toLowerCase().includes(q);
-      })
-      .sort((a, b) => {
-        const da = Math.abs(parseFloat(a.cost) - txnAmt);
-        const db = Math.abs(parseFloat(b.cost) - txnAmt);
-        if (Math.abs(da - db) < 1) return (b.date || '').localeCompare(a.date || '');
-        return da - db;
-      });
-  }, [allExpenses, search, paidOnly, transaction.amount]);
+    const filtered = [...allExpenses].filter(e => {
+      if (paidOnly && !(e.myPaidShare > 0)) return false;
+      if (!search) return true;
+      const q = search.toLowerCase();
+      return e.description?.toLowerCase().includes(q) || groupName(e.group_id)?.toLowerCase().includes(q);
+    });
+    if (sortBy === 'date') {
+      return filtered.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    }
+    return filtered.sort((a, b) => {
+      const da = Math.abs(parseFloat(a.cost) - txnAmt);
+      const db = Math.abs(parseFloat(b.cost) - txnAmt);
+      if (Math.abs(da - db) < 1) return (b.date || '').localeCompare(a.date || '');
+      return da - db;
+    });
+  }, [allExpenses, search, paidOnly, transaction.amount, sortBy]);
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40 anim-fade-in" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -94,11 +105,31 @@ export default function SplitwisePickerModal({ transaction, myId, groups, initia
         </div>
 
         {!loading && (
-          <div className="px-4 py-1.5 border-b border-slate-100 flex items-center justify-between">
-            <p className="text-xs text-slate-400">
+          <div className="px-4 py-1.5 border-b border-slate-100 flex items-center justify-between gap-2">
+            <p className="text-xs text-slate-400 shrink-0">
               {sorted.length} expense{sorted.length !== 1 ? 's' : ''}{paidOnly ? ' paid by you' : ''}
             </p>
-            {paidOnly && <button onClick={() => setPaidOnly(false)} className="text-xs text-slate-400 hover:text-slate-600">Show all</button>}
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+                <button
+                  onClick={() => setSortBy('amount')}
+                  title="Sort by closest amount"
+                  className={`flex items-center gap-1 px-2 py-1 text-[11px] font-semibold transition-colors ${sortBy === 'amount' ? 'text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                  style={sortBy === 'amount' ? { background: INDIGO } : {}}
+                >
+                  <DollarSign size={11} /> Amount
+                </button>
+                <button
+                  onClick={() => setSortBy('date')}
+                  title="Sort by most recent"
+                  className={`flex items-center gap-1 px-2 py-1 text-[11px] font-semibold transition-colors ${sortBy === 'date' ? 'text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                  style={sortBy === 'date' ? { background: INDIGO } : {}}
+                >
+                  <Clock size={11} /> Date
+                </button>
+              </div>
+              {paidOnly && <button onClick={() => setPaidOnly(false)} className="text-xs text-slate-400 hover:text-slate-600">Show all</button>}
+            </div>
           </div>
         )}
 

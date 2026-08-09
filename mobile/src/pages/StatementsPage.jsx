@@ -288,14 +288,25 @@ export default function StatementsPage() {
     // transactions get summed into debit/credit.
     const computeFor = (txns, scopePredicate) => {
       const settled = txns.filter(t => !t.isPending);
-      const debit  = settled.filter(t => !t.isCredit).reduce((s, t) => s + (t.amount || 0), 0);
+      // Confirmed transfers are excluded from BOTH debit and credit — money
+      // moving out to another of your own accounts was never really a
+      // debit (nothing left your net worth), and money moving in from one
+      // was never really a credit, same reason a confirmed card payment
+      // isn't real credit. overrideConfirmedTransfer is stamped directly on
+      // the transaction doc once confirmed (either side of a pair, or a
+      // hint), so checking it here needs no cross-reference back to
+      // transferPairsThisMonth/transferHintsThisMonth. Unconfirmed
+      // candidates stay counted until the user actually confirms one, same
+      // "don't change a total before confirmation" policy used everywhere
+      // else in this file.
+      const debit  = settled.filter(t => !t.isCredit && !t.overrideConfirmedTransfer).reduce((s, t) => s + (t.amount || 0), 0);
       // Confirmed "payment thank you"-style credits are excluded here — your
       // own money paying down your own card isn't real credit, same reason
       // a confirmed transfer isn't real income (see transferAmt below).
       // Unconfirmed candidates stay counted until the user actually
       // confirms one, same "don't change a total before confirmation"
       // policy used for transfers.
-      const credit = settled.filter(t => t.isCredit && !t.overrideConfirmedPayment).reduce((s, t) => s + (t.amount || 0), 0);
+      const credit = settled.filter(t => t.isCredit && !t.overrideConfirmedPayment && !t.overrideConfirmedTransfer).reduce((s, t) => s + (t.amount || 0), 0);
       const inScope = scopePredicate;
       const transferPairAmt = transferPairsThisMonth
         .filter(p => p.confirmed && (inScope(p.debit.source) || inScope(p.credit.source)))

@@ -190,6 +190,7 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
                     <div className="bg-emerald-50 rounded-xl p-2.5 space-y-1">
                       <p className="text-emerald-600 text-xs font-semibold">✅ Matched to Splitwise</p>
                       <Row label="Expense" value={txn.splitwiseDesc} />
+                      {txn.splitwiseDate && <Row label="Date" value={formatShortDate(txn.splitwiseDate)} />}
                       <Row label="Your share" value={formatCurrency(txn.effectiveAmount)} valueClass="text-emerald-600 font-semibold" />
                       <Row label="You save" value={`-${formatCurrency(txn.savings)}`} valueClass="text-emerald-600" />
                       {groupName(txn.groupId) && <Row label="Group" value={groupName(txn.groupId)} />}
@@ -201,6 +202,7 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
                         <Sparkles size={12} /> Possible match
                       </p>
                       <Row label="Expense" value={suggestion.expense.description} />
+                      {suggestion.expense.date && <Row label="Date" value={formatShortDate(suggestion.expense.date)} />}
                       <Row label="Your share" value={formatCurrency(suggestion.expense.myOwedShare)} valueClass="font-semibold" />
                       {groupName(suggestion.expense.group_id) && <Row label="Group" value={groupName(suggestion.expense.group_id)} />}
                       <Row label="Confidence" value={`${suggestion.score}%`} />

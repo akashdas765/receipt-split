@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { usePlaidLink } from 'react-plaid-link';
 import { Landmark, Loader2, CheckCircle2, RefreshCw, Unlink, AlertCircle, Plus, CreditCard, Pencil } from 'lucide-react';
 import { session } from '../services/session';
-import { createLinkToken, exchangePublicToken, fetchAccounts } from '../services/plaid';
+import { createLinkToken, exchangePublicToken, fetchAccounts, defaultAccountType } from '../services/plaid';
 import { syncPlaidConnection } from '../services/plaidSync';
 import { savePlaidConnection, deletePlaidConnection, renameTransactionsSource } from '../services/db';
 import { accountLabel } from '../utils/accountLabel';
@@ -14,16 +14,6 @@ const INDIGO = '#6366f1';
 // login and back, which clears normal component state, so this has to
 // survive in storage rather than a variable.
 const OAUTH_STORAGE_KEY = 'plaid_oauth_link_token';
-
-// Plaid's own account type is a reliable default for the bank-vs-credit
-// tag (used by HomePage's net worth card) — the manual toggle in the chip
-// UI still lets the user correct it, this just means a freshly-connected
-// account doesn't start out wrongly classified.
-function defaultAccountType(plaidType) {
-  if (plaidType === 'depository') return 'bank';
-  if (plaidType === 'credit') return 'credit';
-  return undefined;
-}
 
 // Auto-import via Plaid Link — an alternative to manual CSV/PDF upload
 // (StatementUpload.jsx). Reuses the same onAdd callback StatementsPage

@@ -45,6 +45,18 @@ export async function exchangePublicToken(publicToken) {
   return { accessToken: data.access_token, itemId: data.item_id };
 }
 
+// Plaid's own account type is a reliable default for the bank-vs-credit
+// tag — a freshly-connected (or backfilled) account doesn't start out
+// wrongly classified. Shared between PlaidConnect.jsx (connect-time and
+// its own empty-accounts backfill) and StatementsPage.jsx (the
+// missing-accountType backfill for accounts that already exist but were
+// never classified) so the two can't drift on what counts as a match.
+export function defaultAccountType(plaidType) {
+  if (plaidType === 'depository') return 'bank';
+  if (plaidType === 'credit') return 'credit';
+  return undefined;
+}
+
 // Backfills the linked-account list (name/mask per card) for connections
 // made before this app captured that from Link's onSuccess metadata —
 // that metadata only ever fires once, at connect time, so this is the only

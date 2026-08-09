@@ -4,6 +4,7 @@ import { AlertCircle, CreditCard, Landmark, HelpCircle, Wallet, Upload, X } from
 import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride, reclassifyPayments, savePlaidConnection, TXN_MAX } from '../services/db';
 import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { syncPlaidConnection } from '../services/plaidSync';
+import { fetchAccounts, defaultAccountType } from '../services/plaid';
 import { matchTransactions, computeSummary } from '../utils/matcher';
 import { detectTransfers } from '../utils/transferMatcher';
 import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
@@ -89,6 +90,8 @@ export default function StatementsPage() {
   // legacy-source effect below) so a re-render mid-fix doesn't fire a
   // second concurrent resync for the same connection.
   const autoFixingRef = useRef(new Set());
+  // Same concurrency guard, for the account-type backfill effect below.
+  const accountTypeFixingRef = useRef(new Set());
 
   const groupName = id => groups.find(g => g.id === id)?.name;
   const monthRange = useMemo(() => getMonthRange(currentMonth), [currentMonth]);
@@ -445,6 +448,46 @@ export default function StatementsPage() {
       })();
     }
   }, [transactions, loadingTxns, handleAdd]);
+
+  // Backfills accountType for Plaid accounts that already have a stored
+  // `accounts` entry (name/mask) but were never classified bank-vs-credit —
+  // PlaidConnect.jsx's own backfill only fires when a connection's accounts
+  // list is entirely EMPTY, so an account added before the classification
+  // system existed but already present in `accounts` (e.g. from Link's
+  // onSuccess metadata) falls through the gap and stays permanently
+  // unclassified, showing up as "Other" in the filter chips even though
+  // it's a real credit card. Fetches Plaid's live account list once per
+  // connection and fills in just the missing entries, leaving anything
+  // already classified (including a manual correction) untouched.
+  useEffect(() => {
+    if (loadingTxns) return;
+    for (const conn of session.getPlaidConnections()) {
+      const accounts = conn.accounts || [];
+      const needsFix = accounts.length > 0 && accounts.some(a => !a.accountType);
+      if (!needsFix || accountTypeFixingRef.current.has(conn.itemId)) continue;
+      accountTypeFixingRef.current.add(conn.itemId);
+      (async () => {
+        try {
+          const rawAccounts = await fetchAccounts(conn.accessToken);
+          const rawById = new Map(rawAccounts.map(a => [a.id, a]));
+          const updated = accounts.map(a => {
+            if (a.accountType) return a;
+            const inferred = defaultAccountType(rawById.get(a.id)?.type);
+            return inferred ? { ...a, accountType: inferred } : a;
+          });
+          const changed = updated.some((a, i) => a.accountType !== accounts[i]?.accountType);
+          if (changed) {
+            session.upsertPlaidConnection({ itemId: conn.itemId, accounts: updated });
+            await savePlaidConnection({ itemId: conn.itemId, accounts: updated });
+          }
+        } catch (err) {
+          console.error(`Account-type backfill failed for Plaid connection ${conn.itemId}:`, err);
+        } finally {
+          accountTypeFixingRef.current.delete(conn.itemId);
+        }
+      })();
+    }
+  }, [transactions, loadingTxns]);
 
   const handleRemoveSource = useCallback(async (sourceId) => {
     await deleteTransactionsBySource(sourceId);

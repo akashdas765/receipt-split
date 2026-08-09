@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { TrendingUp, Loader2, AlertCircle, Send } from 'lucide-react';
 import { loadReceiptsForInsights, loadTransactions } from '../services/db';
 import { fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
@@ -19,8 +18,6 @@ const SUGGESTIONS = [
 ];
 
 export default function InsightsPage() {
-  const navigate = useNavigate();
-
   // Full receipt/transaction history, loaded once — filtered to the
   // selected month client-side, same pattern HomePage uses.
   const [receipts,     setReceipts]     = useState([]);
@@ -127,7 +124,7 @@ export default function InsightsPage() {
 
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
-      <PageHeader title="Insights" onBack={() => navigate('/')} />
+      <PageHeader title="Insights" showBack={false} />
 
       <MonthSlider currentMonth={currentMonth} onChange={setCurrentMonth} />
 

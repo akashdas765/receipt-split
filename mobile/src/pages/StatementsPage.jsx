@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { AlertCircle, CreditCard, Landmark, HelpCircle, Wallet, Upload, X } from 'lucide-react';
 import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride, reclassifyPayments, savePlaidConnection, TXN_MAX } from '../services/db';
 import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
@@ -58,7 +57,6 @@ function matchesAccountFilter(source, filter) {
 const TABS = ['Manual', 'Transactions', 'Reports', 'Payments', 'Transfers'];
 
 export default function StatementsPage() {
-  const navigate = useNavigate();
 
   const [transactions, setTransactions] = useState([]);
   const [loadingTxns,  setLoadingTxns]  = useState(true);
@@ -599,7 +597,7 @@ export default function StatementsPage() {
 
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
-      <PageHeader title="Statements" onBack={() => navigate('/')}>
+      <PageHeader title="Statements" showBack={false}>
         {statements.length > 0 && (
           <button
             onClick={() => setAccountsOpen(true)}

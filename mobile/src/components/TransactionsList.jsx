@@ -150,6 +150,7 @@ function CreditRow({ txn, onDelete }) {
           {txn.transferHintLabel && <ArrowLeftRight size={11} style={{ color: INDIGO }} className="shrink-0" />}
           <p className="text-sm font-semibold text-slate-700 truncate">{txn.transferHintLabel || txn.description}</p>
         </div>
+        {txn.transferHintLabel && <p className="text-xs text-slate-500 mt-0.5 truncate">{txn.description}</p>}
         <p className="text-xs text-slate-400 mt-0.5 truncate">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
       </div>
       <p className="text-sm font-bold text-emerald-500 shrink-0">+{formatCurrency(txn.amount)}</p>
@@ -204,6 +205,7 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onUnlink, onCle
               <p className="text-sm font-semibold text-slate-700 truncate">{txn.transferHintLabel || txn.description}</p>
               {isOverridden && <span className="text-xs bg-indigo-50 px-1.5 rounded-full shrink-0" style={{ color: INDIGO }}>manual</span>}
             </div>
+            {txn.transferHintLabel && <p className="text-xs text-slate-500 mt-0.5 truncate">{txn.description}</p>}
             <p className="text-xs text-slate-400 mt-0.5 truncate">
               {formatShortDate(txn.date)} · {txn.sourceName || txn.source}
               {txn.isSplitwised && (

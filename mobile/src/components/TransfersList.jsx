@@ -73,6 +73,7 @@ export default function TransfersList({ pairs, hints, monthRange, onConfirm, onD
               <p className="text-sm font-semibold text-slate-700 truncate">
                 {pair.debit.sourceName || pair.debit.source} → {pair.credit.sourceName || pair.credit.source}
               </p>
+              <p className="text-xs text-slate-500 mt-0.5 truncate">"{pair.debit.description}" → "{pair.credit.description}"</p>
               <p className="text-xs text-amber-500 mt-0.5">Possible transfer · {formatShortDate(pair.debit.date)}</p>
             </div>
             <p className="text-sm font-bold text-slate-800 shrink-0">{formatCurrency(pair.debit.amount)}</p>
@@ -103,6 +104,7 @@ export default function TransfersList({ pairs, hints, monthRange, onConfirm, onD
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-slate-700 truncate">{h.label}</p>
+              <p className="text-xs text-slate-500 mt-0.5 truncate">"{h.txn.description}"</p>
               <p className="text-xs text-amber-500 mt-0.5">Possible transfer · {formatShortDate(h.txn.date)}</p>
             </div>
             <p className="text-sm font-bold text-slate-800 shrink-0">{formatCurrency(h.txn.amount)}</p>

@@ -10,3 +10,18 @@
   from   = "/*"
   to     = "/index.html"
   status = 200
+
+# Kept in sync with vercel.json's headers block — both deploy targets must
+# serve the same security headers. CSP is the main defense-in-depth against
+# an XSS payload (e.g. a malicious uploaded PDF) exfiltrating the Splitwise
+# key / Plaid tokens. connect-src is scoped to self (the proxy endpoints are
+# same-origin) plus the Google/Firebase hosts the client SDK talks to.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy   = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+    X-Frame-Options           = "DENY"
+    X-Content-Type-Options    = "nosniff"
+    Referrer-Policy           = "strict-origin-when-cross-origin"
+    Strict-Transport-Security = "max-age=63072000; includeSubDomains; preload"
+    Permissions-Policy        = "camera=(), microphone=(), geolocation=(), interest-cohort=()"

@@ -25,7 +25,10 @@ function localFunctionsProxy() {
 
         if (url.pathname === '/.netlify/functions/splitwise') {
           const body = req.method === 'POST' ? await readBody(req) : undefined;
+          const authHeader = req.headers['authorization'];
+          const idToken    = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
           const { status, bodyText } = await proxySplitwise({
+            idToken,
             swKey:       req.headers['x-splitwise-key'],
             method:      req.method,
             path:        url.searchParams.get('path'),

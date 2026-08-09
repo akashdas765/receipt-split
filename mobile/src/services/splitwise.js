@@ -1,13 +1,29 @@
 import { session } from './session';
+import { auth } from './firebase';
 
 // Requests go through our Netlify proxy to avoid Splitwise CORS restrictions
 const PROXY = '/.netlify/functions/splitwise';
 
-const swFetch = (path, opts = {}) =>
-  fetch(`${PROXY}?path=${encodeURIComponent(path)}`, {
+const swFetch = async (path, opts = {}) => {
+  // The proxy requires a valid Firebase ID token so it can't be driven as an
+  // anonymous relay. getIdToken() can throw in restricted WebKit contexts
+  // (installed iOS PWA storage partitioning) — fall back to no token and let
+  // the proxy return a clear 401 rather than leaking a cryptic WebKit error.
+  let idToken;
+  try {
+    idToken = await auth.currentUser?.getIdToken();
+  } catch {
+    idToken = null;
+  }
+  return fetch(`${PROXY}?path=${encodeURIComponent(path)}`, {
     ...opts,
-    headers: { 'x-splitwise-key': session.getKey(), ...(opts.headers || {}) },
+    headers: {
+      'x-splitwise-key': session.getKey(),
+      ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      ...(opts.headers || {}),
+    },
   });
+};
 
 function displayNames(members) {
   const counts = {};

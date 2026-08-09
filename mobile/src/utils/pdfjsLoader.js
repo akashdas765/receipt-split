@@ -9,7 +9,7 @@ export function loadPdfjs() {
   if (!pdfjsLibPromise) {
     pdfjsLibPromise = Promise.all([
       import('pdfjs-dist'),
-      import('pdfjs-dist/build/pdf.worker.min.js?url'),
+      import('pdfjs-dist/build/pdf.worker.min.mjs?url'),
     ]).then(([pdfjsLib, workerUrlModule]) => {
       pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrlModule.default;
       return pdfjsLib;

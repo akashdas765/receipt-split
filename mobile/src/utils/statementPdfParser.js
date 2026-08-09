@@ -103,7 +103,10 @@ function parsePdfText(text) {
 export async function parseStatementPdf(file) {
   const pdfjsLib     = await loadPdfjs();
   const arrayBuffer  = await file.arrayBuffer();
-  const pdf          = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  // isEvalSupported:false closes CVE-2024-4367 — a crafted PDF could
+  // otherwise run arbitrary JS through pdf.js's font path. Statement PDFs
+  // are untrusted user uploads, so this must stay off.
+  const pdf          = await pdfjsLib.getDocument({ data: arrayBuffer, isEvalSupported: false }).promise;
 
   let fullText = '';
   try {

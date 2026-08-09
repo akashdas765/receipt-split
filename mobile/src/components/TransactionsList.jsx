@@ -142,8 +142,12 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
 }
 
 function CreditRow({ txn, onDelete }) {
+  // Same "hint here, confirm in its own tab" pattern as isTransfer below —
+  // a "payment thank you"-style credit needs a tap in the Payments tab
+  // before it stops counting toward the card's credit total.
+  const needsConfirm = txn.paymentNeedsConfirm;
   return (
-    <div className="rounded-2xl border border-emerald-100 bg-white p-3 flex items-center gap-3">
+    <div className={`rounded-2xl border bg-white p-3 flex items-center gap-3 ${needsConfirm ? 'border-amber-100' : 'border-emerald-100'}`}>
       <span className="text-base shrink-0">💳</span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
@@ -152,6 +156,7 @@ function CreditRow({ txn, onDelete }) {
         </div>
         {txn.transferHintLabel && <p className="text-xs text-slate-500 mt-0.5 truncate">{txn.description}</p>}
         <p className="text-xs text-slate-400 mt-0.5 truncate">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
+        {needsConfirm && <p className="text-xs text-amber-500 mt-0.5">Possible bill payment — confirm in the Payments tab</p>}
       </div>
       <p className="text-sm font-bold text-emerald-500 shrink-0">+{formatCurrency(txn.amount)}</p>
       <button onClick={() => onDelete(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">

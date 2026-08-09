@@ -226,12 +226,31 @@ export default function StatementsPage() {
       })),
     [monthlyTransactions, transferLabelById]
   );
+  // A card "Payment Thank You"-style credit is your OWN money paying down
+  // your own balance — not new credit, same idea as a transfer not being
+  // real income. isCreditConfirmation's pattern match is reliable enough to
+  // surface as a suggestion, but (same lesson as the transfer false-
+  // positive) never confident enough to silently change a total on its own
+  // — so it's a candidate needing one tap to confirm, same shape as
+  // transfers. Bank accounts don't get this treatment: a bank credit
+  // matching this text (rare) is scoped out via accountType === 'credit'.
   const monthlyPaymentTxns = useMemo(() =>
     monthlyTransactions
       .filter(t => t.isPayment)
-      .map(t => ({ ...t, isTransfer: transferLabelById.has(t.id), transferHintLabel: transferLabelById.get(t.id) })),
+      .map(t => {
+        const isPaymentCandidate = t.isCredit && isCreditConfirmation(t.description) && session.getAccountType(t.source) === 'credit';
+        return {
+          ...t,
+          isTransfer: transferLabelById.has(t.id),
+          transferHintLabel: transferLabelById.get(t.id),
+          isPaymentCandidate,
+          paymentConfirmed: isPaymentCandidate && !!t.overrideConfirmedPayment,
+          paymentNeedsConfirm: isPaymentCandidate && !t.overrideConfirmedPayment && !t.overrideDismissedPaymentHint,
+        };
+      }),
     [monthlyTransactions, transferLabelById]
   );
+  const unconfirmedPaymentCt = useMemo(() => monthlyPaymentTxns.filter(t => t.paymentNeedsConfirm).length, [monthlyPaymentTxns]);
   const pendingTxns = useMemo(() => monthlyTransactions.filter(t => t.isPending && !t.isPayment), [monthlyTransactions]);
 
   // Spend/expense TOTALS still exclude transfers (a transfer was never
@@ -265,7 +284,13 @@ export default function StatementsPage() {
     const computeFor = (txns, scopePredicate) => {
       const settled = txns.filter(t => !t.isPending);
       const debit  = settled.filter(t => !t.isCredit).reduce((s, t) => s + (t.amount || 0), 0);
-      const credit = settled.filter(t => t.isCredit).reduce((s, t) => s + (t.amount || 0), 0);
+      // Confirmed "payment thank you"-style credits are excluded here — your
+      // own money paying down your own card isn't real credit, same reason
+      // a confirmed transfer isn't real income (see transferAmt below).
+      // Unconfirmed candidates stay counted until the user actually
+      // confirms one, same "don't change a total before confirmation"
+      // policy used for transfers.
+      const credit = settled.filter(t => t.isCredit && !t.overrideConfirmedPayment).reduce((s, t) => s + (t.amount || 0), 0);
       const inScope = scopePredicate;
       const transferPairAmt = transferPairsThisMonth
         .filter(p => p.confirmed && (inScope(p.debit.source) || inScope(p.credit.source)))
@@ -459,6 +484,12 @@ export default function StatementsPage() {
     applyOverride(pair.credit.id, { overrideDismissedTransferHint: true });
   };
 
+  // Confirming/dismissing a card "payment thank you"-style credit — see
+  // monthlyPaymentTxns above for why this needs the same confirm step as a
+  // transfer before accountSummary pulls it out of the card's credit total.
+  const handleConfirmPayment = txn => applyOverride(txn.id, { overrideConfirmedPayment: true });
+  const handleDismissPaymentHint = txn => applyOverride(txn.id, { overrideDismissedPaymentHint: true });
+
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
       <PageHeader title="Statements" onBack={() => navigate('/')}>
@@ -594,6 +625,11 @@ export default function StatementsPage() {
                     {unconfirmedTransferCt > 9 ? '9+' : unconfirmedTransferCt}
                   </span>
                 )}
+                {label === 'Payments' && unconfirmedPaymentCt > 0 && tab !== i && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 text-white text-[10px] rounded-full flex items-center justify-center font-bold">
+                    {unconfirmedPaymentCt > 9 ? '9+' : unconfirmedPaymentCt}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -662,12 +698,44 @@ export default function StatementsPage() {
                       <div className="space-y-2">
                         {monthlyPaymentTxns.map(txn => {
                           const isBankTxn = accountSummary.type === 'bank';
+                          if (txn.paymentNeedsConfirm) {
+                            return (
+                              <div key={txn.id} className="rounded-xl border border-amber-100 bg-white p-3">
+                                <div className="flex items-center gap-3">
+                                  <span className="text-base shrink-0">💳</span>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm text-slate-700 truncate">{txn.description}</p>
+                                    <p className="text-xs text-amber-500 mt-0.5">Possible bill payment · {formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
+                                  </div>
+                                  <p className="text-sm font-semibold text-slate-600 shrink-0">{formatCurrency(txn.amount)}</p>
+                                </div>
+                                <div className="flex gap-2 pt-2 mt-2 border-t border-slate-100">
+                                  <button
+                                    onClick={() => handleDismissPaymentHint(txn)}
+                                    className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-500 border border-slate-200 rounded-xl py-2 hover:bg-slate-50 transition-colors"
+                                  >
+                                    Not a payment
+                                  </button>
+                                  <button
+                                    onClick={() => handleConfirmPayment(txn)}
+                                    className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-white rounded-xl py-2 transition-colors"
+                                    style={{ background: INDIGO }}
+                                  >
+                                    Confirm payment
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          }
                           return (
                             <div key={txn.id} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
                               <span className="text-base">{isBankTxn ? '💰' : '💳'}</span>
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm text-slate-700 truncate">{txn.description}</p>
-                                <p className="text-xs text-slate-400">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
+                                <p className="text-xs text-slate-400">
+                                  {formatShortDate(txn.date)} · {txn.sourceName || txn.source}
+                                  {txn.paymentConfirmed && <span className="ml-1.5 font-semibold" style={{ color: INDIGO }}>· confirmed, excluded from credit</span>}
+                                </p>
                               </div>
                               <p className={`text-sm font-semibold ${isBankTxn ? 'text-emerald-500' : 'text-slate-600'}`}>
                                 {isBankTxn ? '+' : ''}{formatCurrency(txn.amount)}

@@ -147,7 +147,9 @@ export default function StatementsPage() {
     };
     const start = pad(monthRange.start, -3);
     const end   = pad(monthRange.end, 3);
-    return transactions.filter(t => t.date && t.date.slice(0, 10) >= start && t.date.slice(0, 10) <= end);
+    return transactions
+      .filter(t => t.date && t.date.slice(0, 10) >= start && t.date.slice(0, 10) <= end)
+      .map(t => ({ ...t, accountType: session.getAccountType(t.source) }));
   }, [transactions, monthRange]);
 
   // Cheap proxy trigger: Plaid connections don't change independent of a
@@ -173,7 +175,9 @@ export default function StatementsPage() {
   const transferLabelById = useMemo(() => {
     const map = new Map();
     transferPairs.forEach(p => {
-      const label = `Transferred from ${p.debit.sourceName || p.debit.source} to ${p.credit.sourceName || p.credit.source}`;
+      const from = p.debit.sourceName || p.debit.source;
+      const to   = p.credit.sourceName || p.credit.source;
+      const label = p.confirmed ? `Transferred from ${from} to ${to}` : `Possible transfer: ${from} → ${to}`;
       map.set(p.debit.id, label);
       map.set(p.credit.id, label);
     });
@@ -188,6 +192,10 @@ export default function StatementsPage() {
   const transferHintsThisMonth = useMemo(() =>
     transferHints.filter(h => h.txn.date.slice(0, 10) >= monthRange.start && h.txn.date.slice(0, 10) <= monthRange.end),
     [transferHints, monthRange]
+  );
+  const unconfirmedTransferCt = useMemo(() =>
+    transferPairsThisMonth.filter(p => !p.confirmed).length + transferHintsThisMonth.filter(h => !h.confirmed).length,
+    [transferPairsThisMonth, transferHintsThisMonth]
   );
 
   const bankExpenseTxns   = useMemo(() =>
@@ -228,7 +236,7 @@ export default function StatementsPage() {
       const credit = settled.filter(t => t.isCredit).reduce((s, t) => s + (t.amount || 0), 0);
       const inScope = source => !scopeSource || source === scopeSource;
       const transferPairAmt = transferPairsThisMonth
-        .filter(p => inScope(p.debit.source) || inScope(p.credit.source))
+        .filter(p => p.confirmed && (inScope(p.debit.source) || inScope(p.credit.source)))
         .reduce((s, p) => s + p.debit.amount, 0);
       const transferHintAmt = transferHintsThisMonth
         .filter(h => h.confirmed && inScope(h.txn.source))
@@ -403,12 +411,20 @@ export default function StatementsPage() {
     applyOverride(txn.id, { overrideSplitwiseId: exp.id, overrideForcedUnmatched: null, overrideExpenseData: exp });
   };
 
-  // Confirming/dismissing a Tier-2 transfer hint, and un-pairing a Tier-1
-  // false-positive pair — all three just set overrideDismissedTransferHint/
+  // Confirming/dismissing a Tier-2 transfer hint, and confirming/dismissing
+  // a Tier-1 pair — all just set overrideDismissedTransferHint/
   // overrideConfirmedTransfer on the transaction doc(s), same
-  // override-field mechanism as the Splitwise match overrides above.
+  // override-field mechanism as the Splitwise match overrides above. Pairs
+  // are NOT auto-confirmed (see transferMatcher.js) — amount+date alone can
+  // coincidentally match two unrelated transactions on different cards, so
+  // a pair needs the same explicit confirm step as a hint before it's
+  // treated as a real transfer anywhere (summary totals, confident wording).
   const handleConfirmTransfer = txn => applyOverride(txn.id, { overrideConfirmedTransfer: true });
   const handleDismissTransferHint = txn => applyOverride(txn.id, { overrideDismissedTransferHint: true });
+  const handleConfirmTransferPair = pair => {
+    applyOverride(pair.debit.id, { overrideConfirmedTransfer: true });
+    applyOverride(pair.credit.id, { overrideConfirmedTransfer: true });
+  };
   const handleUnpairTransfer = pair => {
     applyOverride(pair.debit.id, { overrideDismissedTransferHint: true });
     applyOverride(pair.credit.id, { overrideDismissedTransferHint: true });
@@ -542,9 +558,9 @@ export default function StatementsPage() {
                     {unmatchedCt > 9 ? '9+' : unmatchedCt}
                   </span>
                 )}
-                {label === 'Transfers' && transferHintsThisMonth.filter(h => !h.confirmed).length > 0 && tab !== i && (
+                {label === 'Transfers' && unconfirmedTransferCt > 0 && tab !== i && (
                   <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-500 text-white text-[10px] rounded-full flex items-center justify-center font-bold">
-                    {transferHintsThisMonth.filter(h => !h.confirmed).length > 9 ? '9+' : transferHintsThisMonth.filter(h => !h.confirmed).length}
+                    {unconfirmedTransferCt > 9 ? '9+' : unconfirmedTransferCt}
                   </span>
                 )}
               </button>
@@ -661,6 +677,7 @@ export default function StatementsPage() {
                   monthRange={monthRange}
                   onConfirm={handleConfirmTransfer}
                   onDismiss={handleDismissTransferHint}
+                  onConfirmPair={handleConfirmTransferPair}
                   onUnpair={handleUnpairTransfer}
                 />
               )}

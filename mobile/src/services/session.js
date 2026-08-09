@@ -94,9 +94,10 @@ export const session = {
       for (const acct of conn.accounts || []) {
         if (!acct.name) continue;
         out.push({
-          source:  `plaid-${conn.itemId}-${acct.id}`,
-          rawName: acct.name,
-          label:   accountLabel(acct),
+          source:      `plaid-${conn.itemId}-${acct.id}`,
+          rawName:     acct.name,
+          label:       accountLabel(acct),
+          accountType: acct.accountType,
         });
       }
     }

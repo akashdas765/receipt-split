@@ -250,6 +250,7 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
               <p className="text-emerald-600 text-xs font-semibold">✅ Matched to Splitwise</p>
               <Row label="Expense" value={txn.splitwiseDesc} />
               {txn.splitwiseDate && <Row label="Date" value={formatShortDate(txn.splitwiseDate)} />}
+              {txn.splitwiseCost != null && <Row label="Total cost" value={formatCurrency(txn.splitwiseCost)} />}
               <Row label="Your share" value={formatCurrency(txn.effectiveAmount)} valueClass="text-emerald-600 font-semibold" />
               <Row label="You save" value={`-${formatCurrency(txn.savings)}`} valueClass="text-emerald-600" />
               {groupName(txn.groupId) && <Row label="Group" value={groupName(txn.groupId)} />}

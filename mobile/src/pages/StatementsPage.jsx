@@ -495,6 +495,7 @@ export default function StatementsPage() {
       date:        expense.date || addNewTarget.date,
       group_id:    groupId,
       myOwedShare,
+      cost:        expense.cost != null ? parseFloat(expense.cost) : Math.abs(addNewTarget.amount || 0),
     };
     applyOverride(addNewTarget.id, { overrideSplitwiseId: expense.id, overrideForcedUnmatched: null, overrideExpenseData });
     setAddNewTarget(null);

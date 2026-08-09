@@ -355,7 +355,17 @@ export default function StatementsPage() {
     [transactions, monthRange]
   );
 
-  const paymentTotal = monthlyPaymentTxns.reduce((s, t) => s + (t.amount || 0), 0);
+  // For a card, "Payments" should mean actual bill payments only — a
+  // merchant refund lands in the same isPayment bucket (it's a credit, not
+  // spend) but isn't a payment, so it stays out of this dedicated list
+  // (it's still visible in the Transactions tab's credit view). Bank
+  // accounts keep every isPayment credit — "money received" is a broader,
+  // legitimately mixed bucket there (interest, Zelle receipts, refunds).
+  const paymentsToShow = accountSummary.type === 'card'
+    ? monthlyPaymentTxns.filter(t => t.isPaymentCandidate)
+    : monthlyPaymentTxns;
+
+  const paymentTotal = paymentsToShow.reduce((s, t) => s + (t.amount || 0), 0);
   // Excludes transfers — the "needs your attention" badge shouldn't count
   // rows that were never Splitwise-matchable to begin with (same reasoning
   // as excluding them from realExpenseTxns above).
@@ -557,7 +567,7 @@ export default function StatementsPage() {
               <p className="text-slate-400 text-xs">My actual spend</p>
             </div>
             <div className="bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
-              <p className="font-bold text-slate-600">{monthlyPaymentTxns.length}</p>
+              <p className="font-bold text-slate-600">{paymentsToShow.length}</p>
               <p className="text-slate-400 text-xs">Payments made</p>
             </div>
             <div className="bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
@@ -695,11 +705,11 @@ export default function StatementsPage() {
                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
                       {accountSummary.type === 'bank' ? 'Money received' : 'Card payments'} — {monthRange.label}
                     </p>
-                    {monthlyPaymentTxns.length === 0 ? (
+                    {paymentsToShow.length === 0 ? (
                       <div className="text-center py-6 text-sm text-slate-400 bg-white rounded-2xl border border-slate-100">Nothing this month</div>
                     ) : (
                       <div className="space-y-2">
-                        {monthlyPaymentTxns.map(txn => {
+                        {paymentsToShow.map(txn => {
                           const isBankTxn = accountSummary.type === 'bank';
                           if (txn.paymentNeedsConfirm) {
                             return (

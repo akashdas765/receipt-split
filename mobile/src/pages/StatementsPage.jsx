@@ -161,25 +161,25 @@ export default function StatementsPage() {
     [transferScanTxns, myAccountNames, myFullName]
   );
 
-  // Confirming a hint (see handleConfirmTransfer) promotes it to the same
-  // bucket-exclusion treatment as an auto-paired transfer — once you've
-  // said "yes, this is a transfer," it shouldn't keep counting as spend/
-  // income or sitting in the Splitwise unmatched list either.
-  const excludedTransferIds = useMemo(() => {
-    const ids = new Set(transferPairedIds);
-    transferHints.forEach(h => { if (h.confirmed) ids.add(h.txn.id); });
-    return ids;
-  }, [transferPairedIds, transferHints]);
-
-  // Unconfirmed hints stay visible in their normal bucket (never silently
-  // hidden without confirmation — same precedent as matcher.js's suggested
-  // Splitwise matches) but get their description replaced with the parsed
-  // transfer label wherever they're rendered.
-  const hintLabelById = useMemo(() => {
+  // Every detected transfer (paired or hinted, confirmed or not) stays
+  // fully visible in its normal bucket instead of being removed — hiding
+  // rows made the Transactions tab disagree with what a real bank
+  // statement shows (a transfer that's genuinely there just... wasn't).
+  // Labeled wherever it appears instead (see bankExpenseTxns/
+  // monthlyPaymentTxns below); matcher.js separately skips scoring
+  // isTransfer rows against Splitwise, same as it already does for
+  // isBankAccount rows. Both sides of a pair get the identical label so
+  // it reads the same regardless of which account you're viewing it from.
+  const transferLabelById = useMemo(() => {
     const map = new Map();
-    transferHints.forEach(h => { if (!h.confirmed) map.set(h.txn.id, h.label); });
+    transferPairs.forEach(p => {
+      const label = `Transferred from ${p.debit.sourceName || p.debit.source} to ${p.credit.sourceName || p.credit.source}`;
+      map.set(p.debit.id, label);
+      map.set(p.credit.id, label);
+    });
+    transferHints.forEach(h => map.set(h.txn.id, h.label));
     return map;
-  }, [transferHints]);
+  }, [transferPairs, transferHints]);
 
   const transferPairsThisMonth = useMemo(() =>
     transferPairs.filter(p => p.debit.date.slice(0, 10) >= monthRange.start && p.debit.date.slice(0, 10) <= monthRange.end),
@@ -192,17 +192,27 @@ export default function StatementsPage() {
 
   const bankExpenseTxns   = useMemo(() =>
     monthlyTransactions
-      .filter(t => !t.isPayment && !t.isPending && !excludedTransferIds.has(t.id))
-      .map(t => ({ ...t, isBankAccount: session.isBankAccountSource(t.source), transferHintLabel: hintLabelById.get(t.id) })),
-    [monthlyTransactions, excludedTransferIds, hintLabelById]
+      .filter(t => !t.isPayment && !t.isPending)
+      .map(t => ({
+        ...t,
+        isBankAccount: session.isBankAccountSource(t.source),
+        isTransfer: transferLabelById.has(t.id),
+        transferHintLabel: transferLabelById.get(t.id),
+      })),
+    [monthlyTransactions, transferLabelById]
   );
   const monthlyPaymentTxns = useMemo(() =>
     monthlyTransactions
-      .filter(t => t.isPayment && !excludedTransferIds.has(t.id))
-      .map(t => ({ ...t, transferHintLabel: hintLabelById.get(t.id) })),
-    [monthlyTransactions, excludedTransferIds, hintLabelById]
+      .filter(t => t.isPayment)
+      .map(t => ({ ...t, isTransfer: transferLabelById.has(t.id), transferHintLabel: transferLabelById.get(t.id) })),
+    [monthlyTransactions, transferLabelById]
   );
   const pendingTxns = useMemo(() => monthlyTransactions.filter(t => t.isPending && !t.isPayment), [monthlyTransactions]);
+
+  // Spend/expense TOTALS still exclude transfers (a transfer was never
+  // spend, however visible it stays in the actual transaction list) — used
+  // by the stat bar below instead of bankExpenseTxns directly.
+  const realExpenseTxns = useMemo(() => bankExpenseTxns.filter(t => !t.isTransfer), [bankExpenseTxns]);
 
   // Account-aware Debit/Credit/Net summary — deliberately computed from the
   // RAW month(+account)-scoped transaction list, not bankExpenseTxns/
@@ -243,9 +253,13 @@ export default function StatementsPage() {
     return { type: 'all', bank: computeFor(bankTxns, null), card: computeFor(cardTxns, null) };
   }, [monthlyTransactions, accountFilter, transferPairsThisMonth, transferHintsThisMonth]);
 
+  // matched includes isTransfer rows (matcher.js just never scores them —
+  // see its Section 3 skip) so they still render in the Transactions tab;
+  // computeSummary excludes them explicitly since "My actual spend" must
+  // not count a transfer as spend even though the row itself stays visible.
   const matched = useMemo(() => matchTransactions(bankExpenseTxns, swExpenses), [bankExpenseTxns, swExpenses]);
   const matchedBankOnly = useMemo(() => matched.filter(t => !t.isSplitOnly), [matched]);
-  const summary = useMemo(() => computeSummary(matched), [matched]);
+  const summary = useMemo(() => computeSummary(matched.filter(t => !t.isTransfer)), [matched]);
 
   const splitwiseOwed = useMemo(() => swExpenses.reduce((s, e) => s + (e.myOwedShare || 0), 0), [swExpenses]);
   const personalTotal = useMemo(() =>
@@ -277,7 +291,10 @@ export default function StatementsPage() {
   );
 
   const paymentTotal = monthlyPaymentTxns.reduce((s, t) => s + (t.amount || 0), 0);
-  const unmatchedCt  = matchedBankOnly.filter(t => !t.isSplitwised).length;
+  // Excludes transfers — the "needs your attention" badge shouldn't count
+  // rows that were never Splitwise-matchable to begin with (same reasoning
+  // as excluding them from realExpenseTxns above).
+  const unmatchedCt  = matchedBankOnly.filter(t => !t.isSplitwised && !t.isTransfer).length;
 
   // Transactions saved before their description was checked against the
   // payment patterns (isPayment is stamped once at write time, not
@@ -444,11 +461,11 @@ export default function StatementsPage() {
           {/* Stat bar */}
           <div className="grid grid-cols-2 gap-2">
             <div className="bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
-              <p className="font-bold text-slate-800">{bankExpenseTxns.length}</p>
+              <p className="font-bold text-slate-800">{realExpenseTxns.length}</p>
               <p className="text-slate-400 text-xs">Expenses this month</p>
             </div>
             <div className="bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
-              <p className="font-bold text-slate-800">{formatCurrency(bankExpenseTxns.reduce((s, t) => s + (t.amount || 0), 0))}</p>
+              <p className="font-bold text-slate-800">{formatCurrency(realExpenseTxns.reduce((s, t) => s + (t.amount || 0), 0))}</p>
               <p className="text-slate-400 text-xs">Gross total</p>
             </div>
             <div className="col-span-2 rounded-xl px-3 py-2.5 border border-indigo-100" style={{ background: '#eef1fb' }}>

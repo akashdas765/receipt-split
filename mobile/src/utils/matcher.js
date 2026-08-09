@@ -144,9 +144,14 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
     // the way a credit card charge does (paychecks, rent, ATM withdrawals,
     // etc. would just produce bogus date/amount coincidences) — left
     // unscored entirely, falling through as a plain unmatched row below.
-    // Manual linking (section 2, overrideSplitwiseId) is unaffected — that
-    // path never reaches here, so "I'll match it manually" still works.
-    for (const exp of (txn.isBankAccount ? [] : splitwiseExpenses)) {
+    // Same for a transaction utils/transferMatcher.js has identified as
+    // money moving between the user's own accounts (transferMatcher's
+    // pairs are never real Splitwise expenses either) — still shown
+    // (relabeled "Transferred from X to Y" by the caller) rather than
+    // hidden, just never scored. Manual linking (section 2,
+    // overrideSplitwiseId) is unaffected — that path never reaches here,
+    // so "I'll match it manually" still works for either case.
+    for (const exp of ((txn.isBankAccount || txn.isTransfer) ? [] : splitwiseExpenses)) {
       if (usedExpenses.has(exp.id)) continue;
       // Only expenses I actually paid toward are plausible matches for a
       // charge on my own card — otherwise a group-mate's expense could get

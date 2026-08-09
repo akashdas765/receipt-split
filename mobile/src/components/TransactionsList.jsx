@@ -20,8 +20,12 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
   const [filter,   setFilter]   = useState(0); // 0=All 1=Unmatched 2=Matched 3=Credits 4=Pending
   const [expanded, setExpanded] = useState({});
 
-  const matchedTxns   = matched.filter(t => t.isSplitwised);
-  const unmatchedTxns = matched.filter(t => !t.isSplitwised);
+  // Transfers are neither — they're excluded from both (matcher.js never
+  // even tries to score them), but stay visible in the "All" view (which
+  // renders straight off `matched`, unfiltered) with their own distinct
+  // row treatment (see DebitRow's isTransfer branch below).
+  const matchedTxns   = matched.filter(t => t.isSplitwised && !t.isTransfer);
+  const unmatchedTxns = matched.filter(t => !t.isSplitwised && !t.isTransfer);
   const suggestedCount = unmatchedTxns.filter(t => t.suggestedMatch).length;
   const displayed =
     filter === 1 ? unmatchedTxns :
@@ -188,16 +192,18 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onUnlink, onCle
 
   return (
     <div className={`rounded-2xl overflow-hidden border bg-white ${
-      txn.isSplitwised ? 'border-emerald-100' : suggestion ? 'border-indigo-100' : 'border-amber-100'
+      txn.isTransfer ? 'border-indigo-100' : txn.isSplitwised ? 'border-emerald-100' : suggestion ? 'border-indigo-100' : 'border-amber-100'
     }`}>
       <div className="w-full flex items-center gap-2 p-3">
         <button className="flex-1 flex items-center gap-3 text-left min-w-0" onClick={() => setExpanded(p => ({ ...p, [txn.id]: !p[txn.id] }))}>
           <div className="shrink-0">
-            {txn.isSplitwised
-              ? <CheckCircle2 size={18} className="text-emerald-500" />
-              : suggestion
-                ? <Sparkles size={18} style={{ color: INDIGO }} />
-                : <AlertCircle size={18} className="text-amber-500" />}
+            {txn.isTransfer
+              ? <ArrowLeftRight size={18} style={{ color: INDIGO }} />
+              : txn.isSplitwised
+                ? <CheckCircle2 size={18} className="text-emerald-500" />
+                : suggestion
+                  ? <Sparkles size={18} style={{ color: INDIGO }} />
+                  : <AlertCircle size={18} className="text-amber-500" />}
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5">
@@ -232,7 +238,14 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onUnlink, onCle
 
       {isOpen && (
         <div className="border-t border-slate-100 px-3 pb-3 pt-2 space-y-2">
-          {txn.isSplitwised ? (
+          {txn.isTransfer ? (
+            <div className="rounded-xl p-2.5" style={{ background: '#eef1fb' }}>
+              <p className="text-xs flex items-center gap-1.5" style={{ color: INDIGO }}>
+                <ArrowLeftRight size={12} /> Money between your own accounts — not spend, not Splitwise-matchable.
+              </p>
+              <p className="text-xs text-slate-500 mt-1">Confirm or dismiss it from the Transfers tab.</p>
+            </div>
+          ) : txn.isSplitwised ? (
             <div className="bg-emerald-50 rounded-xl p-2.5 space-y-1">
               <p className="text-emerald-600 text-xs font-semibold">✅ Matched to Splitwise</p>
               <Row label="Expense" value={txn.splitwiseDesc} />
@@ -259,6 +272,7 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onUnlink, onCle
             </div>
           )}
 
+          {!txn.isTransfer && (
           <div className="flex gap-2 pt-1">
             {txn.isSplitwised ? (
               <>
@@ -296,6 +310,7 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onUnlink, onCle
               </>
             )}
           </div>
+          )}
         </div>
       )}
     </div>

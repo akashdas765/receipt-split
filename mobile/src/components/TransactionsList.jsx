@@ -253,13 +253,33 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
             </div>
           ) : txn.isSplitwised ? (
             <div className="bg-emerald-50 rounded-xl p-2.5 space-y-1">
-              <p className="text-emerald-600 text-xs font-semibold">✅ Matched to Splitwise</p>
-              <Row label="Expense" value={txn.splitwiseDesc} />
-              {txn.splitwiseDate && <Row label="Date" value={formatShortDate(txn.splitwiseDate)} />}
+              <p className="text-emerald-600 text-xs font-semibold">
+                ✅ Matched to Splitwise{txn.splitwiseMatches?.length > 1 ? ` — ${txn.splitwiseMatches.length} expenses` : ''}
+              </p>
+              {txn.splitwiseMatches?.length > 1 ? (
+                <div className="space-y-1.5 py-1">
+                  {txn.splitwiseMatches.map(m => (
+                    <div key={m.id} className="flex items-center justify-between gap-2 text-xs bg-white/70 rounded-lg px-2 py-1.5">
+                      <div className="min-w-0">
+                        <p className="text-slate-700 font-semibold truncate">{m.description}</p>
+                        <p className="text-slate-400 truncate">
+                          {formatShortDate(m.date)}{groupName(m.group_id) ? ` · ${groupName(m.group_id)}` : ''}
+                        </p>
+                      </div>
+                      <p className="text-emerald-600 font-semibold shrink-0">{formatCurrency(m.myOwedShare)}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <>
+                  <Row label="Expense" value={txn.splitwiseDesc} />
+                  {txn.splitwiseDate && <Row label="Date" value={formatShortDate(txn.splitwiseDate)} />}
+                </>
+              )}
               {txn.splitwiseCost != null && <Row label="Total cost" value={formatCurrency(txn.splitwiseCost)} />}
               <Row label="Your share" value={formatCurrency(txn.effectiveAmount)} valueClass="text-emerald-600 font-semibold" />
               <Row label="You save" value={`-${formatCurrency(txn.savings)}`} valueClass="text-emerald-600" />
-              {groupName(txn.groupId) && <Row label="Group" value={groupName(txn.groupId)} />}
+              {txn.splitwiseMatches?.length === 1 && groupName(txn.groupId) && <Row label="Group" value={groupName(txn.groupId)} />}
               {!txn.manualOverride && <Row label="Confidence" value={`${txn.matchScore}%`} />}
             </div>
           ) : suggestion ? (

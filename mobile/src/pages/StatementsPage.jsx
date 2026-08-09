@@ -476,10 +476,30 @@ export default function StatementsPage() {
     setTransactions(prev => prev.map(t => fixedMap.has(t.id) ? { ...t, ...fixedMap.get(t.id) } : t));
   }, [transactions]);
 
-  const handleUnlink = txn => applyOverride(txn.id, { overrideForcedUnmatched: true, overrideSplitwiseId: null, overrideExpenseData: null });
-  const handleClearOverride = txn => applyOverride(txn.id, { overrideForcedUnmatched: null, overrideSplitwiseId: null, overrideExpenseData: null });
-  const handlePickerSelect = exp => {
-    applyOverride(picker.id, { overrideSplitwiseId: exp.id, overrideForcedUnmatched: null, overrideExpenseData: exp });
+  const handleUnlink = txn => applyOverride(txn.id, {
+    overrideForcedUnmatched: true,
+    overrideSplitwiseId: null, overrideExpenseData: null,
+    overrideSplitwiseIds: null, overrideExpenseDataList: null,
+  });
+  const handleClearOverride = txn => applyOverride(txn.id, {
+    overrideForcedUnmatched: null,
+    overrideSplitwiseId: null, overrideExpenseData: null,
+    overrideSplitwiseIds: null, overrideExpenseDataList: null,
+  });
+  // expenses: one or more picked in SplitwisePickerModal — a single card
+  // charge sometimes needs linking to more than one Splitwise expense (see
+  // matcher.js's forcedLinkIds/resolveForcedLinks for how these are read
+  // back). Always the FULL desired set, not an addition to what's there —
+  // the modal pre-seeds its selection from the current links so editing an
+  // existing multi-link "just works" via the same confirm button.
+  const handlePickerConfirm = expenses => {
+    applyOverride(picker.id, {
+      overrideSplitwiseIds: expenses.map(e => e.id),
+      overrideExpenseDataList: expenses,
+      overrideSplitwiseId: null,
+      overrideExpenseData: null,
+      overrideForcedUnmatched: null,
+    });
     setPicker(null);
   };
   // Counterpart to handlePickerSelect — a brand-new expense was just
@@ -834,7 +854,8 @@ export default function StatementsPage() {
           myId={myId}
           groups={groups}
           initialExpenses={swExpenses}
-          onSelect={handlePickerSelect}
+          selectedIds={picker.overrideSplitwiseIds || (picker.overrideSplitwiseId ? [picker.overrideSplitwiseId] : [])}
+          onConfirm={handlePickerConfirm}
           onClose={() => setPicker(null)}
         />
       )}

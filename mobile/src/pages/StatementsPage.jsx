@@ -5,8 +5,9 @@ import { loadTransactions, addTransactions, deleteTransaction, deleteTransaction
 import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { syncPlaidConnection } from '../services/plaidSync';
 import { matchTransactions, computeSummary } from '../utils/matcher';
+import { detectTransfers } from '../utils/transferMatcher';
 import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
-import { isPaymentTransaction } from '../utils/paymentDetector';
+import { isPaymentTransaction, isCreditConfirmation } from '../utils/paymentDetector';
 import { session } from '../services/session';
 import StatementUpload from '../components/StatementUpload';
 import PlaidConnect from '../components/PlaidConnect';
@@ -15,6 +16,7 @@ import TransactionsList from '../components/TransactionsList';
 import StatementsReports from '../components/StatementsReports';
 import SplitwisePickerModal from '../components/SplitwisePickerModal';
 import AccountsOverview from '../components/AccountsOverview';
+import TransfersList from '../components/TransfersList';
 import BottomNav from '../components/BottomNav';
 import MonthSlider from '../components/MonthSlider';
 import PageHeader from '../components/PageHeader';
@@ -30,7 +32,12 @@ const INDIGO = '#6366f1';
 // list of every card transaction (credit or debit) for the month, with
 // the Splitwise match-review workflow available as a filter within it
 // instead of a whole separate tab.
-const TABS = ['Manual', 'Transactions', 'Reports', 'Payments'];
+//
+// 'Transfers' — money moving between the user's OWN accounts (e.g. Capital
+// Savings -> Capital Checking, or a Zelle payment to themselves across
+// banks) isn't spend or income, but nothing about a raw bank feed says so.
+// See utils/transferMatcher.js for the detection/pairing logic.
+const TABS = ['Manual', 'Transactions', 'Reports', 'Payments', 'Transfers'];
 
 export default function StatementsPage() {
   const navigate = useNavigate();
@@ -40,6 +47,7 @@ export default function StatementsPage() {
 
   const [groups, setGroups] = useState([]);
   const [myId,   setMyId]   = useState(null);
+  const [myFullName, setMyFullName] = useState(''); // for transferMatcher.js's own-name hint (e.g. "Zelle payment from Akash Das")
 
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [swExpenses,   setSwExpenses]   = useState([]);
@@ -76,7 +84,9 @@ export default function StatementsPage() {
     })();
 
     fetchGroups().then(setGroups).catch(() => {});
-    fetchCurrentUser().then(u => setMyId(u.id)).catch(() => {});
+    fetchCurrentUser()
+      .then(u => { setMyId(u.id); setMyFullName([u.name, u.lastName].filter(Boolean).join(' ')); })
+      .catch(() => {});
   }, []);
 
   // ── Splitwise expenses for the selected month ─────────────────────────────
@@ -119,12 +129,119 @@ export default function StatementsPage() {
   // yet, so matching/counting them against Splitwise now could need
   // unwinding once they post (or vanish, if the pending charge is
   // cancelled) — see pendingTxns below for where they do show up.
-  const bankExpenseTxns   = useMemo(() =>
-    monthlyTransactions.filter(t => !t.isPayment && !t.isPending).map(t => ({ ...t, isBankAccount: session.isBankAccountSource(t.source) })),
-    [monthlyTransactions]
+
+  // ── Transfers (money between the user's OWN accounts) ──────────────────────
+  // Scanned across ALL accounts (transactions, not scopedTransactions — a
+  // transfer inherently spans two accounts, so it must stay detectable
+  // regardless of which single-account filter chip happens to be active),
+  // widened ±3 days past the visible month (matching
+  // transferMatcher's MAX_DATE_DIFF_DAYS) so a pair straddling a month
+  // boundary (debit Jul 31, credit Aug 2) is still found — each month's own
+  // independent scan will deterministically reconstruct the same pair and
+  // agree on excluding both sides from its own bucket.
+  const transferScanTxns = useMemo(() => {
+    const pad = (dateStr, days) => {
+      const d = new Date(`${dateStr}T00:00:00`);
+      d.setDate(d.getDate() + days);
+      return d.toISOString().slice(0, 10);
+    };
+    const start = pad(monthRange.start, -3);
+    const end   = pad(monthRange.end, 3);
+    return transactions.filter(t => t.date && t.date.slice(0, 10) >= start && t.date.slice(0, 10) <= end);
+  }, [transactions, monthRange]);
+
+  // Cheap proxy trigger: Plaid connections don't change independent of a
+  // transactions change (connecting/disconnecting a bank always adds or
+  // removes transactions too), so recomputing this off `transactions`
+  // avoids needing a separate "connections changed" signal.
+  const myAccountNames = useMemo(() => session.getAllMyAccountNames(), [transactions]);
+
+  const { pairs: transferPairs, hints: transferHints, pairedTxnIds: transferPairedIds } = useMemo(
+    () => detectTransfers(transferScanTxns, { myAccountNames, myFullName }),
+    [transferScanTxns, myAccountNames, myFullName]
   );
-  const monthlyPaymentTxns = useMemo(() => monthlyTransactions.filter(t => t.isPayment), [monthlyTransactions]);
+
+  // Confirming a hint (see handleConfirmTransfer) promotes it to the same
+  // bucket-exclusion treatment as an auto-paired transfer — once you've
+  // said "yes, this is a transfer," it shouldn't keep counting as spend/
+  // income or sitting in the Splitwise unmatched list either.
+  const excludedTransferIds = useMemo(() => {
+    const ids = new Set(transferPairedIds);
+    transferHints.forEach(h => { if (h.confirmed) ids.add(h.txn.id); });
+    return ids;
+  }, [transferPairedIds, transferHints]);
+
+  // Unconfirmed hints stay visible in their normal bucket (never silently
+  // hidden without confirmation — same precedent as matcher.js's suggested
+  // Splitwise matches) but get their description replaced with the parsed
+  // transfer label wherever they're rendered.
+  const hintLabelById = useMemo(() => {
+    const map = new Map();
+    transferHints.forEach(h => { if (!h.confirmed) map.set(h.txn.id, h.label); });
+    return map;
+  }, [transferHints]);
+
+  const transferPairsThisMonth = useMemo(() =>
+    transferPairs.filter(p => p.debit.date.slice(0, 10) >= monthRange.start && p.debit.date.slice(0, 10) <= monthRange.end),
+    [transferPairs, monthRange]
+  );
+  const transferHintsThisMonth = useMemo(() =>
+    transferHints.filter(h => h.txn.date.slice(0, 10) >= monthRange.start && h.txn.date.slice(0, 10) <= monthRange.end),
+    [transferHints, monthRange]
+  );
+
+  const bankExpenseTxns   = useMemo(() =>
+    monthlyTransactions
+      .filter(t => !t.isPayment && !t.isPending && !excludedTransferIds.has(t.id))
+      .map(t => ({ ...t, isBankAccount: session.isBankAccountSource(t.source), transferHintLabel: hintLabelById.get(t.id) })),
+    [monthlyTransactions, excludedTransferIds, hintLabelById]
+  );
+  const monthlyPaymentTxns = useMemo(() =>
+    monthlyTransactions
+      .filter(t => t.isPayment && !excludedTransferIds.has(t.id))
+      .map(t => ({ ...t, transferHintLabel: hintLabelById.get(t.id) })),
+    [monthlyTransactions, excludedTransferIds, hintLabelById]
+  );
   const pendingTxns = useMemo(() => monthlyTransactions.filter(t => t.isPending && !t.isPayment), [monthlyTransactions]);
+
+  // Account-aware Debit/Credit/Net summary — deliberately computed from the
+  // RAW month(+account)-scoped transaction list, not bankExpenseTxns/
+  // monthlyPaymentTxns (which exclude confirmed transfers for Splitwise-
+  // matching purposes). A real bank statement counts a transfer-out as a
+  // debit and a transfer-in as a credit, so this reads isCredit straight
+  // off monthlyTransactions instead, which already carries transfers with
+  // their correct direction. Pending excluded (amount isn't final yet).
+  const accountSummary = useMemo(() => {
+    const computeFor = (txns, scopeSource) => {
+      const settled = txns.filter(t => !t.isPending);
+      const debit  = settled.filter(t => !t.isCredit).reduce((s, t) => s + (t.amount || 0), 0);
+      const credit = settled.filter(t => t.isCredit).reduce((s, t) => s + (t.amount || 0), 0);
+      const inScope = source => !scopeSource || source === scopeSource;
+      const transferPairAmt = transferPairsThisMonth
+        .filter(p => inScope(p.debit.source) || inScope(p.credit.source))
+        .reduce((s, p) => s + p.debit.amount, 0);
+      const transferHintAmt = transferHintsThisMonth
+        .filter(h => h.confirmed && inScope(h.txn.source))
+        .reduce((s, h) => s + h.txn.amount, 0);
+      // "Payments made" (cards only) — the narrow isCreditConfirmation
+      // pattern ("payment thank you", "autopay", ...) specifically means a
+      // bill payment reduced the balance, as opposed to a merchant refund
+      // (also a credit, but not a payment) — isPayment alone can't tell
+      // these apart since every credit is already tagged isPayment.
+      const payments = settled
+        .filter(t => t.isCredit && isCreditConfirmation(t.description))
+        .reduce((s, t) => s + (t.amount || 0), 0);
+      return { debit, credit, net: credit - debit, transfers: transferPairAmt + transferHintAmt, payments };
+    };
+
+    if (accountFilter !== 'all') {
+      const type = session.getAccountType(accountFilter);
+      return { type: type === 'bank' ? 'bank' : 'card', ...computeFor(monthlyTransactions, accountFilter) };
+    }
+    const bankTxns = monthlyTransactions.filter(t => session.getAccountType(t.source) === 'bank');
+    const cardTxns = monthlyTransactions.filter(t => session.getAccountType(t.source) !== 'bank');
+    return { type: 'all', bank: computeFor(bankTxns, null), card: computeFor(cardTxns, null) };
+  }, [monthlyTransactions, accountFilter, transferPairsThisMonth, transferHintsThisMonth]);
 
   const matched = useMemo(() => matchTransactions(bankExpenseTxns, swExpenses), [bankExpenseTxns, swExpenses]);
   const matchedBankOnly = useMemo(() => matched.filter(t => !t.isSplitOnly), [matched]);
@@ -269,6 +386,17 @@ export default function StatementsPage() {
     applyOverride(txn.id, { overrideSplitwiseId: exp.id, overrideForcedUnmatched: null, overrideExpenseData: exp });
   };
 
+  // Confirming/dismissing a Tier-2 transfer hint, and un-pairing a Tier-1
+  // false-positive pair — all three just set overrideDismissedTransferHint/
+  // overrideConfirmedTransfer on the transaction doc(s), same
+  // override-field mechanism as the Splitwise match overrides above.
+  const handleConfirmTransfer = txn => applyOverride(txn.id, { overrideConfirmedTransfer: true });
+  const handleDismissTransferHint = txn => applyOverride(txn.id, { overrideDismissedTransferHint: true });
+  const handleUnpairTransfer = pair => {
+    applyOverride(pair.debit.id, { overrideDismissedTransferHint: true });
+    applyOverride(pair.credit.id, { overrideDismissedTransferHint: true });
+  };
+
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
       <PageHeader title="Statements" onBack={() => navigate('/')}>
@@ -397,6 +525,11 @@ export default function StatementsPage() {
                     {unmatchedCt > 9 ? '9+' : unmatchedCt}
                   </span>
                 )}
+                {label === 'Transfers' && transferHintsThisMonth.filter(h => !h.confirmed).length > 0 && tab !== i && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-500 text-white text-[10px] rounded-full flex items-center justify-center font-bold">
+                    {transferHintsThisMonth.filter(h => !h.confirmed).length > 9 ? '9+' : transferHintsThisMonth.filter(h => !h.confirmed).length}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -430,6 +563,7 @@ export default function StatementsPage() {
                       matched={matchedBankOnly}
                       creditTxns={monthlyPaymentTxns}
                       pendingTxns={pendingTxns}
+                      accountSummary={accountSummary}
                       groupName={groupName}
                       monthRange={monthRange}
                       onLink={setPicker}
@@ -447,7 +581,7 @@ export default function StatementsPage() {
               {tab === 3 && (
                 <div className="space-y-4">
                   <div>
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Card payments & transfers — {monthRange.label}</p>
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Card payments — {monthRange.label}</p>
                     {monthlyPaymentTxns.length === 0 ? (
                       <div className="text-center py-6 text-sm text-slate-400 bg-white rounded-2xl border border-slate-100">Nothing this month</div>
                     ) : (
@@ -485,6 +619,16 @@ export default function StatementsPage() {
                     </div>
                   )}
                 </div>
+              )}
+              {tab === 4 && (
+                <TransfersList
+                  pairs={transferPairsThisMonth}
+                  hints={transferHintsThisMonth}
+                  monthRange={monthRange}
+                  onConfirm={handleConfirmTransfer}
+                  onDismiss={handleDismissTransferHint}
+                  onUnpair={handleUnpairTransfer}
+                />
               )}
             </>
           )}

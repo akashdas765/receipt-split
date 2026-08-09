@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2, Clock } from 'lucide-react';
+import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2, Clock, ArrowLeftRight } from 'lucide-react';
 import { formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { getCategoryIcon } from '../utils/categoryDetector';
 
@@ -16,7 +16,7 @@ const INDIGO = '#6366f1';
 // Previously two separate tabs (Review + All) — merged here so "all my
 // card activity" and "what still needs matching" live in one list instead
 // of two.
-export default function TransactionsList({ matched, creditTxns, pendingTxns = [], groupName, monthRange, onLink, onUnlink, onClearOverride, onConfirmSuggestion, onDelete }) {
+export default function TransactionsList({ matched, creditTxns, pendingTxns = [], accountSummary, groupName, monthRange, onLink, onUnlink, onClearOverride, onConfirmSuggestion, onDelete }) {
   const [filter,   setFilter]   = useState(0); // 0=All 1=Unmatched 2=Matched 3=Credits 4=Pending
   const [expanded, setExpanded] = useState({});
 
@@ -31,9 +31,13 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
   const showCredits = filter === 0 || filter === 3;
   const showPending = filter === 0 || filter === 4;
 
-  const effectiveTotal = matched.reduce((s, t) => s + (t.effectiveAmount || 0), 0);
-  const grossTotal     = matched.reduce((s, t) => s + (t.originalAmount || t.amount || 0), 0);
-  const savedTotal     = matchedTxns.reduce((s, t) => s + (t.savings || 0), 0);
+  // Splitwise savings is a separate concept from the Debit/Credit/Net
+  // summary below (which reads like a real bank statement) — shown as its
+  // own small callout instead of being the headline number, since
+  // conflating "what I actually owe after splits" with "total money that
+  // moved" is exactly what made the old balance card misleading (it only
+  // ever summed debit/matched rows, silently ignoring every credit).
+  const savedTotal = matchedTxns.reduce((s, t) => s + (t.savings || 0), 0);
 
   if (!matched.length && !creditTxns.length && !pendingTxns.length) {
     return (
@@ -46,31 +50,26 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
 
   return (
     <div className="space-y-4">
-      {/* Live balance card */}
-      <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">My balance — {monthRange.label}</p>
-        <div className="flex items-end justify-between">
-          <div>
-            <p className="text-2xl font-extrabold text-slate-800">{formatCurrency(effectiveTotal)}</p>
-            <p className="text-xs text-slate-400 mt-0.5">of {formatCurrency(grossTotal)} gross</p>
-          </div>
-          {savedTotal > 0.5 && (
-            <div className="text-right">
-              <p className="text-sm font-bold text-emerald-500">-{formatCurrency(savedTotal)}</p>
-              <p className="text-xs text-slate-400">saved via splits</p>
+      {accountSummary && (
+        <>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide -mb-1">{monthRange.label}</p>
+          {accountSummary.type === 'all' ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <SummaryCard title="Bank Accounts" kind="bank" data={accountSummary.bank} />
+              <SummaryCard title="Cards" kind="card" data={accountSummary.card} />
             </div>
+          ) : (
+            <SummaryCard title={accountSummary.type === 'bank' ? 'Bank Account' : 'Card'} kind={accountSummary.type} data={accountSummary} />
           )}
-        </div>
-        {grossTotal > 0 && (
-          <div className="mt-3 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-            <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min((effectiveTotal / grossTotal) * 100, 100)}%`, background: INDIGO }} />
-          </div>
-        )}
-        <p className="text-xs text-slate-400 mt-1.5">
-          {matchedTxns.length} matched · {unmatchedTxns.length} unmatched · {creditTxns.length} credit{creditTxns.length !== 1 ? 's' : ''}
-          {pendingTxns.length > 0 && <> · {pendingTxns.length} pending</>}
-        </p>
-      </div>
+          {savedTotal > 0.5 && (
+            <p className="text-xs text-emerald-600 font-semibold">-{formatCurrency(savedTotal)} saved via Splitwise splits</p>
+          )}
+          <p className="text-xs text-slate-400">
+            {matchedTxns.length} matched · {unmatchedTxns.length} unmatched · {creditTxns.length} credit{creditTxns.length !== 1 ? 's' : ''}
+            {pendingTxns.length > 0 && <> · {pendingTxns.length} pending</>}
+          </p>
+        </>
+      )}
 
       {/* Filter chips — wraps instead of scrolling horizontally */}
       <div className="flex flex-wrap gap-1.5">
@@ -106,7 +105,10 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
           <div key={txn.id} className="rounded-2xl border border-emerald-100 bg-white p-3 flex items-center gap-3">
             <span className="text-base shrink-0">💳</span>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-slate-700 truncate">{txn.description}</p>
+              <div className="flex items-center gap-1.5">
+                {txn.transferHintLabel && <ArrowLeftRight size={11} style={{ color: INDIGO }} className="shrink-0" />}
+                <p className="text-sm font-semibold text-slate-700 truncate">{txn.transferHintLabel || txn.description}</p>
+              </div>
               <p className="text-xs text-slate-400 mt-0.5 truncate">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
             </div>
             <p className="text-sm font-bold text-emerald-500 shrink-0">+{formatCurrency(txn.amount)}</p>
@@ -153,8 +155,8 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-sm">{getCategoryIcon(txn.category)}</span>
-                      <p className="text-sm font-semibold text-slate-700 truncate">{txn.description}</p>
+                      {txn.transferHintLabel ? <ArrowLeftRight size={12} style={{ color: INDIGO }} className="shrink-0" /> : <span className="text-sm">{getCategoryIcon(txn.category)}</span>}
+                      <p className="text-sm font-semibold text-slate-700 truncate">{txn.transferHintLabel || txn.description}</p>
                       {isOverridden && <span className="text-xs bg-indigo-50 px-1.5 rounded-full shrink-0" style={{ color: INDIGO }}>manual</span>}
                     </div>
                     <p className="text-xs text-slate-400 mt-0.5 truncate">
@@ -261,6 +263,43 @@ function Row({ label, value, valueClass = 'text-slate-700' }) {
     <div className="flex justify-between text-xs">
       <span className="text-slate-400">{label}</span>
       <span className={valueClass}>{value}</span>
+    </div>
+  );
+}
+
+// Reads like a real bank/card statement — every debit counted, every
+// credit counted (transfers included on whichever side they actually
+// moved), instead of the old card's "sum of matched debit rows only,"
+// which silently treated every credit as if it didn't exist. `kind`
+// picks the one extra line that's actually meaningful for that account
+// type: a bank account's "Transfers" vs. a card's "Payments made"
+// (bill payments specifically, not merchant refunds — see
+// StatementsPage.jsx's accountSummary for how that's told apart).
+function SummaryCard({ title, kind, data }) {
+  const netPositive = data.net >= 0;
+  return (
+    <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">{title}</p>
+        <p className={`text-sm font-extrabold ${netPositive ? 'text-emerald-600' : 'text-red-500'}`}>
+          {netPositive ? '+' : ''}{formatCurrency(data.net)} net
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-2 mb-2">
+        <div className="bg-red-50 rounded-xl px-3 py-2">
+          <p className="text-base font-bold text-red-500">-{formatCurrency(data.debit)}</p>
+          <p className="text-[10px] text-slate-400">Debit</p>
+        </div>
+        <div className="bg-emerald-50 rounded-xl px-3 py-2">
+          <p className="text-base font-bold text-emerald-600">+{formatCurrency(data.credit)}</p>
+          <p className="text-[10px] text-slate-400">Credit</p>
+        </div>
+      </div>
+      {kind === 'bank' ? (
+        <p className="text-xs text-slate-500">Transfers <span className="font-semibold text-slate-700">{formatCurrency(data.transfers)}</span></p>
+      ) : (
+        <p className="text-xs text-slate-500">Payments made <span className="font-semibold text-slate-700">{formatCurrency(data.payments)}</span></p>
+      )}
     </div>
   );
 }

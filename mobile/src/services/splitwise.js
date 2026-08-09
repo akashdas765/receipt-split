@@ -40,12 +40,16 @@ export async function fetchGroups() {
 }
 
 // Used to identify which Splitwise member id is "me" so we can pull out the
-// user's own share from a receipt's stored personTotals.
+// user's own share from a receipt's stored personTotals. lastName is
+// additionally used by utils/transferMatcher.js to recognize a self-
+// transfer whose description names the person, not the account (e.g. a
+// Zelle payment "from Akash Das" showing up as a credit on a different
+// bank than the one the money actually left).
 export async function fetchCurrentUser() {
   const res  = await swFetch('/get_current_user');
   const data = await res.json();
   if (!res.ok || data?.error) throw new Error(data?.error || 'Could not load your Splitwise profile.');
-  return { id: String(data.user.id), name: data.user.first_name };
+  return { id: String(data.user.id), name: data.user.first_name, lastName: data.user.last_name || '' };
 }
 
 // Your overall Splitwise position, live from Splitwise's own per-friend

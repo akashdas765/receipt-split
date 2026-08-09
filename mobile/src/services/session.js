@@ -1,3 +1,5 @@
+import { accountLabel } from '../utils/accountLabel';
+
 // In-memory store for the current user's Splitwise API key, Plaid bank
 // connections, and non-Plaid source classification. Set on login/signup,
 // cleared on logout.
@@ -78,6 +80,28 @@ export const session = {
   // default to false, so this only ever narrows matching, never silently
   // breaks it.
   isBankAccountSource: (source) => session.getAccountType(source) === 'bank',
+
+  // Flattens every connection's raw Plaid account names (not accountLabel()
+  // — bank-generated transfer text like "Deposit from 360 Performance
+  // Savings" quotes Plaid's own name, which a user-set nickname would no
+  // longer match against) across all connections. Used by
+  // utils/transferMatcher.js's text-hint tier. `label` is still
+  // accountLabel()'s nickname-aware string, kept alongside for display
+  // once a hint is matched.
+  getAllMyAccountNames: () => {
+    const out = [];
+    for (const conn of _plaidConnections.values()) {
+      for (const acct of conn.accounts || []) {
+        if (!acct.name) continue;
+        out.push({
+          source:  `plaid-${conn.itemId}-${acct.id}`,
+          rawName: acct.name,
+          label:   accountLabel(acct),
+        });
+      }
+    }
+    return out;
+  },
 
   clear: () => {
     _splitwiseKey = null; _userId = null;

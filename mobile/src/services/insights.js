@@ -1,6 +1,7 @@
 import { auth } from './firebase';
 import { matchTransactions, computeSummary } from '../utils/matcher';
 import { detectTransfers } from '../utils/transferMatcher';
+import { isPaymentTransaction } from '../utils/paymentDetector';
 import { mapReceiptCategory } from '../utils/categoryDetector';
 import { session } from './session';
 
@@ -57,8 +58,15 @@ export function computeStats({ receipts, myId, myFullName = '', transactions = [
   // Pending transactions are excluded too — amount isn't final until they
   // post, so they shouldn't factor into spend totals or Splitwise matching
   // yet (see StatementsPage.jsx's pendingTxns for where they're surfaced).
+  // isPaymentTransaction(description) is checked live here rather than
+  // trusting only the stored isPayment flag — isPayment is stamped once at
+  // sync time (see plaid.js), so a transaction synced before a pattern was
+  // added (e.g. "Payment to Chase card ending in...") would otherwise stay
+  // misclassified in Insights until someone runs Statements' "Fix payment
+  // labels" reclassification. Checking live means a pattern update fixes
+  // Insights immediately for every transaction, already-synced or not.
   const bankExpenseTxns = transactions
-    .filter(t => !t.isPayment && !t.isPending && !transferIds.has(t.id))
+    .filter(t => !t.isPayment && !isPaymentTransaction(t.description) && !t.isPending && !transferIds.has(t.id))
     .map(t => ({ ...t, isBankAccount: session.isBankAccountSource(t.source) }));
   // Always run the matcher, even with zero bank transactions — with
   // nothing to match against, every Splitwise expense just falls through

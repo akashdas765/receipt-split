@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2, Clock, ArrowLeftRight } from 'lucide-react';
+import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2, Clock, ArrowLeftRight, Plus } from 'lucide-react';
 import { formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { getCategoryIcon } from '../utils/categoryDetector';
 
@@ -16,7 +16,7 @@ const INDIGO = '#6366f1';
 // Previously two separate tabs (Review + All) — merged here so "all my
 // card activity" and "what still needs matching" live in one list instead
 // of two.
-export default function TransactionsList({ matched, creditTxns, pendingTxns = [], accountSummary, groupName, monthRange, onLink, onUnlink, onClearOverride, onConfirmSuggestion, onDelete }) {
+export default function TransactionsList({ matched, creditTxns, pendingTxns = [], accountSummary, groupName, monthRange, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete }) {
   const [filter,   setFilter]   = useState(0); // 0=All 1=Unmatched 2=Matched 3=Credits 4=Pending
   const [expanded, setExpanded] = useState({});
 
@@ -122,7 +122,7 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
             kind === 'credit' ? <CreditRow key={t.id} txn={t} onDelete={onDelete} /> :
             kind === 'pending' ? <PendingRow key={t.id} txn={t} onDelete={onDelete} /> :
             <DebitRow key={t.id} txn={t} isOpen={!!expanded[t.id]} setExpanded={setExpanded}
-              groupName={groupName} onLink={onLink} onUnlink={onUnlink} onClearOverride={onClearOverride}
+              groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
               onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} />
           ))
         ) : (
@@ -131,7 +131,7 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
             {showPending && pendingTxns.map(txn => <PendingRow key={txn.id} txn={txn} onDelete={onDelete} />)}
             {displayed.map(txn => (
               <DebitRow key={txn.id} txn={txn} isOpen={!!expanded[txn.id]} setExpanded={setExpanded}
-                groupName={groupName} onLink={onLink} onUnlink={onUnlink} onClearOverride={onClearOverride}
+                groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
                 onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} />
             ))}
           </>
@@ -185,7 +185,7 @@ function PendingRow({ txn, onDelete }) {
   );
 }
 
-function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onUnlink, onClearOverride, onConfirmSuggestion, onDelete }) {
+function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete }) {
   const isOverridden = txn.manualOverride;
   const suggestion   = !txn.isSplitwised ? txn.suggestedMatch : null;
 
@@ -301,6 +301,10 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onUnlink, onCle
                 <button onClick={() => { onLink(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
                   className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold border rounded-xl py-2 transition-colors" style={{ color: INDIGO, borderColor: '#c7d2fe' }}>
                   <Link2 size={13} /> Link to Splitwise
+                </button>
+                <button onClick={() => { onAddNew(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
+                  className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-white rounded-xl py-2 transition-colors" style={{ background: INDIGO }}>
+                  <Plus size={13} /> Add to Splitwise
                 </button>
                 {isOverridden && (
                   <button onClick={() => onClearOverride(txn)} className="flex items-center justify-center gap-1 text-xs font-semibold text-slate-500 border border-slate-200 rounded-xl px-3 py-2 hover:bg-slate-50 transition-colors">

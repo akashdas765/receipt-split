@@ -15,6 +15,7 @@ import ManualEntryForm from '../components/ManualEntryForm';
 import TransactionsList from '../components/TransactionsList';
 import StatementsReports from '../components/StatementsReports';
 import SplitwisePickerModal from '../components/SplitwisePickerModal';
+import AddToSplitwiseModal from '../components/AddToSplitwiseModal';
 import AccountsOverview from '../components/AccountsOverview';
 import TransfersList from '../components/TransfersList';
 import BottomNav from '../components/BottomNav';
@@ -73,6 +74,7 @@ export default function StatementsPage() {
 
   const [tab,    setTab]    = useState(1); // 'Transactions' — Upload moved out of the tab bar, so it's no longer the default landing tab
   const [picker, setPicker] = useState(null); // txn being linked, or null
+  const [addNewTarget, setAddNewTarget] = useState(null); // txn getting a brand-new Splitwise expense, or null
   const [uploadOpen, setUploadOpen] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
 
@@ -469,6 +471,23 @@ export default function StatementsPage() {
     applyOverride(picker.id, { overrideSplitwiseId: exp.id, overrideForcedUnmatched: null, overrideExpenseData: exp });
     setPicker(null);
   };
+  // Counterpart to handlePickerSelect — a brand-new expense was just
+  // created (not picked from existing ones), so overrideExpenseData is
+  // built here from what we already know instead of coming from
+  // fetchAllExpenses. Same override fields, same downstream matcher.js
+  // handling either way.
+  const handleAddNewPosted = (expense, groupId, myOwedShare) => {
+    if (!addNewTarget) return;
+    const overrideExpenseData = {
+      id:          expense.id,
+      description: expense.description || addNewTarget.description,
+      date:        expense.date || addNewTarget.date,
+      group_id:    groupId,
+      myOwedShare,
+    };
+    applyOverride(addNewTarget.id, { overrideSplitwiseId: expense.id, overrideForcedUnmatched: null, overrideExpenseData });
+    setAddNewTarget(null);
+  };
   // One-tap accept for matcher.js's suggested-match tier — same override
   // shape as picking one manually via the picker, just sourced from the
   // suggestion already computed on the transaction instead of a fresh pick.
@@ -680,6 +699,7 @@ export default function StatementsPage() {
                       groupName={groupName}
                       monthRange={monthRange}
                       onLink={setPicker}
+                      onAddNew={setAddNewTarget}
                       onUnlink={handleUnlink}
                       onClearOverride={handleClearOverride}
                       onConfirmSuggestion={handleConfirmSuggestion}
@@ -804,6 +824,16 @@ export default function StatementsPage() {
           initialExpenses={swExpenses}
           onSelect={handlePickerSelect}
           onClose={() => setPicker(null)}
+        />
+      )}
+
+      {addNewTarget && (
+        <AddToSplitwiseModal
+          transaction={addNewTarget}
+          myId={myId}
+          groups={groups}
+          onPosted={handleAddNewPosted}
+          onClose={() => setAddNewTarget(null)}
         />
       )}
 

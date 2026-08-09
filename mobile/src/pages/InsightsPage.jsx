@@ -26,6 +26,10 @@ export default function InsightsPage() {
   const [receipts,     setReceipts]     = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [myId,         setMyId]         = useState(null);
+  // Own full name — used to recognize a Zelle-style self-transfer whose
+  // description names the person ("from Akash Das") rather than the
+  // account, same as StatementsPage's transfer detection.
+  const [myFullName,   setMyFullName]   = useState('');
   const [initialLoading, setInitialLoading] = useState(true);
 
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -50,6 +54,7 @@ export default function InsightsPage() {
         setReceipts(receiptsList);
         setTransactions(txns);
         setMyId(me?.id || null);
+        setMyFullName(me ? [me.name, me.lastName].filter(Boolean).join(' ') : '');
       } catch (err) {
         setError(err?.message || 'Could not load your expense history.');
       } finally {
@@ -78,7 +83,7 @@ export default function InsightsPage() {
         });
         const monthlyTxns = transactions.filter(t => t.date && t.date.slice(0, 10) >= start && t.date.slice(0, 10) <= end);
         if (!cancelled) {
-          setStats(computeStats({ receipts: monthlyReceipts, myId, transactions: monthlyTxns, splitwiseExpenses }));
+          setStats(computeStats({ receipts: monthlyReceipts, myId, myFullName, transactions: monthlyTxns, splitwiseExpenses }));
         }
       } catch (err) {
         if (!cancelled) setError(err?.message || 'Could not load your expense history.');
@@ -87,7 +92,7 @@ export default function InsightsPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [initialLoading, currentMonth, myId, receipts, transactions]);
+  }, [initialLoading, currentMonth, myId, myFullName, receipts, transactions]);
 
   // The chat's context is tied to whichever month's stats it was sent —
   // switching months mid-conversation would otherwise leave earlier answers

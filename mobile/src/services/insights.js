@@ -1,5 +1,6 @@
 import { auth } from './firebase';
 import { matchTransactions, computeSummary } from '../utils/matcher';
+import { detectTransfers } from '../utils/transferMatcher';
 import { mapReceiptCategory } from '../utils/categoryDetector';
 import { session } from './session';
 
@@ -29,12 +30,27 @@ const CHAT_SYSTEM = `You are a friendly personal finance assistant inside Receip
 //     same matching engine the Statements page uses, so totals reflect what
 //     actually left the user's accounts rather than just what was scanned
 // myId: the user's own Splitwise member id (string), or undefined.
-export function computeStats({ receipts, myId, transactions = [], splitwiseExpenses = [] }) {
+export function computeStats({ receipts, myId, myFullName = '', transactions = [], splitwiseExpenses = [] }) {
   const approved        = receipts.filter(r => r.approved);
   const pendingReceipts = receipts.filter(r => !r.approved);
   const receiptAmt      = r => r.grandTotal ?? r.total ?? 0;
 
   const hasBankData     = transactions.length > 0;
+
+  // Money moved between the user's own accounts (a Zelle self-transfer, a
+  // bank->card bill payment) is never a "merchant" or real spend — without
+  // this, something like "AKASH DAS" or "Payment to Chase card ending in
+  // 3358" would show up as a top merchant. Unlike StatementsPage, this view
+  // has no per-row confirm/dismiss affordance of its own, so (unlike there)
+  // every DETECTED candidate is excluded here outright, confirmed or not —
+  // same "just exclude it" treatment isPayment already gets below, not the
+  // confirm-gated one used for Statements' own totals.
+  const myAccountNames = session.getAllMyAccountNames();
+  const typedTxns = transactions.map(t => ({ ...t, accountType: session.getAccountType(t.source) }));
+  const { pairedTxnIds, hints } = detectTransfers(typedTxns, { myAccountNames, myFullName });
+  const transferIds = new Set(pairedTxnIds);
+  hints.forEach(h => transferIds.add(h.txn.id));
+
   // isBankAccount tags checking/bank-classified Plaid txns so
   // matchTransactions() doesn't auto-match them against Splitwise (see
   // session.isBankAccountSource) — same reasoning as StatementsPage.jsx.
@@ -42,7 +58,7 @@ export function computeStats({ receipts, myId, transactions = [], splitwiseExpen
   // post, so they shouldn't factor into spend totals or Splitwise matching
   // yet (see StatementsPage.jsx's pendingTxns for where they're surfaced).
   const bankExpenseTxns = transactions
-    .filter(t => !t.isPayment && !t.isPending)
+    .filter(t => !t.isPayment && !t.isPending && !transferIds.has(t.id))
     .map(t => ({ ...t, isBankAccount: session.isBankAccountSource(t.source) }));
   // Always run the matcher, even with zero bank transactions — with
   // nothing to match against, every Splitwise expense just falls through

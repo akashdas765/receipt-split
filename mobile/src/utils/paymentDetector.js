@@ -15,6 +15,9 @@ const PAYMENT_PATTERNS = [
   /credit\s+card\s+pay/i,
   /card\s+payment/i,
   /e-payment/i,
+  // "Payment to Chase card ending in 3358 08/03" — a bank-side debit
+  // description naming the destination card, not "card payment" phrasing.
+  /payment\s+to\s+.*\bcard\b/i,
 
   // Transfers
   /account\s+transfer/i,

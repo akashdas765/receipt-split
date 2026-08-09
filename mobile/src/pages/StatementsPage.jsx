@@ -23,6 +23,22 @@ import PageHeader from '../components/PageHeader';
 
 const INDIGO = '#6366f1';
 
+// accountFilter is either a specific transaction source id, or a
+// 'group:bank' | 'group:credit' | 'group:other' scope — bank accounts and
+// cards are never mixed into one "everything" view since their debit/
+// credit meaning is different (a bank debit is money leaving you, a card
+// debit is money you owe), so there's no blanket "all accounts" option.
+function matchesAccountFilter(source, filter) {
+  if (filter.startsWith('group:')) {
+    const key = filter.slice(6);
+    const type = session.getAccountType(source);
+    if (key === 'bank')   return type === 'bank';
+    if (key === 'credit') return type === 'credit';
+    return !type; // 'other' — uncategorized sources
+  }
+  return source === filter;
+}
+
 // 'Upload' isn't a tab — connecting a bank / dropping a statement isn't
 // something you switch to and browse, it's a one-off action, so it lives
 // behind its own "Add" button (opens a bottom sheet) instead of competing
@@ -60,11 +76,12 @@ export default function StatementsPage() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
 
-  // Which loaded statement/account to scope the page to — 'all' or a
-  // `source` id. Each connected card (Plaid) or uploaded file gets its own
-  // source — see AccountsOverview.jsx for the grouped bank/credit view this
-  // doubles as a drill-down target for.
-  const [accountFilter, setAccountFilter] = useState('all');
+  // Which loaded statement/account to scope the page to — a 'group:bank' /
+  // 'group:credit' / 'group:other' scope, or a specific `source` id. Each
+  // connected card (Plaid) or uploaded file gets its own source — see
+  // AccountsOverview.jsx for the grouped bank/credit view this doubles as
+  // a drill-down target for.
+  const [accountFilter, setAccountFilter] = useState('group:bank');
 
   // Tracks Plaid connections currently being auto-fixed (see the
   // legacy-source effect below) so a re-render mid-fix doesn't fire a
@@ -111,10 +128,10 @@ export default function StatementsPage() {
   }, [myId, monthRange.start, monthRange.end]);
 
   // ── Derived data ───────────────────────────────────────────────────────────
-  // Scoped to the selected statement/account (or everything, when 'all') —
+  // Scoped to the selected statement/account or bank-vs-credit group —
   // computed off the full list so switching the filter never has to re-fetch.
   const scopedTransactions = useMemo(() =>
-    accountFilter === 'all' ? transactions : transactions.filter(t => t.source === accountFilter),
+    transactions.filter(t => matchesAccountFilter(t.source, accountFilter)),
     [transactions, accountFilter]
   );
 
@@ -229,12 +246,27 @@ export default function StatementsPage() {
   // debit and a transfer-in as a credit, so this reads isCredit straight
   // off monthlyTransactions instead, which already carries transfers with
   // their correct direction. Pending excluded (amount isn't final yet).
+  const statements = useMemo(() => {
+    const map = {};
+    for (const t of transactions) {
+      const key = t.source;
+      if (!key) continue;
+      if (!map[key]) map[key] = { id: key, name: t.sourceName || key, count: 0 };
+      map[key].count++;
+    }
+    return Object.values(map);
+  }, [transactions]);
+
   const accountSummary = useMemo(() => {
-    const computeFor = (txns, scopeSource) => {
+    // monthlyTransactions is already scoped to accountFilter (via
+    // scopedTransactions above), so scopePredicate here only decides which
+    // transfer pairs/hints count toward the "Transfers" line, not which
+    // transactions get summed into debit/credit.
+    const computeFor = (txns, scopePredicate) => {
       const settled = txns.filter(t => !t.isPending);
       const debit  = settled.filter(t => !t.isCredit).reduce((s, t) => s + (t.amount || 0), 0);
       const credit = settled.filter(t => t.isCredit).reduce((s, t) => s + (t.amount || 0), 0);
-      const inScope = source => !scopeSource || source === scopeSource;
+      const inScope = scopePredicate;
       const transferPairAmt = transferPairsThisMonth
         .filter(p => p.confirmed && (inScope(p.debit.source) || inScope(p.credit.source)))
         .reduce((s, p) => s + p.debit.amount, 0);
@@ -252,14 +284,22 @@ export default function StatementsPage() {
       return { debit, credit, net: credit - debit, transfers: transferPairAmt + transferHintAmt, payments };
     };
 
-    if (accountFilter !== 'all') {
+    if (!accountFilter.startsWith('group:')) {
       const type = session.getAccountType(accountFilter);
-      return { type: type === 'bank' ? 'bank' : 'card', ...computeFor(monthlyTransactions, accountFilter) };
+      const stmt = statements.find(s => s.id === accountFilter);
+      return {
+        type: type === 'bank' ? 'bank' : 'card',
+        title: stmt?.name || (type === 'bank' ? 'Bank Account' : 'Card'),
+        ...computeFor(monthlyTransactions, s => s === accountFilter),
+      };
     }
-    const bankTxns = monthlyTransactions.filter(t => session.getAccountType(t.source) === 'bank');
-    const cardTxns = monthlyTransactions.filter(t => session.getAccountType(t.source) !== 'bank');
-    return { type: 'all', bank: computeFor(bankTxns, null), card: computeFor(cardTxns, null) };
-  }, [monthlyTransactions, accountFilter, transferPairsThisMonth, transferHintsThisMonth]);
+    const groupKey = accountFilter.slice(6); // 'bank' | 'credit' | 'other'
+    return {
+      type: groupKey === 'bank' ? 'bank' : 'card',
+      title: groupKey === 'bank' ? 'All Bank Accounts' : groupKey === 'credit' ? 'All Cards' : 'Uncategorized',
+      ...computeFor(monthlyTransactions, s => matchesAccountFilter(s, accountFilter)),
+    };
+  }, [monthlyTransactions, accountFilter, transferPairsThisMonth, transferHintsThisMonth, statements]);
 
   // matched includes isTransfer rows (matcher.js just never scores them —
   // see its Section 3 skip) so they still render in the Transactions tab;
@@ -277,17 +317,6 @@ export default function StatementsPage() {
 
   // Loaded statements, derived from ALL transactions (not just this month) —
   // grouped by `source`, labeled with the sourceName stamped on upload.
-  const statements = useMemo(() => {
-    const map = {};
-    for (const t of transactions) {
-      const key = t.source;
-      if (!key) continue;
-      if (!map[key]) map[key] = { id: key, name: t.sourceName || key, count: 0 };
-      map[key].count++;
-    }
-    return Object.values(map);
-  }, [transactions]);
-
   // Same month scoping as monthlyTransactions, but NOT narrowed by
   // accountFilter — AccountsOverview needs every account's this-month
   // activity simultaneously (to show all of them at once), not just
@@ -524,14 +553,16 @@ export default function StatementsPage() {
             ].filter(g => g.items.length > 0);
             return (
               <div className="space-y-1.5">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button onClick={() => setAccountFilter('all')} className={chipClass('all')}>All accounts</button>
-                </div>
                 {groups.map(g => (
                   <div key={g.key} className="flex flex-wrap items-center gap-1.5">
                     <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wide pr-0.5 w-14">
                       <g.icon size={11} /> {g.label}
                     </span>
+                    {g.items.length > 1 && (
+                      <button onClick={() => setAccountFilter(`group:${g.key}`)} className={chipClass(`group:${g.key}`)}>
+                        All {g.label === 'Credit' ? 'Cards' : g.label === 'Bank' ? 'Bank Accounts' : g.label}
+                      </button>
+                    )}
                     {g.items.map(s => (
                       <button key={s.id} onClick={() => setAccountFilter(s.id)} className={chipClass(s.id)}>
                         {s.name}
@@ -619,20 +650,18 @@ export default function StatementsPage() {
                         bucket also holds bank-account credits like interest
                         paid or a Zelle/person-to-person receipt, which read
                         as money coming IN, not a payment going out. Labeled
-                        per-account-type like accountSummary below; when
-                        viewing "All accounts" each row is judged on its own
-                        source since the list mixes both. */}
+                        per-account-type like accountSummary below — bank and
+                        credit are never mixed in one view, so every row in
+                        this list shares accountSummary.type. */}
                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
-                      {accountSummary.type === 'bank' ? 'Money received' : accountSummary.type === 'card' ? 'Card payments' : 'Payments & money received'} — {monthRange.label}
+                      {accountSummary.type === 'bank' ? 'Money received' : 'Card payments'} — {monthRange.label}
                     </p>
                     {monthlyPaymentTxns.length === 0 ? (
                       <div className="text-center py-6 text-sm text-slate-400 bg-white rounded-2xl border border-slate-100">Nothing this month</div>
                     ) : (
                       <div className="space-y-2">
                         {monthlyPaymentTxns.map(txn => {
-                          const isBankTxn = accountSummary.type === 'all'
-                            ? session.getAccountType(txn.source) === 'bank'
-                            : accountSummary.type === 'bank';
+                          const isBankTxn = accountSummary.type === 'bank';
                           return (
                             <div key={txn.id} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
                               <span className="text-base">{isBankTxn ? '💰' : '💳'}</span>

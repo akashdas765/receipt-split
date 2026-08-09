@@ -76,14 +76,7 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
       {accountSummary && (
         <>
           <p className="text-xs font-bold text-slate-400 uppercase tracking-wide -mb-1">{monthRange.label}</p>
-          {accountSummary.type === 'all' ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <SummaryCard title="Bank Accounts" kind="bank" data={accountSummary.bank} />
-              <SummaryCard title="Cards" kind="card" data={accountSummary.card} />
-            </div>
-          ) : (
-            <SummaryCard title={accountSummary.type === 'bank' ? 'Bank Account' : 'Card'} kind={accountSummary.type} data={accountSummary} />
-          )}
+          <SummaryCard title={accountSummary.title} kind={accountSummary.type} data={accountSummary} />
           {savedTotal > 0.5 && (
             <p className="text-xs text-emerald-600 font-semibold">-{formatCurrency(savedTotal)} saved via Splitwise splits</p>
           )}

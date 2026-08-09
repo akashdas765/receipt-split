@@ -40,6 +40,19 @@ function stripFences(text) {
   return text.trim();
 }
 
+// The model is told "valid JSON only, no extra text" but doesn't always
+// obey it — an unusual input (e.g. a delivery-app screenshot instead of a
+// real paper receipt) can make it wrap the object in a stray leading/
+// trailing sentence, or use a bullet-point `*` outside the JSON entirely.
+// Rather than trust the whole response is parseable as-is, pull out just
+// the outermost {...} so surrounding prose can't break JSON.parse.
+function extractJsonObject(text) {
+  const start = text.indexOf('{');
+  const end   = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) return text;
+  return text.slice(start, end + 1);
+}
+
 function reconcile(parsed) {
   const EXCLUDE_CATS   = new Set(['tax']);
   const EXCLUDE_EXACT  = new Set(['tax','sales tax','vat','hst','gst','tax total',
@@ -120,7 +133,15 @@ async function callGroq(base64, mime, userText) {
     const message = typeof data?.error === 'string' ? data.error : data?.error?.message;
     throw new Error(message || 'Groq API error');
   }
-  const parsed = JSON.parse(stripFences(data.choices[0].message.content));
+  let parsed;
+  try {
+    parsed = JSON.parse(extractJsonObject(stripFences(data.choices[0].message.content)));
+  } catch {
+    // Surface something a user can act on instead of a raw SyntaxError
+    // ("Unrecognized token '*'") — that wording means nothing to someone
+    // who just uploaded a photo.
+    throw new Error('Could not read this image as a receipt. Try a clearer photo, or remove it and parse the others separately.');
+  }
   // Surfaces which provider actually served this request (the proxy falls
   // back to NVIDIA when Groq is rate-limited) so the UI can let the user
   // know when that happened.

@@ -10,6 +10,7 @@ const ALLOWED_PATHS = [
   /^\/get_expenses(\?.*)?$/,
   /^\/create_expense$/,
   /^\/update_expense\/\d+$/,
+  /^\/get_friends$/,
 ];
 
 // Framework-agnostic core of the Splitwise CORS proxy. Both the Netlify

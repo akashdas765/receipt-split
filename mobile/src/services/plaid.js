@@ -45,20 +45,62 @@ export async function exchangePublicToken(publicToken) {
   return { accessToken: data.access_token, itemId: data.item_id };
 }
 
+// Plaid's own account type is a reliable default for the bank-vs-credit
+// tag — a freshly-connected (or backfilled) account doesn't start out
+// wrongly classified. Shared between PlaidConnect.jsx (connect-time and
+// its own empty-accounts backfill) and StatementsPage.jsx (the
+// missing-accountType backfill for accounts that already exist but were
+// never classified) so the two can't drift on what counts as a match.
+export function defaultAccountType(plaidType) {
+  if (plaidType === 'depository') return 'bank';
+  if (plaidType === 'credit') return 'credit';
+  return undefined;
+}
+
 // Backfills the linked-account list (name/mask per card) for connections
 // made before this app captured that from Link's onSuccess metadata —
 // that metadata only ever fires once, at connect time, so this is the only
-// way an already-linked Item can recover its account list.
+// way an already-linked Item can recover its account list. `type` (Plaid's
+// own 'depository'/'credit'/... classification) is included so callers can
+// default the bank-vs-credit-card tag from it, rather than starting blank.
 export async function fetchAccounts(accessToken) {
   const data = await plaidFetch('get_accounts', { access_token: accessToken });
-  return (data.accounts || []).map(a => ({ id: a.account_id, name: a.name, mask: a.mask }));
+  return (data.accounts || []).map(a => ({ id: a.account_id, name: a.name, mask: a.mask, type: a.type }));
 }
 
-// Pages through every added/removed transaction since `cursor` (omit on
-// first sync = full history), turning Plaid's shape into this app's own —
-// reusing the same client-side category/payment detection csvParser.js and
-// statementPdfParser.js already use, rather than reconciling yet another
-// category taxonomy on top of the ones those already juggle.
+// Balances for every account under one Item — used by HomePage's net worth
+// card. `current` is what's actually in a depository account, or what's
+// owed on a credit account (both non-negative from Plaid; the caller
+// decides sign/direction based on the account's bank-vs-credit tag, since
+// Plaid's own field doesn't carry that meaning).
+//
+// Reuses get_accounts (/accounts/get) rather than the dedicated
+// /accounts/balances/get — that endpoint forces a real-time refresh from
+// the institution and is gated behind Plaid's separate "Balance" product,
+// which a Trial-plan Item connected only for Transactions doesn't have
+// (confirmed: /transactions/sync works fine, /accounts/balances/get
+// doesn't). /accounts/get returns the same balances object, just
+// periodically refreshed rather than guaranteed-instant — an acceptable
+// tradeoff for a net worth figure vs. the feature not working at all.
+export async function fetchAccountBalances(accessToken) {
+  const data = await plaidFetch('get_accounts', { access_token: accessToken });
+  return (data.accounts || []).map(a => ({
+    id:              a.account_id,
+    name:            a.name,
+    mask:            a.mask,
+    type:            a.type,
+    current:         a.balances?.current ?? null,
+    available:       a.balances?.available ?? null,
+    isoCurrencyCode: a.balances?.iso_currency_code || 'USD',
+  }));
+}
+
+// Pages through every added/removed/modified transaction since `cursor`
+// (omit on first sync = full history), turning Plaid's shape into this
+// app's own — reusing the same client-side category/payment detection
+// csvParser.js and statementPdfParser.js already use, rather than
+// reconciling yet another category taxonomy on top of the ones those
+// already juggle.
 export async function syncTransactions(accessToken, cursor) {
   let allAdded = [];
   let allRemovedIds = [];
@@ -67,7 +109,12 @@ export async function syncTransactions(accessToken, cursor) {
 
   while (hasMore) {
     const data = await plaidFetch('sync_transactions', { access_token: accessToken, cursor: nextCursor });
-    allAdded = allAdded.concat(data.added || []);
+    // `modified` (e.g. a pending charge's amount changing before it posts)
+    // is folded in alongside `added` rather than ignored — addTransactions
+    // writes with merge:true keyed by the transaction's own stable id, so a
+    // modified transaction naturally overwrites the stale stored copy with
+    // no other handling needed.
+    allAdded = allAdded.concat(data.added || [], data.modified || []);
     allRemovedIds = allRemovedIds.concat((data.removed || []).map(t => `plaid-${t.transaction_id}`));
     nextCursor = data.next_cursor;
     hasMore = data.has_more;
@@ -75,20 +122,48 @@ export async function syncTransactions(accessToken, cursor) {
 
   // Plaid's sign convention: positive amount = money OUT of the account
   // (an expense), negative = money in (a payment/refund/credit) — the
-  // opposite of some other systems. Pending transactions get a new
-  // transaction_id once they post, so importing them now would just leave
-  // an orphaned duplicate row once the real one arrives.
+  // opposite of some other systems. Credits used to be dropped entirely
+  // here; they're now kept (as a positive magnitude + isCredit) so bill
+  // payments/refunds actually show up instead of vanishing at sync time.
+  //
+  // Pending transactions used to be dropped too, for a real reason: they
+  // get a NEW transaction_id once they post, so a naive import would leave
+  // an orphaned row behind. That's already handled correctly though — when
+  // a pending charge posts, Plaid's sync sends a `removed` for the old
+  // pending id alongside the `added` for the new posted one, and this
+  // function's caller (PlaidConnect.jsx's doSync) already deletes
+  // everything in `removed`. So they're kept now (tagged isPending),
+  // excluded from Splitwise matching/spend totals until they post (see
+  // StatementsPage.jsx/insights.js) since the amount isn't final yet.
   const transactions = allAdded
-    .filter(t => !t.pending && (t.amount || 0) > 0)
     .map(t => {
       const desc = t.merchant_name || t.name || 'Unknown';
+      const isCredit = (t.amount || 0) < 0;
+      // Plaid's `date` becomes the POSTED date once a transaction clears —
+      // for a card swipe that can land several days after you actually
+      // spent the money. `authorized_date` is the date the purchase itself
+      // happened, so it's used as the primary date (filtering, sorting,
+      // display) with the posted date kept alongside for the expanded
+      // detail view. authorized_date is null for some pending/older
+      // transactions, hence the fallback.
+      const date = t.authorized_date || t.date;
       return {
         id:          `plaid-${t.transaction_id}`,
-        date:        t.date,
+        date,
+        // Firestore rejects `undefined` field values outright, so the key
+        // is omitted entirely rather than set to undefined when there's no
+        // separate posted date to show (authorized_date missing, or the
+        // two happen to be the same day).
+        ...(t.date && t.date !== date ? { postedDate: t.date } : {}),
         description: desc,
-        amount:      t.amount,
+        amount:      Math.abs(t.amount || 0),
         category:    detectCategory(desc),
-        isPayment:   isPaymentTransaction(desc),
+        // A credit is never a personal purchase, so it rides the same
+        // isPayment bucket that already excludes description-detected
+        // transfers/payments from Splitwise matching and spend totals.
+        isPayment:   isCredit || isPaymentTransaction(desc),
+        isCredit,
+        isPending:   !!t.pending,
         // One Plaid Item (one login) can cover several cards/accounts —
         // this is what lets PlaidConnect.jsx split a sync's results back
         // out per account instead of lumping every card into one group.

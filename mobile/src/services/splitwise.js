@@ -40,12 +40,37 @@ export async function fetchGroups() {
 }
 
 // Used to identify which Splitwise member id is "me" so we can pull out the
-// user's own share from a receipt's stored personTotals.
+// user's own share from a receipt's stored personTotals. lastName is
+// additionally used by utils/transferMatcher.js to recognize a self-
+// transfer whose description names the person, not the account (e.g. a
+// Zelle payment "from Akash Das" showing up as a credit on a different
+// bank than the one the money actually left).
 export async function fetchCurrentUser() {
   const res  = await swFetch('/get_current_user');
   const data = await res.json();
   if (!res.ok || data?.error) throw new Error(data?.error || 'Could not load your Splitwise profile.');
-  return { id: String(data.user.id), name: data.user.first_name };
+  return { id: String(data.user.id), name: data.user.first_name, lastName: data.user.last_name || '' };
+}
+
+// Your overall Splitwise position, live from Splitwise's own per-friend
+// balances rather than summed from fetchAllExpenses (which is paginated
+// and date-range-limited — not reliable for a true all-time total).
+// Splitwise's sign convention already matches net worth's: positive =
+// friends owe you (an asset), negative = you owe them (a liability) — used
+// as-is by HomePage's net worth card, no sign flip needed. Non-USD
+// balances are skipped so they don't silently corrupt the $ total, same
+// as fetchAllExpenses's currency split.
+export async function fetchNetBalance() {
+  const res  = await swFetch('/get_friends');
+  const data = await res.json();
+  if (!res.ok || data?.error) throw new Error(data?.error || 'Could not load your Splitwise balance.');
+  let net = 0;
+  for (const friend of data.friends || []) {
+    for (const b of friend.balance || []) {
+      if ((b.currency_code || 'USD') === 'USD') net += parseFloat(b.amount || 0);
+    }
+  }
+  return net;
 }
 
 const SKIP_DESC = /settle|settlement|reimburs|payback|pay back|paid back/i;
@@ -84,6 +109,15 @@ export async function fetchAllExpenses(myId, { datedAfter, datedBefore, groupId 
         myPaidShare:   parseFloat(userShare?.paid_share  || 0),
         myOwedShare:   parseFloat(userShare?.owed_share  || 0),
         myNetBalance:  parseFloat(userShare?.net_balance || 0),
+        // Full per-member breakdown (not just the current user's own
+        // share) — used by SplitwiseExpenseDetail's view-only detail sheet
+        // to show who else is on the expense and what they paid/owe.
+        splits: (e.users || []).map(u => ({
+          id:         u.user_id,
+          name:       [u.user?.first_name, u.user?.last_name].filter(Boolean).join(' ') || 'Someone',
+          paidShare:  parseFloat(u.paid_share || 0),
+          owedShare:  parseFloat(u.owed_share || 0),
+        })),
       };
     });
 

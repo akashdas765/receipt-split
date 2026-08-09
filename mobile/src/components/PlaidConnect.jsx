@@ -2,8 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { usePlaidLink } from 'react-plaid-link';
 import { Landmark, Loader2, CheckCircle2, RefreshCw, Unlink, AlertCircle, Plus, CreditCard, Pencil } from 'lucide-react';
 import { session } from '../services/session';
-import { createLinkToken, exchangePublicToken, syncTransactions, fetchAccounts } from '../services/plaid';
-import { savePlaidConnection, deletePlaidConnection, deleteTransaction, renameTransactionsSource } from '../services/db';
+import { createLinkToken, exchangePublicToken, fetchAccounts, defaultAccountType } from '../services/plaid';
+import { syncPlaidConnection } from '../services/plaidSync';
+import { savePlaidConnection, deletePlaidConnection, renameTransactionsSource } from '../services/db';
+import { accountLabel } from '../utils/accountLabel';
 
 const INDIGO = '#6366f1';
 
@@ -12,16 +14,6 @@ const INDIGO = '#6366f1';
 // login and back, which clears normal component state, so this has to
 // survive in storage rather than a variable.
 const OAUTH_STORAGE_KEY = 'plaid_oauth_link_token';
-
-// A user-set nickname always wins over Plaid's own name/mask — that's the
-// whole point of letting them rename "Chase Sapphire ...1234" to "Travel
-// card" or similar.
-function accountLabel(acct) {
-  if (!acct) return 'Account';
-  if (acct.nickname) return acct.nickname;
-  const name = acct.name || acct.official_name || 'Account';
-  return acct.mask ? `${name} ...${acct.mask}` : name;
-}
 
 // Auto-import via Plaid Link — an alternative to manual CSV/PDF upload
 // (StatementUpload.jsx). Reuses the same onAdd callback StatementsPage
@@ -67,38 +59,10 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
     setErrors(e => ({ ...e, [conn.itemId]: '' }));
     try {
       const current = session.getPlaidConnection(conn.itemId) || conn;
-      // full=true re-pulls the whole history from scratch (cursor reset to
-      // null) instead of only what's new since the stored cursor — used to
-      // re-tag transactions synced before per-card splitting existed, so
-      // they pick up the right accountId/source without creating
-      // duplicates (transaction ids are stable, and addTransactions merges).
-      const result  = await syncTransactions(current.accessToken, full ? null : current.cursor);
+      const { cursor } = await syncPlaidConnection(current, { full, onAdd });
 
-      if (result.transactions.length) {
-        // Split one sync's results back out per card — a single login can
-        // cover several accounts, so lumping them all under one source
-        // would undo the whole point of telling them apart.
-        const byAccount = new Map();
-        result.transactions.forEach(t => {
-          const key = t.accountId || 'unknown';
-          if (!byAccount.has(key)) byAccount.set(key, []);
-          byAccount.get(key).push(t);
-        });
-        const accounts = current.accounts || [];
-        for (const [accountId, txns] of byAccount) {
-          const acct  = accounts.find(a => a.id === accountId);
-          const label = acct ? accountLabel(acct) : (current.institutionName || 'Bank (Plaid)');
-          const withSource = txns.map(t => ({ ...t, source: `plaid-${conn.itemId}-${accountId}` }));
-          await onAdd(withSource, label);
-        }
-      }
-
-      for (const id of result.removedIds) {
-        await deleteTransaction(id).catch(() => {});
-      }
-
-      session.upsertPlaidConnection({ itemId: conn.itemId, cursor: result.cursor });
-      await savePlaidConnection({ itemId: conn.itemId, cursor: result.cursor });
+      session.upsertPlaidConnection({ itemId: conn.itemId, cursor });
+      await savePlaidConnection({ itemId: conn.itemId, cursor });
       refreshConnections();
       setLastSyncedMap(m => ({ ...m, [conn.itemId]: new Date() }));
     } catch (err) {
@@ -125,7 +89,10 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
         // captured now since Link's onSuccess is the only place this
         // (name/mask) is available; /transactions/sync only returns bare
         // account_ids, not human-readable labels.
-        const accounts = (metadata?.accounts || []).map(a => ({ id: a.id, name: a.name, mask: a.mask }));
+        const accounts = (metadata?.accounts || []).map(a => ({
+          id: a.id, name: a.name, mask: a.mask,
+          ...(defaultAccountType(a.type) ? { accountType: defaultAccountType(a.type) } : {}),
+        }));
         const conn = { itemId, accessToken, cursor: null, institutionName, accounts };
         session.upsertPlaidConnection(conn);
         await savePlaidConnection(conn);
@@ -192,8 +159,12 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
   useEffect(() => {
     if (!active || (active.accounts && active.accounts.length > 0)) return;
     let cancelled = false;
-    fetchAccounts(active.accessToken).then(async accounts => {
-      if (cancelled || !accounts.length) return;
+    fetchAccounts(active.accessToken).then(async rawAccounts => {
+      if (cancelled || !rawAccounts.length) return;
+      const accounts = rawAccounts.map(({ type, ...a }) => ({
+        ...a,
+        ...(defaultAccountType(type) ? { accountType: defaultAccountType(type) } : {}),
+      }));
       session.upsertPlaidConnection({ itemId: active.itemId, accounts });
       await savePlaidConnection({ itemId: active.itemId, accounts });
       refreshConnections();
@@ -228,6 +199,19 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
     onRenameSource?.(source, label);
   }, [active, onRenameSource]);
 
+  // Plaid doesn't reliably expose "is this checking or a credit card" the
+  // same way across every institution, so it's a plain user-set tag —
+  // toggled by tapping the chip's icon, independent of renaming. Doesn't
+  // touch stored transactions (unlike nickname), just the account's own
+  // metadata, since nothing downstream keys off it yet.
+  const saveAccountType = useCallback(async (acct, accountType) => {
+    if (!active) return;
+    const updatedAccounts = (active.accounts || []).map(a => a.id === acct.id ? { ...a, accountType } : a);
+    session.upsertPlaidConnection({ itemId: active.itemId, accounts: updatedAccounts });
+    await savePlaidConnection({ itemId: active.itemId, accounts: updatedAccounts });
+    refreshConnections();
+  }, [active]);
+
   return (
     <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-3">
       <div className="flex items-center gap-2.5">
@@ -253,7 +237,7 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
       )}
 
       {connections.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto pb-0.5">
+        <div className="flex flex-wrap gap-2">
           {connections.map(c => (
             <button
               key={c.itemId}
@@ -296,14 +280,25 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
                     style={{ borderColor: INDIGO }}
                   />
                 ) : (
-                  <button
+                  <span
                     key={a.id}
-                    onClick={() => setEditingAccountId(a.id)}
-                    title="Tap to rename this card"
-                    className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-2 py-1 hover:border-indigo-200 hover:text-indigo-500 transition-colors"
+                    className="flex items-center gap-0.5 text-[11px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 rounded-full pl-1 pr-2 py-1"
                   >
-                    <CreditCard size={10} /> {accountLabel(a)} <Pencil size={9} className="opacity-50" />
-                  </button>
+                    <button
+                      onClick={() => saveAccountType(a, a.accountType === 'bank' ? 'credit' : 'bank')}
+                      title={a.accountType === 'bank' ? 'Bank account — tap to mark as credit card' : 'Credit card — tap to mark as bank account'}
+                      className="flex items-center justify-center w-5 h-5 rounded-full hover:bg-slate-200 hover:text-indigo-500 transition-colors shrink-0"
+                    >
+                      {a.accountType === 'bank' ? <Landmark size={10} /> : <CreditCard size={10} />}
+                    </button>
+                    <button
+                      onClick={() => setEditingAccountId(a.id)}
+                      title="Tap to rename this card"
+                      className="flex items-center gap-1 pl-0.5 hover:text-indigo-500 transition-colors"
+                    >
+                      {accountLabel(a)} <Pencil size={9} className="opacity-50" />
+                    </button>
+                  </span>
                 )
               ))}
             </div>
@@ -334,15 +329,19 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
               <Unlink size={15} />
             </button>
           </div>
-          {active.accounts?.length > 1 && (
-            <button
-              onClick={() => doSync(active, { full: true })}
-              disabled={syncingId === active.itemId}
-              className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold text-indigo-500 hover:bg-indigo-50 transition-colors btn-press disabled:opacity-60"
-            >
-              {fullSyncId === active.itemId ? <><Loader2 size={12} className="animate-spin" /> Re-tagging past transactions by card…</> : 'Re-split older transactions by card'}
-            </button>
-          )}
+          {/* Manual fallback — StatementsPage.jsx auto-detects and fixes
+              legacy-format transactions (pre-per-account-split) on load, so
+              this shouldn't normally be needed, but stays as a way to force
+              a full re-sync regardless of account count (a single-account
+              connection can carry the legacy format just as easily as a
+              multi-account one — no reason to gate this on account count). */}
+          <button
+            onClick={() => doSync(active, { full: true })}
+            disabled={syncingId === active.itemId}
+            className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold text-indigo-500 hover:bg-indigo-50 transition-colors btn-press disabled:opacity-60"
+          >
+            {fullSyncId === active.itemId ? <><Loader2 size={12} className="animate-spin" /> Re-tagging past transactions by card…</> : 'Re-split older transactions by card'}
+          </button>
         </div>
       ) : (
         <button

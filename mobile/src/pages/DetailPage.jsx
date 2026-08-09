@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Store, Calendar, List, DollarSign, Trash2, Plus, ChevronDown, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { fetchGroups } from '../services/splitwise';
 import { memberColor } from '../utils/memberColor';
+import { normalizeItems, lineAmount } from '../utils/receiptItems';
 import PageHeader from '../components/PageHeader';
 
 const INDIGO  = '#6366f1';
@@ -14,29 +15,6 @@ function isTaxable(item, isGrocery) {
   if (item.tax_exempt) return false;
   if (isGrocery && FOOD_CATS.includes((item.category || '').toLowerCase())) return false;
   return true;
-}
-
-// Normalize items coming from Firestore (old format used split_members string[])
-// and from OCR (which only has quantity + line-total amount, no unit price).
-function normalizeItems(rawItems) {
-  return (rawItems || []).map(item => {
-    const qty = parseFloat(item.quantity) || 1;
-    return {
-      ...item,
-      split_shares: item.split_shares ||
-        Object.fromEntries((item.split_members || []).map(id => [id, 1])),
-      unit_price: item.unit_price ?? (parseFloat(item.amount) || 0) / qty,
-      split_mode: item.split_mode || 'whole',
-      unit_shares: item.unit_shares || Array.from({ length: Math.max(1, Math.round(qty)) }, () => ({})),
-    };
-  });
-}
-
-// Source of truth for an item's pre-tax total: unit price × quantity, both
-// kept as the raw strings the user is typing so editing one field never
-// clobbers mid-edit text in the other (see updateItem — no parsing on keystroke).
-function lineAmount(item) {
-  return (parseFloat(item.unit_price) || 0) * (parseFloat(item.quantity) || 1);
 }
 
 export default function DetailPage() {
@@ -64,7 +42,13 @@ export default function DetailPage() {
     fetchGroups()
       .then(grps => {
         setGroups(grps);
-        if (grps.length > 0) { setSelectedGroup(grps[0].id); setMembers(grps[0].members); }
+        // Re-editing an already-posted receipt should start on the group
+        // it was actually posted to, not silently default to the first
+        // group in the list — falls back to that default for a brand-new
+        // (never-posted) receipt, which has no groupId yet.
+        const original = receipt.groupId ? grps.find(g => g.id === receipt.groupId) : null;
+        const chosen   = original || grps[0];
+        if (chosen) { setSelectedGroup(chosen.id); setMembers(chosen.members); }
       })
       .catch(err => setSwError(err?.message || 'Could not load Splitwise groups. Check your API key.'))
       .finally(() => setLoading(false));

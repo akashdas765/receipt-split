@@ -1,11 +1,17 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Receipt, LogOut, Trash2, CheckCheck, AlertTriangle, X, Users, AlertCircle } from 'lucide-react';
+import { Receipt, LogOut, Trash2, CheckCheck, AlertTriangle, X, Users, AlertCircle, Landmark, CreditCard, Loader2 } from 'lucide-react';
 import { logout } from '../services/auth';
-import { loadReceiptsForInsights, deleteReceipt } from '../services/db';
-import { fetchCurrentUser, fetchAllExpenses, fetchGroups } from '../services/splitwise';
+import { loadReceiptsForInsights, deleteReceipt, loadManualAccounts, saveManualAccount, deleteManualAccount } from '../services/db';
+import { fetchCurrentUser, fetchAllExpenses, fetchGroups, fetchNetBalance } from '../services/splitwise';
+import { fetchAccountBalances } from '../services/plaid';
+import { session } from '../services/session';
+import { accountLabel } from '../utils/accountLabel';
 import { getMonthRange } from '../utils/statementFormatters';
 import BottomNav from '../components/BottomNav';
+import NetWorthDetail from '../components/NetWorthDetail';
+import SplitwiseExpenseDetail from '../components/SplitwiseExpenseDetail';
+import ReceiptDetail from '../components/ReceiptDetail';
 import MonthSlider from '../components/MonthSlider';
 
 const INDIGO = '#6366f1';
@@ -43,6 +49,8 @@ export default function HomePage() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
 
   const [confirmTarget, setConfirmTarget] = useState(null); // { id, merchant } | null
+  const [openExpense,   setOpenExpense]   = useState(null); // Splitwise-only expense being viewed | null
+  const [openReceipt,   setOpenReceipt]   = useState(null); // posted receipt being viewed | null
   const [deleting,      setDeleting]      = useState(false);
 
   // Surfaced instead of silently swallowed — if this fails, myId never
@@ -50,6 +58,19 @@ export default function HomePage() {
   // short-circuit) and skips Splitwise-only expenses entirely, with no
   // other indication anything went wrong.
   const [swAuthError, setSwAuthError] = useState('');
+
+  // Net worth card: live Plaid balances (per account, tagged bank/credit
+  // via PlaidConnect.jsx's classification) + Splitwise's own net balance +
+  // manually-entered accounts (rewards, cash, ... — no transaction feed).
+  // Point-in-time, not month-scoped — unlike everything else on this page,
+  // it deliberately doesn't depend on currentMonth.
+  const [plaidBalances,   setPlaidBalances]   = useState([]); // [{id, label, institutionName, current, isoCurrencyCode, accountType}]
+  const [loadingBalances, setLoadingBalances] = useState(true);
+  const [balanceError,    setBalanceError]    = useState('');
+  const [splitwiseNet,    setSplitwiseNet]    = useState(0);
+  const [loadingNet,      setLoadingNet]      = useState(true);
+  const [manualAccounts,  setManualAccounts]  = useState([]);
+  const [netWorthOpen,    setNetWorthOpen]    = useState(false);
 
   useEffect(() => {
     loadReceiptsForInsights().then(list => { setReceipts(list); setLoadingReceipts(false); });
@@ -63,6 +84,55 @@ export default function HomePage() {
         setLoadingSw(false);
         setSwAuthError(err?.message || 'Could not connect to Splitwise — your share and Splitwise expenses won\'t show until this is fixed.');
       });
+    fetchNetBalance().then(setSplitwiseNet).catch(() => {}).finally(() => setLoadingNet(false));
+    loadManualAccounts().then(setManualAccounts).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const connections = session.getPlaidConnections();
+      if (!connections.length) { setLoadingBalances(false); return; }
+      setLoadingBalances(true);
+      const results = await Promise.allSettled(
+        connections.map(conn => fetchAccountBalances(conn.accessToken).then(balances => ({ conn, balances })))
+      );
+      if (cancelled) return;
+      const flat = [];
+      const failures = [];
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        if (r.status !== 'fulfilled') {
+          // Institution name + the real Plaid error (e.g.
+          // ITEM_LOGIN_REQUIRED) instead of a generic banner — otherwise
+          // "some accounts failed" gives no way to tell which one or why.
+          failures.push(`${connections[i].institutionName || 'a connection'}: ${r.reason?.message || 'unknown error'}`);
+          continue;
+        }
+        const { conn, balances } = r.value;
+        const accountMeta = conn.accounts || [];
+        for (const b of balances) {
+          const meta = accountMeta.find(a => a.id === b.id);
+          // Falls back to Plaid's own type if the account was never opened
+          // in PlaidConnect's chip UI yet (so its default classification —
+          // see defaultAccountType there — was never persisted).
+          const accountType = meta?.accountType
+            || (b.type === 'depository' ? 'bank' : b.type === 'credit' ? 'credit' : undefined);
+          flat.push({
+            id:              b.id,
+            label:           accountLabel({ name: b.name, mask: b.mask, nickname: meta?.nickname }),
+            institutionName: conn.institutionName,
+            current:         b.current,
+            isoCurrencyCode: b.isoCurrencyCode,
+            accountType,
+          });
+        }
+      }
+      setPlaidBalances(flat);
+      if (failures.length) setBalanceError(failures.join(' · '));
+      setLoadingBalances(false);
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -129,6 +199,53 @@ export default function HomePage() {
   const pendingTotal = pendingMonthlyReceipts.reduce((s, r) => s + (r.grandTotal ?? r.total ?? 0), 0);
 
   const monthCount = monthlyReceipts.length + splitwiseOnly.length + foreignCurrencyOnly.length;
+
+  // Net worth = cash on hand + what you're owed - what you owe. Credit
+  // card `current` balance is what you owe on it (a liability), so it
+  // subtracts rather than adds — the whole reason PlaidConnect.jsx's
+  // bank-vs-credit-card tag exists. Non-USD balances are excluded from
+  // both sums for the same reason fetchAllExpenses splits currencies —
+  // blending them in would silently misreport the total.
+  const hasPlaidAccounts = session.getPlaidConnections().length > 0;
+  const bankTotal = useMemo(() =>
+    plaidBalances
+      .filter(b => b.accountType === 'bank' && b.isoCurrencyCode === 'USD' && b.current != null)
+      .reduce((s, b) => s + b.current, 0),
+    [plaidBalances]
+  );
+  const creditDebtTotal = useMemo(() =>
+    plaidBalances
+      .filter(b => b.accountType === 'credit' && b.isoCurrencyCode === 'USD' && b.current != null)
+      .reduce((s, b) => s + b.current, 0),
+    [plaidBalances]
+  );
+  // Manual accounts (rewards, cash, a loan tracked by hand, ...) — no
+  // transaction feed, just a name/balance/type the user enters directly.
+  const manualAssetTotal = useMemo(() =>
+    manualAccounts.filter(a => a.type !== 'liability').reduce((s, a) => s + (a.balance || 0), 0),
+    [manualAccounts]
+  );
+  const manualLiabilityTotal = useMemo(() =>
+    manualAccounts.filter(a => a.type === 'liability').reduce((s, a) => s + (a.balance || 0), 0),
+    [manualAccounts]
+  );
+  const netWorth = bankTotal - creditDebtTotal + splitwiseNet + manualAssetTotal - manualLiabilityTotal;
+  const hasNetWorthData = hasPlaidAccounts || manualAccounts.length > 0;
+
+  const handleSaveManualAccount = async (fields) => {
+    const id = await saveManualAccount(fields);
+    setManualAccounts(prev => {
+      const existing = prev.some(a => a.id === id);
+      return existing
+        ? prev.map(a => a.id === id ? { ...a, ...fields, id } : a)
+        : [...prev, { ...fields, id }];
+    });
+  };
+
+  const handleDeleteManualAccount = async (id) => {
+    await deleteManualAccount(id);
+    setManualAccounts(prev => prev.filter(a => a.id !== id));
+  };
 
   const reloadMonth = () => {
     if (!myId) return;
@@ -238,6 +355,56 @@ export default function HomePage() {
               </div>
             )}
 
+            {/* Net worth — bank balances + Splitwise net position + manual
+                accounts, live from Plaid/Splitwise rather than anything
+                stored, since a stale number here would be actively
+                misleading. Point-in-time, not scoped to the month slider
+                above. Tap for the per-account breakdown. */}
+            {hasNetWorthData && (
+              <button
+                onClick={() => setNetWorthOpen(true)}
+                className="w-full text-left rounded-2xl p-4 mb-4 border border-emerald-100 anim-fade-up card-lift"
+                style={{ background: 'linear-gradient(135deg, #ecfdf5, #f0fdfa)' }}
+              >
+                <div className="flex items-center justify-between gap-3 mb-1">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Net worth</p>
+                  {(loadingBalances || loadingNet) && <Loader2 size={12} className="animate-spin text-slate-400" />}
+                </div>
+                <p className="text-2xl font-extrabold text-slate-800">{formatWithCurrency(netWorth, 'USD')}</p>
+
+                <div className="mt-3 pt-3 border-t border-emerald-100/60 space-y-1.5">
+                  {hasPlaidAccounts && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="flex items-center gap-1.5 text-slate-500"><Landmark size={12} /> Bank balance</span>
+                      <span className="font-semibold text-slate-700">{formatWithCurrency(bankTotal, 'USD')}</span>
+                    </div>
+                  )}
+                  {creditDebtTotal > 0 && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="flex items-center gap-1.5 text-slate-500"><CreditCard size={12} /> Credit card debt</span>
+                      <span className="font-semibold text-red-500">{formatWithCurrency(-creditDebtTotal, 'USD')}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="flex items-center gap-1.5 text-slate-500"><Users size={12} /> Splitwise</span>
+                    <span className={`font-semibold ${splitwiseNet >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                      {splitwiseNet >= 0 ? '+' : ''}{formatWithCurrency(splitwiseNet, 'USD')}
+                    </span>
+                  </div>
+                  {manualAccounts.length > 0 && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-500">Other accounts</span>
+                      <span className="font-semibold text-slate-700">
+                        {formatWithCurrency(manualAssetTotal - manualLiabilityTotal, 'USD')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <p className="text-[10px] text-emerald-600/70 mt-2 font-semibold">Tap for details</p>
+                {balanceError && <p className="text-[10px] text-amber-500 mt-1">{balanceError}</p>}
+              </button>
+            )}
+
             {/* Month total */}
             <div
               className="rounded-2xl p-4 mb-4 border border-indigo-100 anim-fade-up"
@@ -285,7 +452,7 @@ export default function HomePage() {
                 {monthlyReceipts.map(r => (
                   <button
                     key={r.id}
-                    onClick={() => navigate('/detail', { state: r })}
+                    onClick={() => r.approved ? setOpenReceipt(r) : navigate('/detail', { state: r })}
                     className="w-full text-left bg-white rounded-2xl p-4 border border-slate-100 shadow-sm hover:border-indigo-100 card-lift anim-fade-up"
                   >
                     <div className="flex items-center gap-3">
@@ -312,6 +479,12 @@ export default function HomePage() {
                           </span>
                           <span className="text-slate-200">·</span>
                           <span className="text-xs text-slate-400">{r.items?.length || 0} items</span>
+                          {groupName(r.groupId) && (
+                            <>
+                              <span className="text-slate-200">·</span>
+                              <span className="text-xs text-slate-400 truncate">{groupName(r.groupId)}</span>
+                            </>
+                          )}
                         </div>
                       </div>
 
@@ -341,7 +514,8 @@ export default function HomePage() {
                     distinct (teal, Users icon, "Splitwise" badge) so it's
                     clear these weren't scanned here. */}
                 {splitwiseOnly.map(e => (
-                  <div key={e.id} className="w-full bg-white rounded-2xl p-4 border border-teal-100 shadow-sm anim-fade-up flex items-center gap-3">
+                  <button key={e.id} onClick={() => setOpenExpense(e)}
+                    className="w-full text-left bg-white rounded-2xl p-4 border border-teal-100 shadow-sm hover:border-teal-200 card-lift anim-fade-up flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
                       style={{ background: 'linear-gradient(135deg, #14b8a6, #0ea5e9)' }}>
                       <Users size={18} color="#fff" />
@@ -372,7 +546,7 @@ export default function HomePage() {
                         <p className="text-[10px] text-slate-400">of ${e.cost.toFixed(2)}</p>
                       )}
                     </div>
-                  </div>
+                  </button>
                 ))}
 
                 {/* Splitwise expenses logged in a non-USD currency — shown
@@ -380,7 +554,8 @@ export default function HomePage() {
                     the $ totals above (mixing currencies would misreport
                     them, e.g. a ₹3600 expense is not $3600). */}
                 {foreignCurrencyOnly.map(e => (
-                  <div key={e.id} className="w-full bg-white rounded-2xl p-4 border border-amber-100 shadow-sm anim-fade-up flex items-center gap-3">
+                  <button key={e.id} onClick={() => setOpenExpense(e)}
+                    className="w-full text-left bg-white rounded-2xl p-4 border border-amber-100 shadow-sm hover:border-amber-200 card-lift anim-fade-up flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
                       style={{ background: 'linear-gradient(135deg, #f59e0b, #f97316)' }}>
                       <Users size={18} color="#fff" />
@@ -412,7 +587,7 @@ export default function HomePage() {
                       )}
                       <p className="text-[10px] text-amber-500">not in totals</p>
                     </div>
-                  </div>
+                  </button>
                 ))}
 
                 {loadingSw && (
@@ -431,6 +606,35 @@ export default function HomePage() {
           </>
         )}
       </main>
+
+      {netWorthOpen && (
+        <NetWorthDetail
+          netWorth={netWorth}
+          plaidBalances={plaidBalances}
+          splitwiseNet={splitwiseNet}
+          manualAccounts={manualAccounts}
+          onSaveAccount={handleSaveManualAccount}
+          onDeleteAccount={handleDeleteManualAccount}
+          onClose={() => setNetWorthOpen(false)}
+        />
+      )}
+
+      {openExpense && (
+        <SplitwiseExpenseDetail
+          expense={openExpense}
+          groupName={groupName(openExpense.group_id)}
+          onClose={() => setOpenExpense(null)}
+        />
+      )}
+
+      {openReceipt && (
+        <ReceiptDetail
+          receipt={openReceipt}
+          groupName={groupName(openReceipt.groupId)}
+          onEdit={() => navigate('/detail', { state: openReceipt })}
+          onClose={() => setOpenReceipt(null)}
+        />
+      )}
 
       <BottomNav />
     </div>

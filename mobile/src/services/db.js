@@ -4,6 +4,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { session } from './session';
+import { isPaymentTransaction, isCreditConfirmation } from '../utils/paymentDetector';
 
 function receiptsCol() {
   return collection(db, 'users', session.getUserId(), 'receipts');
@@ -42,7 +43,7 @@ export async function deleteReceipt(id) {
 // "loaded statements" list shown in the Upload tab is derived client-side
 // by grouping on `source`/`sourceName` rather than stored separately.
 
-const TXN_MAX = 1000;
+export const TXN_MAX = 1000;
 
 export async function loadTransactions() {
   try {
@@ -85,6 +86,27 @@ export async function deleteTransactionsBySource(source) {
   const batch = writeBatch(db);
   snap.docs.forEach(d => batch.delete(d.ref));
   await batch.commit();
+}
+
+// One-time fix for transactions saved before their description was
+// checked against the payment patterns (e.g. "Payment Thank You" entries
+// synced before Plaid credits were even kept — see services/plaid.js) —
+// isPayment is stamped once per doc at write time, not recomputed live, so
+// already-stored rows stay misclassified until something corrects them.
+// `transactions` is the caller's already-loaded full list (avoids a second
+// fetch); returns [{id, fields}] for whichever rows were actually updated.
+export async function reclassifyPayments(transactions) {
+  const toFix = transactions
+    .filter(t => !t.isPayment && isPaymentTransaction(t.description))
+    .map(t => ({
+      id:     t.id,
+      fields: { isPayment: true, ...(isCreditConfirmation(t.description) ? { isCredit: true } : {}) },
+    }));
+  if (!toFix.length) return [];
+  const batch = writeBatch(db);
+  toFix.forEach(({ id, fields }) => batch.update(doc(transactionsCol(), id), fields));
+  await batch.commit();
+  return toFix;
 }
 
 // Relabels every already-stored transaction from one statement/card (e.g.
@@ -161,4 +183,68 @@ export async function migrateLegacyPlaidConnection() {
     plaid_cursor: null,
     plaid_institution_name: null,
   }, { merge: true });
+}
+
+// ── Non-Plaid account classification (see services/session.js's getAccountType) ──
+// Plaid accounts already carry a bank/credit tag on plaidConnections'
+// accounts[] (see savePlaidConnection above); CSV/PDF/manual transactions
+// have no equivalent entity to hang that tag on, since their `source` is
+// just a string (an upload-batch label, or 'pdf'/'manual'), not a real
+// account id. This gives every non-Plaid `source` string somewhere to store
+// the same kind of tag, keyed by that string directly.
+
+function sourceMetaCol() {
+  return collection(db, 'users', session.getUserId(), 'sourceMeta');
+}
+
+export async function loadSourceMeta() {
+  try {
+    const snap = await getDocs(sourceMetaCol());
+    const map = {};
+    snap.docs.forEach(d => { map[d.id] = d.data(); });
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+export async function saveSourceMeta(sourceId, { accountType, label } = {}) {
+  if (!sourceId) throw new Error('saveSourceMeta requires sourceId');
+  const data = { updatedAt: new Date().toISOString() };
+  if (accountType !== undefined) data.accountType = accountType;
+  if (label       !== undefined) data.label       = label;
+  await setDoc(doc(sourceMetaCol(), sourceId), data, { merge: true });
+}
+
+// ── Manual net-worth accounts (see components/NetWorthDetail.jsx) ──────────
+// For balances with no transaction feed at all (rewards points, cash, a
+// loan you're tracking by hand, ...) — just a name/balance/type the user
+// enters directly, folded into HomePage's net worth total alongside the
+// live Plaid/Splitwise numbers. type: 'asset' adds to net worth, 'liability'
+// subtracts.
+
+function manualAccountsCol() {
+  return collection(db, 'users', session.getUserId(), 'manualAccounts');
+}
+
+export async function loadManualAccounts() {
+  try {
+    const snap = await getDocs(manualAccountsCol());
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch {
+    return [];
+  }
+}
+
+// Omit `id` to create a new account (Firestore assigns the id); pass it to
+// update an existing one.
+export async function saveManualAccount({ id, name, balance, type }) {
+  const data = { name, balance, type };
+  const ref  = id ? doc(manualAccountsCol(), id) : doc(manualAccountsCol());
+  await setDoc(ref, data, { merge: true });
+  return ref.id;
+}
+
+export async function deleteManualAccount(id) {
+  await deleteDoc(doc(manualAccountsCol(), id));
 }

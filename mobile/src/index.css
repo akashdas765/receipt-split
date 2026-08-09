@@ -208,6 +208,15 @@ input:focus { outline: none; border-color: var(--indigo) !important; box-shadow:
 /* Pulsing dashed border (drag-over state) */
 .dropzone-active { animation: pulse-border 1.2s ease-in-out infinite; }
 
+/* Hides the scrollbar on an overflow-x-auto container without disabling
+   scroll itself — used by MonthSlider, where the visible scrollbar track
+   read as a stray line under the chips rather than a useful affordance. */
+.no-scrollbar {
+  scrollbar-width: none;     /* Firefox */
+  -ms-overflow-style: none;  /* old Edge/IE */
+}
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
 /* ───────────────────────── Reduced motion ───────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {

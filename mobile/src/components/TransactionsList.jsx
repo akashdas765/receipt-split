@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2, Clock, ArrowLeftRight } from 'lucide-react';
 import { formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { getCategoryIcon } from '../utils/categoryDetector';
@@ -30,6 +30,25 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
     matched;
   const showCredits = filter === 0 || filter === 3;
   const showPending = filter === 0 || filter === 4;
+
+  // "All" interleaves every kind into one date-ordered list instead of
+  // three stacked blocks (all credits, then all pending, then all debits)
+  // — each individual array is already date-desc (matcher.js sorts
+  // `matched`, and creditTxns/pendingTxns inherit loadTransactions()'s own
+  // orderBy('date','desc')), but stacking three separately-sorted blocks
+  // isn't the same as one list actually in date order. Only built/used for
+  // filter===0 — every other filter already shows exactly one kind, so
+  // there's nothing to interleave.
+  const combinedAll = useMemo(() => {
+    if (filter !== 0) return [];
+    const items = [
+      ...creditTxns.map(t => ({ t, kind: 'credit' })),
+      ...pendingTxns.map(t => ({ t, kind: 'pending' })),
+      ...matched.map(t => ({ t, kind: 'debit' })),
+    ];
+    items.sort((a, b) => (b.t.date || '').localeCompare(a.t.date || ''));
+    return items;
+  }, [filter, creditTxns, pendingTxns, matched]);
 
   // Splitwise savings is a separate concept from the Debit/Credit/Net
   // summary below (which reads like a real bank statement) — shown as its
@@ -101,161 +120,184 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
 
       {/* Transaction list */}
       <div className="space-y-2">
-        {showCredits && creditTxns.map(txn => (
-          <div key={txn.id} className="rounded-2xl border border-emerald-100 bg-white p-3 flex items-center gap-3">
-            <span className="text-base shrink-0">💳</span>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5">
-                {txn.transferHintLabel && <ArrowLeftRight size={11} style={{ color: INDIGO }} className="shrink-0" />}
-                <p className="text-sm font-semibold text-slate-700 truncate">{txn.transferHintLabel || txn.description}</p>
-              </div>
-              <p className="text-xs text-slate-400 mt-0.5 truncate">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
-            </div>
-            <p className="text-sm font-bold text-emerald-500 shrink-0">+{formatCurrency(txn.amount)}</p>
-            <button onClick={() => onDelete(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
-              <Trash2 size={14} />
-            </button>
-          </div>
-        ))}
-
-        {showPending && pendingTxns.map(txn => (
-          <div key={txn.id} className="rounded-2xl border border-slate-200 border-dashed bg-white p-3 flex items-center gap-3">
-            <Clock size={16} className="text-slate-400 shrink-0" />
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5">
-                <p className="text-sm font-semibold text-slate-600 truncate">{txn.description}</p>
-                <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 rounded-full shrink-0">Pending</span>
-              </div>
-              <p className="text-xs text-slate-400 mt-0.5 truncate">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
-            </div>
-            <p className="text-sm font-bold text-slate-500 shrink-0">-{formatCurrency(txn.amount)}</p>
-            <button onClick={() => onDelete(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
-              <Trash2 size={14} />
-            </button>
-          </div>
-        ))}
-
-        {displayed.map(txn => {
-          const isOpen       = expanded[txn.id];
-          const isOverridden = txn.manualOverride;
-          const suggestion   = !txn.isSplitwised ? txn.suggestedMatch : null;
-
-          return (
-            <div key={txn.id} className={`rounded-2xl overflow-hidden border bg-white ${
-              txn.isSplitwised ? 'border-emerald-100' : suggestion ? 'border-indigo-100' : 'border-amber-100'
-            }`}>
-              <div className="w-full flex items-center gap-2 p-3">
-                <button className="flex-1 flex items-center gap-3 text-left min-w-0" onClick={() => setExpanded(p => ({ ...p, [txn.id]: !p[txn.id] }))}>
-                  <div className="shrink-0">
-                    {txn.isSplitwised
-                      ? <CheckCircle2 size={18} className="text-emerald-500" />
-                      : suggestion
-                        ? <Sparkles size={18} style={{ color: INDIGO }} />
-                        : <AlertCircle size={18} className="text-amber-500" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      {txn.transferHintLabel ? <ArrowLeftRight size={12} style={{ color: INDIGO }} className="shrink-0" /> : <span className="text-sm">{getCategoryIcon(txn.category)}</span>}
-                      <p className="text-sm font-semibold text-slate-700 truncate">{txn.transferHintLabel || txn.description}</p>
-                      {isOverridden && <span className="text-xs bg-indigo-50 px-1.5 rounded-full shrink-0" style={{ color: INDIGO }}>manual</span>}
-                    </div>
-                    <p className="text-xs text-slate-400 mt-0.5 truncate">
-                      {formatShortDate(txn.date)} · {txn.sourceName || txn.source}
-                      {txn.isSplitwised && (
-                        <span className="ml-1.5 text-emerald-500">
-                          · {txn.splitwiseDesc}{groupName(txn.groupId) ? ` · ${groupName(txn.groupId)}` : ''}
-                        </span>
-                      )}
-                      {suggestion && (
-                        <span className="ml-1.5 font-semibold" style={{ color: INDIGO }}>
-                          · looks like {suggestion.expense.description} ({suggestion.score}%)
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-sm font-bold text-slate-800">-{formatCurrency(txn.effectiveAmount)}</p>
-                    {txn.isSplitwised && txn.savings > 0.5 && <p className="text-xs text-emerald-500">-{formatCurrency(txn.savings)}</p>}
-                  </div>
-                  {isOpen ? <ChevronUp size={14} className="text-slate-400 shrink-0" /> : <ChevronDown size={14} className="text-slate-400 shrink-0" />}
-                </button>
-                <button onClick={() => onDelete(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
-                  <Trash2 size={14} />
-                </button>
-              </div>
-
-              {isOpen && (
-                <div className="border-t border-slate-100 px-3 pb-3 pt-2 space-y-2">
-                  {txn.isSplitwised ? (
-                    <div className="bg-emerald-50 rounded-xl p-2.5 space-y-1">
-                      <p className="text-emerald-600 text-xs font-semibold">✅ Matched to Splitwise</p>
-                      <Row label="Expense" value={txn.splitwiseDesc} />
-                      {txn.splitwiseDate && <Row label="Date" value={formatShortDate(txn.splitwiseDate)} />}
-                      <Row label="Your share" value={formatCurrency(txn.effectiveAmount)} valueClass="text-emerald-600 font-semibold" />
-                      <Row label="You save" value={`-${formatCurrency(txn.savings)}`} valueClass="text-emerald-600" />
-                      {groupName(txn.groupId) && <Row label="Group" value={groupName(txn.groupId)} />}
-                      {!txn.manualOverride && <Row label="Confidence" value={`${txn.matchScore}%`} />}
-                    </div>
-                  ) : suggestion ? (
-                    <div className="rounded-xl p-2.5 space-y-1" style={{ background: '#eef1fb' }}>
-                      <p className="text-xs font-semibold flex items-center gap-1" style={{ color: INDIGO }}>
-                        <Sparkles size={12} /> Possible match
-                      </p>
-                      <Row label="Expense" value={suggestion.expense.description} />
-                      {suggestion.expense.date && <Row label="Date" value={formatShortDate(suggestion.expense.date)} />}
-                      <Row label="Your share" value={formatCurrency(suggestion.expense.myOwedShare)} valueClass="font-semibold" />
-                      {groupName(suggestion.expense.group_id) && <Row label="Group" value={groupName(suggestion.expense.group_id)} />}
-                      <Row label="Confidence" value={`${suggestion.score}%`} />
-                    </div>
-                  ) : (
-                    <div className="bg-amber-50 rounded-xl p-2.5">
-                      <p className="text-amber-600 text-xs">No Splitwise match — full amount counts as personal expense.</p>
-                    </div>
-                  )}
-
-                  <div className="flex gap-2 pt-1">
-                    {txn.isSplitwised ? (
-                      <>
-                        <button onClick={() => { onUnlink(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
-                          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-amber-600 border border-amber-200 rounded-xl py-2 hover:bg-amber-50 transition-colors">
-                          <Unlink size={13} /> Unlink
-                        </button>
-                        <button onClick={() => { onLink(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
-                          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold border rounded-xl py-2 transition-colors" style={{ color: INDIGO, borderColor: '#c7d2fe' }}>
-                          <Pencil size={13} /> Change link
-                        </button>
-                      </>
-                    ) : suggestion ? (
-                      <>
-                        <button onClick={() => { onUnlink(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
-                          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-500 border border-slate-200 rounded-xl py-2 hover:bg-slate-50 transition-colors">
-                          <X size={13} /> Not this
-                        </button>
-                        <button onClick={() => { onConfirmSuggestion(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
-                          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-white rounded-xl py-2 transition-colors" style={{ background: INDIGO }}>
-                          <Check size={13} /> Confirm match
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button onClick={() => { onLink(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
-                          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold border rounded-xl py-2 transition-colors" style={{ color: INDIGO, borderColor: '#c7d2fe' }}>
-                          <Link2 size={13} /> Link to Splitwise
-                        </button>
-                        {isOverridden && (
-                          <button onClick={() => onClearOverride(txn)} className="flex items-center justify-center gap-1 text-xs font-semibold text-slate-500 border border-slate-200 rounded-xl px-3 py-2 hover:bg-slate-50 transition-colors">
-                            Auto
-                          </button>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {filter === 0 ? (
+          combinedAll.map(({ t, kind }) => (
+            kind === 'credit' ? <CreditRow key={t.id} txn={t} onDelete={onDelete} /> :
+            kind === 'pending' ? <PendingRow key={t.id} txn={t} onDelete={onDelete} /> :
+            <DebitRow key={t.id} txn={t} isOpen={!!expanded[t.id]} setExpanded={setExpanded}
+              groupName={groupName} onLink={onLink} onUnlink={onUnlink} onClearOverride={onClearOverride}
+              onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} />
+          ))
+        ) : (
+          <>
+            {showCredits && creditTxns.map(txn => <CreditRow key={txn.id} txn={txn} onDelete={onDelete} />)}
+            {showPending && pendingTxns.map(txn => <PendingRow key={txn.id} txn={txn} onDelete={onDelete} />)}
+            {displayed.map(txn => (
+              <DebitRow key={txn.id} txn={txn} isOpen={!!expanded[txn.id]} setExpanded={setExpanded}
+                groupName={groupName} onLink={onLink} onUnlink={onUnlink} onClearOverride={onClearOverride}
+                onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} />
+            ))}
+          </>
+        )}
       </div>
+    </div>
+  );
+}
+
+function CreditRow({ txn, onDelete }) {
+  return (
+    <div className="rounded-2xl border border-emerald-100 bg-white p-3 flex items-center gap-3">
+      <span className="text-base shrink-0">💳</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          {txn.transferHintLabel && <ArrowLeftRight size={11} style={{ color: INDIGO }} className="shrink-0" />}
+          <p className="text-sm font-semibold text-slate-700 truncate">{txn.transferHintLabel || txn.description}</p>
+        </div>
+        <p className="text-xs text-slate-400 mt-0.5 truncate">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
+      </div>
+      <p className="text-sm font-bold text-emerald-500 shrink-0">+{formatCurrency(txn.amount)}</p>
+      <button onClick={() => onDelete(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
+        <Trash2 size={14} />
+      </button>
+    </div>
+  );
+}
+
+function PendingRow({ txn, onDelete }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 border-dashed bg-white p-3 flex items-center gap-3">
+      <Clock size={16} className="text-slate-400 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <p className="text-sm font-semibold text-slate-600 truncate">{txn.description}</p>
+          <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 rounded-full shrink-0">Pending</span>
+        </div>
+        <p className="text-xs text-slate-400 mt-0.5 truncate">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
+      </div>
+      <p className="text-sm font-bold text-slate-500 shrink-0">-{formatCurrency(txn.amount)}</p>
+      <button onClick={() => onDelete(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
+        <Trash2 size={14} />
+      </button>
+    </div>
+  );
+}
+
+function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onUnlink, onClearOverride, onConfirmSuggestion, onDelete }) {
+  const isOverridden = txn.manualOverride;
+  const suggestion   = !txn.isSplitwised ? txn.suggestedMatch : null;
+
+  return (
+    <div className={`rounded-2xl overflow-hidden border bg-white ${
+      txn.isSplitwised ? 'border-emerald-100' : suggestion ? 'border-indigo-100' : 'border-amber-100'
+    }`}>
+      <div className="w-full flex items-center gap-2 p-3">
+        <button className="flex-1 flex items-center gap-3 text-left min-w-0" onClick={() => setExpanded(p => ({ ...p, [txn.id]: !p[txn.id] }))}>
+          <div className="shrink-0">
+            {txn.isSplitwised
+              ? <CheckCircle2 size={18} className="text-emerald-500" />
+              : suggestion
+                ? <Sparkles size={18} style={{ color: INDIGO }} />
+                : <AlertCircle size={18} className="text-amber-500" />}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              {txn.transferHintLabel ? <ArrowLeftRight size={12} style={{ color: INDIGO }} className="shrink-0" /> : <span className="text-sm">{getCategoryIcon(txn.category)}</span>}
+              <p className="text-sm font-semibold text-slate-700 truncate">{txn.transferHintLabel || txn.description}</p>
+              {isOverridden && <span className="text-xs bg-indigo-50 px-1.5 rounded-full shrink-0" style={{ color: INDIGO }}>manual</span>}
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5 truncate">
+              {formatShortDate(txn.date)} · {txn.sourceName || txn.source}
+              {txn.isSplitwised && (
+                <span className="ml-1.5 text-emerald-500">
+                  · {txn.splitwiseDesc}{groupName(txn.groupId) ? ` · ${groupName(txn.groupId)}` : ''}
+                </span>
+              )}
+              {suggestion && (
+                <span className="ml-1.5 font-semibold" style={{ color: INDIGO }}>
+                  · looks like {suggestion.expense.description} ({suggestion.score}%)
+                </span>
+              )}
+            </p>
+          </div>
+          <div className="text-right shrink-0">
+            <p className="text-sm font-bold text-slate-800">-{formatCurrency(txn.effectiveAmount)}</p>
+            {txn.isSplitwised && txn.savings > 0.5 && <p className="text-xs text-emerald-500">-{formatCurrency(txn.savings)}</p>}
+          </div>
+          {isOpen ? <ChevronUp size={14} className="text-slate-400 shrink-0" /> : <ChevronDown size={14} className="text-slate-400 shrink-0" />}
+        </button>
+        <button onClick={() => onDelete(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
+          <Trash2 size={14} />
+        </button>
+      </div>
+
+      {isOpen && (
+        <div className="border-t border-slate-100 px-3 pb-3 pt-2 space-y-2">
+          {txn.isSplitwised ? (
+            <div className="bg-emerald-50 rounded-xl p-2.5 space-y-1">
+              <p className="text-emerald-600 text-xs font-semibold">✅ Matched to Splitwise</p>
+              <Row label="Expense" value={txn.splitwiseDesc} />
+              {txn.splitwiseDate && <Row label="Date" value={formatShortDate(txn.splitwiseDate)} />}
+              <Row label="Your share" value={formatCurrency(txn.effectiveAmount)} valueClass="text-emerald-600 font-semibold" />
+              <Row label="You save" value={`-${formatCurrency(txn.savings)}`} valueClass="text-emerald-600" />
+              {groupName(txn.groupId) && <Row label="Group" value={groupName(txn.groupId)} />}
+              {!txn.manualOverride && <Row label="Confidence" value={`${txn.matchScore}%`} />}
+            </div>
+          ) : suggestion ? (
+            <div className="rounded-xl p-2.5 space-y-1" style={{ background: '#eef1fb' }}>
+              <p className="text-xs font-semibold flex items-center gap-1" style={{ color: INDIGO }}>
+                <Sparkles size={12} /> Possible match
+              </p>
+              <Row label="Expense" value={suggestion.expense.description} />
+              {suggestion.expense.date && <Row label="Date" value={formatShortDate(suggestion.expense.date)} />}
+              <Row label="Your share" value={formatCurrency(suggestion.expense.myOwedShare)} valueClass="font-semibold" />
+              {groupName(suggestion.expense.group_id) && <Row label="Group" value={groupName(suggestion.expense.group_id)} />}
+              <Row label="Confidence" value={`${suggestion.score}%`} />
+            </div>
+          ) : (
+            <div className="bg-amber-50 rounded-xl p-2.5">
+              <p className="text-amber-600 text-xs">No Splitwise match — full amount counts as personal expense.</p>
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            {txn.isSplitwised ? (
+              <>
+                <button onClick={() => { onUnlink(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
+                  className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-amber-600 border border-amber-200 rounded-xl py-2 hover:bg-amber-50 transition-colors">
+                  <Unlink size={13} /> Unlink
+                </button>
+                <button onClick={() => { onLink(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
+                  className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold border rounded-xl py-2 transition-colors" style={{ color: INDIGO, borderColor: '#c7d2fe' }}>
+                  <Pencil size={13} /> Change link
+                </button>
+              </>
+            ) : suggestion ? (
+              <>
+                <button onClick={() => { onUnlink(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
+                  className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-500 border border-slate-200 rounded-xl py-2 hover:bg-slate-50 transition-colors">
+                  <X size={13} /> Not this
+                </button>
+                <button onClick={() => { onConfirmSuggestion(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
+                  className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-white rounded-xl py-2 transition-colors" style={{ background: INDIGO }}>
+                  <Check size={13} /> Confirm match
+                </button>
+              </>
+            ) : (
+              <>
+                <button onClick={() => { onLink(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
+                  className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold border rounded-xl py-2 transition-colors" style={{ color: INDIGO, borderColor: '#c7d2fe' }}>
+                  <Link2 size={13} /> Link to Splitwise
+                </button>
+                {isOverridden && (
+                  <button onClick={() => onClearOverride(txn)} className="flex items-center justify-center gap-1 text-xs font-semibold text-slate-500 border border-slate-200 rounded-xl px-3 py-2 hover:bg-slate-50 transition-colors">
+                    Auto
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

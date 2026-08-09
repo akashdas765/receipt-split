@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { CloudUpload, AlertCircle, CheckCircle2, Loader2, Equal } from 'lucide-react';
-import { postExpense } from '../services/splitwise';
-import { saveReceipt } from '../services/db';
+import { postExpense, fetchCurrentUser } from '../services/splitwise';
+import { saveReceipt, setTransactionOverride } from '../services/db';
 import { memberColor } from '../utils/memberColor';
 import PageHeader from '../components/PageHeader';
+import TransactionPickerModal from '../components/TransactionPickerModal';
 
 const INDIGO = '#6366f1';
 
@@ -71,6 +72,14 @@ export default function ApprovePage() {
   const [paidAmounts, setPaidAmounts] = useState({});
   const [submitting,  setSubmitting]  = useState(false);
   const [error,       setError]       = useState('');
+  // Set once postExpense succeeds — switches the page into the "match this
+  // to a bank transaction?" step instead of navigating away immediately.
+  const [postedExpense, setPostedExpense] = useState(null);
+  const [myId, setMyId] = useState(null);
+
+  useEffect(() => {
+    fetchCurrentUser().then(u => setMyId(u.id)).catch(() => {});
+  }, []);
 
   const payerIds = Object.keys(paidAmounts);
 
@@ -138,7 +147,10 @@ export default function ApprovePage() {
       if (receiptId) {
         await saveReceipt({ ...state, id: receiptId, approved: true, splitwise_expense_id: expense.id });
       }
-      navigate('/');
+      // Offer to match this to a bank transaction instead of navigating away
+      // immediately — otherwise the receipt and its card charge show up as
+      // two separate unmatched things next time Statements is opened.
+      setPostedExpense(expense);
     } catch (err) {
       setError(err?.message || 'Could not post to Splitwise. Try again.');
     } finally {
@@ -146,7 +158,57 @@ export default function ApprovePage() {
     }
   };
 
+  // txn: the bank transaction picked in TransactionPickerModal. Same
+  // override-field mechanism StatementsPage uses for manual links —
+  // appended (not overwritten) in case that transaction was already linked
+  // to something else, same reasoning as StatementsPage's multi-link support.
+  const handleMatchTransaction = async (txn) => {
+    const myOwedShare = parseFloat(
+      (postedExpense.users || []).find(u => String(u.user_id) === String(myId))?.owed_share || 0
+    );
+    const existingIds  = txn.overrideSplitwiseIds || (txn.overrideSplitwiseId ? [txn.overrideSplitwiseId] : []);
+    const existingData = txn.overrideExpenseDataList || (txn.overrideExpenseData ? [txn.overrideExpenseData] : []);
+    const snapshot = {
+      id:          postedExpense.id,
+      description: postedExpense.description || merchant || 'Receipt',
+      date:        postedExpense.date || null,
+      group_id:    groupId,
+      myOwedShare,
+      cost:        parseFloat(postedExpense.cost != null ? postedExpense.cost : grandTotal),
+    };
+    await setTransactionOverride(txn.id, {
+      overrideSplitwiseIds:    [...existingIds, postedExpense.id],
+      overrideExpenseDataList: [...existingData, snapshot],
+      overrideSplitwiseId:     null,
+      overrideExpenseData:     null,
+      overrideForcedUnmatched: null,
+    });
+    navigate('/');
+  };
+
   if (!state) { navigate('/'); return null; }
+
+  if (postedExpense) {
+    return (
+      <div className="min-h-screen flex flex-col aurora-bg items-center justify-center px-4">
+        <div className="text-center anim-scale-in">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
+            style={{ background: 'linear-gradient(135deg, #d1fae5, #a7f3d0)' }}>
+            <CheckCircle2 size={32} className="text-emerald-600" />
+          </div>
+          <p className="font-extrabold text-slate-800 text-lg mb-1">
+            {existingExpenseId ? 'Expense updated!' : 'Posted to Splitwise!'}
+          </p>
+          <p className="text-sm text-slate-400">Checking for a matching bank transaction…</p>
+        </div>
+        <TransactionPickerModal
+          expense={postedExpense}
+          onSelect={handleMatchTransaction}
+          onSkip={() => navigate('/')}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col aurora-bg">

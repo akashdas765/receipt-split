@@ -7,6 +7,17 @@ const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 // responsiveness matters more than squeezing out extra accuracy.
 const NVIDIA_MODEL = 'meta/llama-3.2-11b-vision-instruct';
 
+// Signup is open, so "has a valid Firebase token" isn't much of a barrier to
+// someone wanting to run arbitrary inference on our Groq/NVIDIA quota. Pin
+// the request to the one model + token budget this app's receipt parser
+// actually uses (see src/services/groq.js's callGroq) so the endpoint can't
+// be repurposed as a general-purpose LLM its billing foots.
+const ALLOWED_MODELS = new Set(['qwen/qwen3.6-27b']);
+const MAX_TOKENS_CAP = 4096;
+// Receipt/statement images are sent inline as base64, so the body is
+// legitimately a few MB — cap generously, only to stop absurd abuse.
+const MAX_BODY_BYTES = 12 * 1024 * 1024;
+
 async function callGroq(apiKey, body) {
   return fetch(GROQ_URL, {
     method: 'POST',
@@ -58,6 +69,28 @@ export async function proxyGroq({ idToken, body }) {
   if (!groqKey) {
     return { status: 500, bodyText: JSON.stringify({ error: 'Server is missing GROQ_API_KEY' }) };
   }
+
+  // Reject anything that isn't the receipt-parser request this app makes:
+  // wrong model, oversized token budget, or an implausibly large body. This
+  // keeps the endpoint from being used as a free general-purpose LLM.
+  if (typeof body === 'string' && Buffer.byteLength(body, 'utf8') > MAX_BODY_BYTES) {
+    return { status: 413, bodyText: JSON.stringify({ error: 'Request body too large' }) };
+  }
+  let parsedBody;
+  try {
+    parsedBody = JSON.parse(body || '{}');
+  } catch {
+    return { status: 400, bodyText: JSON.stringify({ error: 'Invalid JSON body' }) };
+  }
+  if (!ALLOWED_MODELS.has(parsedBody.model)) {
+    return { status: 400, bodyText: JSON.stringify({ error: 'Unsupported model' }) };
+  }
+  if (typeof parsedBody.max_tokens !== 'number' || parsedBody.max_tokens > MAX_TOKENS_CAP) {
+    parsedBody.max_tokens = MAX_TOKENS_CAP;
+  }
+  // Forward the normalized payload rather than the raw body, so the clamp
+  // above actually takes effect (and callNvidia re-parses this same string).
+  body = JSON.stringify(parsedBody);
 
   // A network-level failure reaching Groq (dropped connection, EPIPE on a
   // large image body, DNS blip, ...) must not escape as an uncaught

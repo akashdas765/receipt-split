@@ -14,6 +14,13 @@ import { parseDate } from './statementFormatters';
 // fields — see services/db.js) rather than a separate overrides map keyed
 // by id, so there's one Firestore doc per transaction instead of a second
 // collection just for link state.
+//
+// A transaction can link to MORE THAN ONE Splitwise expense — e.g. a single
+// card charge that got logged as several separate Splitwise expenses
+// because different people paid different chunks of it. overrideSplitwiseIds
+// / overrideExpenseDataList (both arrays) are the current shape; the older
+// singular overrideSplitwiseId / overrideExpenseData are still read as a
+// one-element case so already-linked transactions don't need migrating.
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -81,14 +88,32 @@ function fuzzyDescScore(a, b) {
   return union === 0 ? 0 : common / union;
 }
 
+// Reads the (possibly multi-expense) manual link off a transaction,
+// resolving each id against the live splitwiseExpenses list first and
+// falling back to the locally-stored snapshot (overrideExpenseDataList /
+// overrideExpenseData) for an id that fell outside fetchAllExpenses's
+// date-range window (e.g. an old expense, or one just created this
+// session that hasn't round-tripped through a fresh fetch yet).
+function forcedLinkIds(txn) {
+  return txn.overrideSplitwiseIds || (txn.overrideSplitwiseId ? [txn.overrideSplitwiseId] : []);
+}
+function resolveForcedLinks(txn, splitwiseExpenses) {
+  const ids = forcedLinkIds(txn);
+  if (!ids.length) return [];
+  const snapshots = txn.overrideExpenseDataList || (txn.overrideExpenseData ? [txn.overrideExpenseData] : []);
+  return ids
+    .map(id => splitwiseExpenses.find(e => e.id === id) || snapshots.find(e => e.id === id))
+    .filter(Boolean);
+}
+
 export function matchTransactions(bankTransactions, splitwiseExpenses) {
   const usedExpenses = new Set();
   const result = [];
 
   // Pre-pass: lock in manual overrides so they can't be stolen by auto-match
   for (const txn of bankTransactions) {
-    if (txn.overrideSplitwiseId) {
-      const forced = splitwiseExpenses.find(e => e.id === txn.overrideSplitwiseId);
+    for (const id of forcedLinkIds(txn)) {
+      const forced = splitwiseExpenses.find(e => e.id === id);
       if (forced) usedExpenses.add(forced.id);
     }
   }
@@ -114,22 +139,30 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
       continue;
     }
 
-    // 2. Manual force-matched
-    if (txn.overrideSplitwiseId) {
-      const forced = splitwiseExpenses.find(e => e.id === txn.overrideSplitwiseId) || txn.overrideExpenseData;
-      if (forced) {
+    // 2. Manual force-matched — one or more expenses (see resolveForcedLinks)
+    if (forcedLinkIds(txn).length) {
+      const forcedList = resolveForcedLinks(txn, splitwiseExpenses);
+      if (forcedList.length) {
+        const totalOwed = forcedList.reduce((s, f) => s + (f.myOwedShare || 0), 0);
+        const totalCost = forcedList.reduce((s, f) => s + (parseFloat(f.cost) || 0), 0);
         result.push({
           ...txn,
-          isSplitwised:    true,
-          splitwiseId:     forced.id,
-          splitwiseDesc:   forced.description,
-          matchScore:      100,
-          manualOverride:  true,
-          originalAmount:  txnAmount,
-          effectiveAmount: forced.myOwedShare,
-          savings:         txnAmount - forced.myOwedShare,
-          category:        txn.category || detectCategory(txn.description) || forced.category,
-          groupId:         forced.group_id,
+          isSplitwised:      true,
+          splitwiseId:       forcedList[0].id,
+          splitwiseMatches:  forcedList.map(f => ({
+            id: f.id, description: f.description, date: f.date,
+            cost: parseFloat(f.cost) || 0, myOwedShare: f.myOwedShare || 0, group_id: f.group_id,
+          })),
+          splitwiseDesc:     forcedList.map(f => f.description).join(', '),
+          splitwiseDate:     forcedList[0].date,
+          splitwiseCost:     totalCost,
+          matchScore:        100,
+          manualOverride:    true,
+          originalAmount:    txnAmount,
+          effectiveAmount:   totalOwed,
+          savings:           txnAmount - totalOwed,
+          category:          txn.category || detectCategory(txn.description) || forcedList[0].category,
+          groupId:           forcedList[0].group_id,
         });
         continue;
       }
@@ -143,9 +176,14 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
     // the way a credit card charge does (paychecks, rent, ATM withdrawals,
     // etc. would just produce bogus date/amount coincidences) — left
     // unscored entirely, falling through as a plain unmatched row below.
-    // Manual linking (section 2, overrideSplitwiseId) is unaffected — that
-    // path never reaches here, so "I'll match it manually" still works.
-    for (const exp of (txn.isBankAccount ? [] : splitwiseExpenses)) {
+    // Same for a transaction utils/transferMatcher.js has identified as
+    // money moving between the user's own accounts (transferMatcher's
+    // pairs are never real Splitwise expenses either) — still shown
+    // (relabeled "Transferred from X to Y" by the caller) rather than
+    // hidden, just never scored. Manual linking (section 2,
+    // overrideSplitwiseId) is unaffected — that path never reaches here,
+    // so "I'll match it manually" still works for either case.
+    for (const exp of ((txn.isBankAccount || txn.isTransfer) ? [] : splitwiseExpenses)) {
       if (usedExpenses.has(exp.id)) continue;
       // Only expenses I actually paid toward are plausible matches for a
       // charge on my own card — otherwise a group-mate's expense could get
@@ -182,7 +220,13 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
         ...txn,
         isSplitwised:    true,
         splitwiseId:     bestMatch.id,
+        splitwiseMatches: [{
+          id: bestMatch.id, description: bestMatch.description, date: bestMatch.date,
+          cost: parseFloat(bestMatch.cost || 0), myOwedShare: bestMatch.myOwedShare || 0, group_id: bestMatch.group_id,
+        }],
         splitwiseDesc:   bestMatch.description,
+        splitwiseDate:   bestMatch.date,
+        splitwiseCost:   parseFloat(bestMatch.cost || 0),
         matchScore:      Math.round(bestScore * 100),
         manualOverride:  false,
         originalAmount:  txnAmount,

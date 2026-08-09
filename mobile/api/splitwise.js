@@ -5,7 +5,11 @@ export default async function handler(req, res) {
   // wire format Splitwise expects rather than relying on parser internals.
   const body = req.method === 'POST' ? new URLSearchParams(req.body).toString() : undefined;
 
+  const authHeader = req.headers['authorization'];
+  const idToken    = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
   const { status, bodyText } = await proxySplitwise({
+    idToken,
     swKey:       req.headers['x-splitwise-key'],
     method:      req.method,
     path:        req.query?.path,

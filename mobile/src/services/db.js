@@ -43,7 +43,7 @@ export async function deleteReceipt(id) {
 // "loaded statements" list shown in the Upload tab is derived client-side
 // by grouping on `source`/`sourceName` rather than stored separately.
 
-const TXN_MAX = 1000;
+export const TXN_MAX = 1000;
 
 export async function loadTransactions() {
   try {
@@ -183,6 +183,37 @@ export async function migrateLegacyPlaidConnection() {
     plaid_cursor: null,
     plaid_institution_name: null,
   }, { merge: true });
+}
+
+// ── Non-Plaid account classification (see services/session.js's getAccountType) ──
+// Plaid accounts already carry a bank/credit tag on plaidConnections'
+// accounts[] (see savePlaidConnection above); CSV/PDF/manual transactions
+// have no equivalent entity to hang that tag on, since their `source` is
+// just a string (an upload-batch label, or 'pdf'/'manual'), not a real
+// account id. This gives every non-Plaid `source` string somewhere to store
+// the same kind of tag, keyed by that string directly.
+
+function sourceMetaCol() {
+  return collection(db, 'users', session.getUserId(), 'sourceMeta');
+}
+
+export async function loadSourceMeta() {
+  try {
+    const snap = await getDocs(sourceMetaCol());
+    const map = {};
+    snap.docs.forEach(d => { map[d.id] = d.data(); });
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+export async function saveSourceMeta(sourceId, { accountType, label } = {}) {
+  if (!sourceId) throw new Error('saveSourceMeta requires sourceId');
+  const data = { updatedAt: new Date().toISOString() };
+  if (accountType !== undefined) data.accountType = accountType;
+  if (label       !== undefined) data.label       = label;
+  await setDoc(doc(sourceMetaCol(), sourceId), data, { merge: true });
 }
 
 // ── Manual net-worth accounts (see components/NetWorthDetail.jsx) ──────────

@@ -4,7 +4,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { onAuthChange } from './services/auth';
 import { db } from './services/firebase';
 import { session } from './services/session';
-import { migrateLegacyPlaidConnection, loadPlaidConnections } from './services/db';
+import { migrateLegacyPlaidConnection, loadPlaidConnections, loadSourceMeta } from './services/db';
 import LoginPage   from './pages/LoginPage';
 import SignupPage  from './pages/SignupPage';
 import HomePage    from './pages/HomePage';
@@ -38,10 +38,23 @@ export default function App() {
             const snap = await getDoc(doc(db, 'users', firebaseUser.uid));
             if (snap.exists()) session.setKey(snap.data().splitwise_api_key);
           } catch {}
+          // Split from the block below on purpose: a migration failure here
+          // must not skip loading the connections that already exist post-
+          // migration — they used to share one try/catch, so a thrown
+          // migration silently left every Plaid connection unloaded for the
+          // whole session with no trace (getAccountType/isBankAccountSource
+          // would then wrongly return false for everything).
           try {
             await migrateLegacyPlaidConnection();
+          } catch (err) {
+            console.error('migrateLegacyPlaidConnection failed:', err);
+          }
+          try {
             session.setPlaidConnections(await loadPlaidConnections());
-          } catch {}
+            session.setSourceMeta(await loadSourceMeta());
+          } catch (err) {
+            console.error('Could not load Plaid connections/source metadata:', err);
+          }
         }
         setUser(firebaseUser);
       } else {

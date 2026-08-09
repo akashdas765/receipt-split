@@ -1,13 +1,29 @@
 import { session } from './session';
+import { auth } from './firebase';
 
 // Requests go through our Netlify proxy to avoid Splitwise CORS restrictions
 const PROXY = '/.netlify/functions/splitwise';
 
-const swFetch = (path, opts = {}) =>
-  fetch(`${PROXY}?path=${encodeURIComponent(path)}`, {
+const swFetch = async (path, opts = {}) => {
+  // The proxy requires a valid Firebase ID token so it can't be driven as an
+  // anonymous relay. getIdToken() can throw in restricted WebKit contexts
+  // (installed iOS PWA storage partitioning) — fall back to no token and let
+  // the proxy return a clear 401 rather than leaking a cryptic WebKit error.
+  let idToken;
+  try {
+    idToken = await auth.currentUser?.getIdToken();
+  } catch {
+    idToken = null;
+  }
+  return fetch(`${PROXY}?path=${encodeURIComponent(path)}`, {
     ...opts,
-    headers: { 'x-splitwise-key': session.getKey(), ...(opts.headers || {}) },
+    headers: {
+      'x-splitwise-key': session.getKey(),
+      ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      ...(opts.headers || {}),
+    },
   });
+};
 
 function displayNames(members) {
   const counts = {};
@@ -40,12 +56,16 @@ export async function fetchGroups() {
 }
 
 // Used to identify which Splitwise member id is "me" so we can pull out the
-// user's own share from a receipt's stored personTotals.
+// user's own share from a receipt's stored personTotals. lastName is
+// additionally used by utils/transferMatcher.js to recognize a self-
+// transfer whose description names the person, not the account (e.g. a
+// Zelle payment "from Akash Das" showing up as a credit on a different
+// bank than the one the money actually left).
 export async function fetchCurrentUser() {
   const res  = await swFetch('/get_current_user');
   const data = await res.json();
   if (!res.ok || data?.error) throw new Error(data?.error || 'Could not load your Splitwise profile.');
-  return { id: String(data.user.id), name: data.user.first_name };
+  return { id: String(data.user.id), name: data.user.first_name, lastName: data.user.last_name || '' };
 }
 
 // Your overall Splitwise position, live from Splitwise's own per-friend
@@ -105,6 +125,15 @@ export async function fetchAllExpenses(myId, { datedAfter, datedBefore, groupId 
         myPaidShare:   parseFloat(userShare?.paid_share  || 0),
         myOwedShare:   parseFloat(userShare?.owed_share  || 0),
         myNetBalance:  parseFloat(userShare?.net_balance || 0),
+        // Full per-member breakdown (not just the current user's own
+        // share) — used by SplitwiseExpenseDetail's view-only detail sheet
+        // to show who else is on the expense and what they paid/owe.
+        splits: (e.users || []).map(u => ({
+          id:         u.user_id,
+          name:       [u.user?.first_name, u.user?.last_name].filter(Boolean).join(' ') || 'Someone',
+          paidShare:  parseFloat(u.paid_share || 0),
+          owedShare:  parseFloat(u.owed_share || 0),
+        })),
       };
     });
 

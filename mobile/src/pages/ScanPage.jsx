@@ -39,7 +39,10 @@ async function pdfPageToBase64(file) {
   const render = async () => {
     const pdfjsLib = await loadPdfjs();
     const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    // isEvalSupported:false closes CVE-2024-4367 — a crafted PDF could
+    // otherwise run arbitrary JS through pdf.js's font path. Users upload
+    // untrusted PDFs here, so this must stay off.
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer, isEvalSupported: false }).promise;
     try {
       const page = await pdf.getPage(1);
 

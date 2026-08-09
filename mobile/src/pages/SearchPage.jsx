@@ -96,7 +96,7 @@ export default function SearchPage() {
 
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
-      <PageHeader title="Search" onBack={() => navigate('/')} />
+      <PageHeader title="Search" showBack={false} />
 
       <main className="flex-1">
         <div className="max-w-2xl mx-auto px-4 py-4 pb-24 space-y-4">

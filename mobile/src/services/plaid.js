@@ -127,9 +127,22 @@ export async function syncTransactions(accessToken, cursor) {
     .map(t => {
       const desc = t.merchant_name || t.name || 'Unknown';
       const isCredit = (t.amount || 0) < 0;
+      // Plaid's `date` becomes the POSTED date once a transaction clears —
+      // for a card swipe that can land several days after you actually
+      // spent the money. `authorized_date` is the date the purchase itself
+      // happened, so it's used as the primary date (filtering, sorting,
+      // display) with the posted date kept alongside for the expanded
+      // detail view. authorized_date is null for some pending/older
+      // transactions, hence the fallback.
+      const date = t.authorized_date || t.date;
       return {
         id:          `plaid-${t.transaction_id}`,
-        date:        t.date,
+        date,
+        // Firestore rejects `undefined` field values outright, so the key
+        // is omitted entirely rather than set to undefined when there's no
+        // separate posted date to show (authorized_date missing, or the
+        // two happen to be the same day).
+        ...(t.date && t.date !== date ? { postedDate: t.date } : {}),
         description: desc,
         amount:      Math.abs(t.amount || 0),
         category:    detectCategory(desc),

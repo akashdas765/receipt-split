@@ -238,6 +238,12 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
 
       {isOpen && (
         <div className="border-t border-slate-100 px-3 pb-3 pt-2 space-y-2">
+          {txn.postedDate && (
+            <div className="flex justify-between text-xs px-0.5">
+              <span className="text-slate-400">Posted</span>
+              <span className="text-slate-500">{formatShortDate(txn.postedDate)}</span>
+            </div>
+          )}
           {txn.isTransfer ? (
             <div className="rounded-xl p-2.5" style={{ background: '#eef1fb' }}>
               <p className="text-xs flex items-center gap-1.5" style={{ color: INDIGO }}>

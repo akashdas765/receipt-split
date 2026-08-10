@@ -50,17 +50,17 @@ export default function StatementsReports({ matched, splitwiseOwed, personalTota
   return (
     <div className="space-y-4">
       {/* Total spend banner */}
-      <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Total spend — {monthRange.label}</p>
-        <p className="text-3xl font-extrabold text-slate-800">{formatCurrency(totalSpend)}</p>
-        <p className="text-xs text-slate-400 mt-1">
+      <div className="bg-surface rounded-2xl p-4 border border-edge shadow-sm">
+        <p className="text-xs font-bold text-subtle uppercase tracking-wide mb-1">Total spend — {monthRange.label}</p>
+        <p className="text-3xl font-extrabold text-ink">{formatCurrency(totalSpend)}</p>
+        <p className="text-xs text-subtle mt-1">
           {formatCurrency(splitwiseOwed)} splits + {formatCurrency(personalTotal)} personal
         </p>
       </div>
 
       {/* Split vs personal */}
-      <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
-        <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Split vs personal</p>
+      <div className="bg-surface rounded-2xl p-4 border border-edge shadow-sm">
+        <p className="text-xs font-bold text-muted uppercase tracking-wide mb-3">Split vs personal</p>
         <div className="space-y-3.5">
           {comparisonData.map(({ name, value, color }) => {
             const max = Math.max(...comparisonData.map(d => d.value), 1);
@@ -69,13 +69,13 @@ export default function StatementsReports({ matched, splitwiseOwed, personalTota
             return (
               <div key={name}>
                 <div className="flex justify-between text-xs mb-1.5">
-                  <span className="text-slate-500">{name}</span>
+                  <span className="text-muted">{name}</span>
                   <div className="flex items-center gap-2">
-                    {pctOfTotal !== null && <span className="text-slate-400">{pctOfTotal}%</span>}
-                    <span className="font-bold text-slate-800">{formatCurrency(value)}</span>
+                    {pctOfTotal !== null && <span className="text-subtle">{pctOfTotal}%</span>}
+                    <span className="font-bold text-ink">{formatCurrency(value)}</span>
                   </div>
                 </div>
-                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div className="h-2 bg-surface-alt rounded-full overflow-hidden">
                   <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: color }} />
                 </div>
               </div>
@@ -85,10 +85,10 @@ export default function StatementsReports({ matched, splitwiseOwed, personalTota
       </div>
 
       {/* Category breakdown */}
-      <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
+      <div className="bg-surface rounded-2xl p-4 border border-edge shadow-sm">
         <div className="flex items-baseline justify-between mb-3">
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">By category</p>
-          <span className="text-xs text-slate-400">{formatCurrency(categoryTotal)} total</span>
+          <p className="text-xs font-bold text-muted uppercase tracking-wide">By category</p>
+          <span className="text-xs text-subtle">{formatCurrency(categoryTotal)} total</span>
         </div>
         {categoryData.length > 0 ? (
           <div className="space-y-2.5">
@@ -99,11 +99,11 @@ export default function StatementsReports({ matched, splitwiseOwed, personalTota
                 <div key={cat}>
                   <div className="flex items-center gap-2 mb-1">
                     <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: getCategoryColor(cat) }} />
-                    <span className="text-slate-600 text-xs flex-1">{getCategoryIcon(cat)} {cat}</span>
-                    <span className="text-slate-400 text-xs w-8 text-right">{pct}%</span>
-                    <span className="text-slate-800 text-xs font-semibold w-16 text-right">{formatCurrency(total)}</span>
+                    <span className="text-muted text-xs flex-1">{getCategoryIcon(cat)} {cat}</span>
+                    <span className="text-subtle text-xs w-8 text-right">{pct}%</span>
+                    <span className="text-ink text-xs font-semibold w-16 text-right">{formatCurrency(total)}</span>
                   </div>
-                  <div className="ml-4 h-1 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="ml-4 h-1 bg-surface-alt rounded-full overflow-hidden">
                     <div className="h-full rounded-full transition-all duration-500" style={{ width: `${barPct}%`, background: getCategoryColor(cat) }} />
                   </div>
                 </div>
@@ -111,13 +111,13 @@ export default function StatementsReports({ matched, splitwiseOwed, personalTota
             })}
           </div>
         ) : (
-          <p className="text-slate-400 text-sm text-center py-6">No expense data yet</p>
+          <p className="text-subtle text-sm text-center py-6">No expense data yet</p>
         )}
       </div>
 
       {/* Weekly trend */}
-      <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
-        <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Weekly spending</p>
+      <div className="bg-surface rounded-2xl p-4 border border-edge shadow-sm">
+        <p className="text-xs font-bold text-muted uppercase tracking-wide mb-3">Weekly spending</p>
         {weeklyData.length > 0 ? (
           <div className="flex items-end gap-3 h-32">
             {weeklyData.map(w => {
@@ -128,26 +128,26 @@ export default function StatementsReports({ matched, splitwiseOwed, personalTota
                     <div style={{ height: `${w.split + w.personal > 0 ? (w.personal / (w.split + w.personal)) * 100 : 0}%`, background: ORANGE }} />
                     <div style={{ height: `${w.split + w.personal > 0 ? (w.split / (w.split + w.personal)) * 100 : 0}%`, background: INDIGO }} />
                   </div>
-                  <span className="text-[10px] text-slate-400 font-semibold">{w.week}</span>
+                  <span className="text-[10px] text-subtle font-semibold">{w.week}</span>
                 </div>
               );
             })}
           </div>
         ) : (
-          <p className="text-slate-400 text-sm text-center py-6">No transaction data yet</p>
+          <p className="text-subtle text-sm text-center py-6">No transaction data yet</p>
         )}
-        <div className="flex items-center gap-3 text-xs text-slate-400 mt-3">
+        <div className="flex items-center gap-3 text-xs text-subtle mt-3">
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm inline-block" style={{ background: INDIGO }} />Split</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm inline-block" style={{ background: ORANGE }} />Personal</span>
         </div>
       </div>
 
       {/* Savings insight */}
-      <div className="rounded-2xl p-4 border border-emerald-100" style={{ background: 'linear-gradient(135deg, #ecfdf5, #f0fdfa)' }}>
+      <div className="rounded-2xl p-4 border border-emerald-100 tint-emerald-card">
         <p className="text-emerald-600 font-bold text-sm mb-2">💰 Savings insight</p>
-        <p className="text-2xl font-extrabold text-slate-800">{formatCurrency(realSavings)}</p>
-        <p className="text-xs text-slate-500 mt-1">saved in {monthRange.label} via Splitwise — only your fair share counted.</p>
-        <p className="text-xs text-slate-400 mt-2">{matchedCount} of {bankCount} bank transactions matched to Splitwise</p>
+        <p className="text-2xl font-extrabold text-ink">{formatCurrency(realSavings)}</p>
+        <p className="text-xs text-muted mt-1">saved in {monthRange.label} via Splitwise — only your fair share counted.</p>
+        <p className="text-xs text-subtle mt-2">{matchedCount} of {bankCount} bank transactions matched to Splitwise</p>
       </div>
     </div>
   );

@@ -192,14 +192,13 @@ export default function ApprovePage() {
     return (
       <div className="min-h-screen flex flex-col aurora-bg items-center justify-center px-4">
         <div className="text-center anim-scale-in">
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
-            style={{ background: 'linear-gradient(135deg, #d1fae5, #a7f3d0)' }}>
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 tint-emerald-badge">
             <CheckCircle2 size={32} className="text-emerald-600" />
           </div>
-          <p className="font-extrabold text-slate-800 text-lg mb-1">
+          <p className="font-extrabold text-ink text-lg mb-1">
             {existingExpenseId ? 'Expense updated!' : 'Posted to Splitwise!'}
           </p>
-          <p className="text-sm text-slate-400">Checking for a matching bank transaction…</p>
+          <p className="text-sm text-subtle">Checking for a matching bank transaction…</p>
         </div>
         <TransactionPickerModal
           expense={postedExpense}
@@ -219,36 +218,35 @@ export default function ApprovePage() {
         <div className="max-w-2xl mx-auto px-4 py-4 pb-28 space-y-5">
 
           {/* Total card */}
-          <div className="bg-white rounded-3xl p-6 flex flex-col items-center border border-slate-100 shadow-sm anim-scale-in"
+          <div className="bg-surface rounded-3xl p-6 flex flex-col items-center border border-edge shadow-sm anim-scale-in"
             style={{ boxShadow: '0 16px 40px rgba(99,102,241,0.10)' }}>
-            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3 anim-float"
-              style={{ background: 'linear-gradient(135deg, #e0e7ff, #ede9fe)' }}>
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3 anim-float tint-indigo-badge">
               <CloudUpload size={26} style={{ color: INDIGO }} />
             </div>
-            <p className="font-bold text-slate-600 text-sm mb-1">{merchant || 'Receipt'}</p>
+            <p className="font-bold text-muted text-sm mb-1">{merchant || 'Receipt'}</p>
             <p className="font-extrabold text-4xl mb-1 text-gradient">${grandTotal.toFixed(2)}</p>
-            <p className="text-xs text-slate-400">Total including tax</p>
+            <p className="text-xs text-subtle">Total including tax</p>
           </div>
 
           {/* Split breakdown */}
           <div className="anim-fade-up delay-1">
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Split breakdown</p>
+            <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">Split breakdown</p>
             {membersWithAmounts.length === 0 ? (
-              <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex items-center gap-3">
-                <AlertCircle size={18} className="text-slate-300 shrink-0" />
-                <p className="text-sm text-slate-400">No items assigned — go back and assign members to items.</p>
+              <div className="bg-surface rounded-2xl p-4 border border-edge shadow-sm flex items-center gap-3">
+                <AlertCircle size={18} className="text-subtle shrink-0" />
+                <p className="text-sm text-subtle">No items assigned — go back and assign members to items.</p>
               </div>
             ) : (
               <div className="flex flex-col gap-2 stagger">
                 {membersWithAmounts.map(m => {
                   const color = memberColor(m.id, members);
                   return (
-                    <div key={m.id} className="bg-white rounded-xl px-4 py-3 flex items-center gap-3 border border-slate-100 shadow-sm anim-fade-up card-lift">
+                    <div key={m.id} className="bg-surface rounded-xl px-4 py-3 flex items-center gap-3 border border-edge shadow-sm anim-fade-up card-lift">
                       <div className="w-9 h-9 rounded-full flex items-center justify-center text-white font-extrabold text-sm shrink-0"
                         style={{ background: color }}>
                         {m.name?.[0]?.toUpperCase()}
                       </div>
-                      <span className="flex-1 font-semibold text-sm text-slate-700">{m.name}</span>
+                      <span className="flex-1 font-semibold text-sm text-ink">{m.name}</span>
                       <span className="font-extrabold text-base" style={{ color }}>${m.amount.toFixed(2)}</span>
                     </div>
                   );
@@ -259,7 +257,7 @@ export default function ApprovePage() {
 
           {/* Who paid */}
           <div className="anim-fade-up delay-2">
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Who paid?</p>
+            <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">Who paid?</p>
             <div className="flex flex-wrap gap-2">
               {members.map(m => {
                 const mid      = String(m.id);
@@ -287,7 +285,7 @@ export default function ApprovePage() {
           {payerIds.length > 0 && (
             <div className="anim-fade-up">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Payment split</p>
+                <p className="text-xs font-bold text-muted uppercase tracking-wide">Payment split</p>
                 {payerIds.length > 1 && (
                   <button onClick={resetEqual}
                     className="flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-lg transition-colors hover:bg-indigo-50"
@@ -297,27 +295,27 @@ export default function ApprovePage() {
                 )}
               </div>
 
-              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+              <div className="bg-surface rounded-2xl border border-edge shadow-sm overflow-hidden">
                 {payerIds.map((mid, idx) => {
                   const m     = members.find(m => String(m.id) === mid);
                   const color = memberColor(mid, members);
                   return (
                     <div key={mid}
-                      className={`flex items-center gap-3 px-4 py-3 ${idx < payerIds.length - 1 ? 'border-b border-slate-100' : ''}`}>
+                      className={`flex items-center gap-3 px-4 py-3 ${idx < payerIds.length - 1 ? 'border-b border-edge' : ''}`}>
                       <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-extrabold text-xs shrink-0"
                         style={{ background: color }}>
                         {m?.name?.[0]?.toUpperCase()}
                       </div>
-                      <span className="flex-1 font-semibold text-sm text-slate-700">{m?.name}</span>
-                      <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
-                        <span className="text-xs text-slate-400 font-semibold">$</span>
+                      <span className="flex-1 font-semibold text-sm text-ink">{m?.name}</span>
+                      <div className="flex items-center gap-1 bg-surface-alt border border-edge rounded-lg px-2 py-1.5">
+                        <span className="text-xs text-subtle font-semibold">$</span>
                         <input
                           type="number"
                           min="0"
                           step="0.01"
                           value={paidAmounts[mid]}
                           onChange={e => updateAmount(mid, e.target.value)}
-                          className="w-20 text-sm font-bold text-slate-800 bg-transparent outline-none text-right"
+                          className="w-20 text-sm font-bold text-ink bg-transparent outline-none text-right"
                         />
                       </div>
                     </div>

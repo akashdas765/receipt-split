@@ -4,6 +4,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { session } from './session';
+import { fetchCurrentUser } from './splitwise';
 import { isPaymentTransaction, isCreditConfirmation } from '../utils/paymentDetector';
 
 function receiptsCol() {
@@ -247,4 +248,23 @@ export async function saveManualAccount({ id, name, balance, type }) {
 
 export async function deleteManualAccount(id) {
   await deleteDoc(doc(manualAccountsCol(), id));
+}
+
+// ── Splitwise key rotation (see components/SettingsPage.jsx) ───────────────
+// signup() writes the key once and never again — this is the only update
+// path. Every Splitwise call reads the key from the session singleton (see
+// services/splitwise.js's swFetch), not a parameter, so validating a
+// candidate key means temporarily swapping it into session, probing with
+// fetchCurrentUser, and rolling back on failure — that way a bad paste
+// never gets written to Firestore or left live in session.
+export async function updateSplitwiseKey(key) {
+  const previous = session.getKey();
+  session.setKey(key);
+  try {
+    await fetchCurrentUser();
+  } catch {
+    session.setKey(previous);
+    throw new Error('Could not verify this Splitwise API key — check that it was copied correctly.');
+  }
+  await setDoc(doc(db, 'users', session.getUserId()), { splitwise_api_key: key }, { merge: true });
 }

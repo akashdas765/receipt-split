@@ -22,7 +22,7 @@ export default function PageHeader({ title, onBack, showBack = true, children })
         {showBack && (
           <button
             onClick={() => (onBack ? onBack() : navigate(-1))}
-            className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-600 btn-press shrink-0"
+            className="p-1.5 rounded-lg hover:bg-surface-alt transition-colors text-muted btn-press shrink-0"
           >
             <ArrowLeft size={20} />
           </button>
@@ -30,7 +30,7 @@ export default function PageHeader({ title, onBack, showBack = true, children })
         <div className="w-7 h-7 rounded-lg flex items-center justify-center logo-glow shrink-0">
           <Receipt size={15} color="#fff" />
         </div>
-        <span className="font-extrabold text-slate-800 flex-1 truncate">{title}</span>
+        <span className="font-extrabold text-ink flex-1 truncate">{title}</span>
         {children}
       </div>
     </header>

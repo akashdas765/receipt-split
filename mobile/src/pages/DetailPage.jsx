@@ -194,21 +194,21 @@ export default function DetailPage() {
       {showBreakdown && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4 anim-fade-in"
           onClick={() => setShowBreakdown(false)}>
-          <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl anim-sheet-up" onClick={e => e.stopPropagation()}>
+          <div className="bg-surface rounded-3xl p-6 w-full max-w-sm shadow-2xl anim-sheet-up" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-extrabold text-slate-800 text-base">Total Breakdown</h3>
-              <button onClick={() => setShowBreakdown(false)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+              <h3 className="font-extrabold text-ink text-base">Total Breakdown</h3>
+              <button onClick={() => setShowBreakdown(false)} className="text-subtle hover:text-muted"><X size={18} /></button>
             </div>
-            <div className="flex justify-between py-3 border-b border-slate-100">
-              <span className="text-sm text-slate-500">Subtotal (before tax)</span>
-              <span className="font-bold text-slate-800">${subtotalBeforeTax().toFixed(2)}</span>
+            <div className="flex justify-between py-3 border-b border-edge">
+              <span className="text-sm text-muted">Subtotal (before tax)</span>
+              <span className="font-bold text-ink">${subtotalBeforeTax().toFixed(2)}</span>
             </div>
-            <div className="flex justify-between py-3 border-b border-slate-100">
-              <span className="text-sm text-slate-500">Tax ({taxRate}%)</span>
+            <div className="flex justify-between py-3 border-b border-edge">
+              <span className="text-sm text-muted">Tax ({taxRate}%)</span>
               <span className="font-bold text-amber-500">+${totalTaxAmount().toFixed(2)}</span>
             </div>
             <div className="flex justify-between pt-3">
-              <span className="font-extrabold text-slate-800">Total after tax</span>
+              <span className="font-extrabold text-ink">Total after tax</span>
               <span className="font-extrabold text-xl" style={{ color: INDIGO }}>${grandTotal().toFixed(2)}</span>
             </div>
           </div>
@@ -239,14 +239,14 @@ export default function DetailPage() {
             {[
               { label: 'Merchant', icon: Store, content: (
                 <input value={merchant} onChange={e => setMerchant(e.target.value)}
-                  placeholder="Enter merchant" className="w-full text-sm font-bold text-slate-800 bg-transparent outline-none border-b border-slate-200 pb-0.5 placeholder-slate-300" />
+                  placeholder="Enter merchant" className="w-full text-sm font-bold text-ink bg-transparent outline-none border-b border-edge pb-0.5 placeholder-slate-300" />
               )},
               { label: 'Date', icon: Calendar, content: (
                 <input value={date} onChange={e => setDate(e.target.value)}
-                  placeholder="YYYY-MM-DD" className="w-full text-sm font-bold text-slate-800 bg-transparent outline-none border-b border-slate-200 pb-0.5 placeholder-slate-300" />
+                  placeholder="YYYY-MM-DD" className="w-full text-sm font-bold text-ink bg-transparent outline-none border-b border-edge pb-0.5 placeholder-slate-300" />
               )},
               { label: 'Items', icon: List, content: (
-                <p className="text-lg font-extrabold text-slate-800">{items.length}</p>
+                <p className="text-lg font-extrabold text-ink">{items.length}</p>
               )},
               { label: 'Total', icon: DollarSign, tappable: true, content: (
                 <p className="text-lg font-extrabold" style={{ color: INDIGO }}>${grandTotal().toFixed(2)}</p>
@@ -255,10 +255,10 @@ export default function DetailPage() {
               const Tag = tappable ? 'button' : 'div';
               return (
                 <Tag key={label} onClick={tappable ? () => setShowBreakdown(true) : undefined}
-                  className={`bg-white rounded-2xl p-3 border text-left anim-fade-up ${tappable ? 'border-indigo-100 hover:bg-indigo-50/50 cursor-pointer card-lift' : 'border-slate-100'} shadow-sm`}>
+                  className={`bg-surface rounded-2xl p-3 border text-left anim-fade-up ${tappable ? 'border-indigo-100 hover:bg-indigo-50/50 cursor-pointer card-lift' : 'border-edge'} shadow-sm`}>
                   <div className="flex items-center gap-1.5 mb-2">
                     <Icon size={13} style={{ color: INDIGO }} />
-                    <span className="text-xs font-semibold text-slate-400">{label}{tappable ? ' ↗' : ''}</span>
+                    <span className="text-xs font-semibold text-subtle">{label}{tappable ? ' ↗' : ''}</span>
                   </div>
                   {content}
                 </Tag>
@@ -268,7 +268,7 @@ export default function DetailPage() {
 
           {/* Group selector */}
           <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Splitwise Group</p>
+            <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">Splitwise Group</p>
             {loading ? (
               <div className="h-11 w-full rounded-xl skeleton" />
             ) : (
@@ -276,7 +276,7 @@ export default function DetailPage() {
                 <select
                   value={selectedGroup ?? ''}
                   onChange={e => switchGroup(Number(e.target.value))}
-                  className="w-full appearance-none bg-white border-2 rounded-xl px-4 py-2.5 pr-10 text-sm font-semibold text-slate-700 outline-none transition-colors cursor-pointer"
+                  className="w-full appearance-none bg-surface border-2 rounded-xl px-4 py-2.5 pr-10 text-sm font-semibold text-ink outline-none transition-colors cursor-pointer"
                   style={{ borderColor: INDIGO }}
                 >
                   {groups.map(g => (
@@ -290,20 +290,20 @@ export default function DetailPage() {
 
           {/* Tax + Grocery */}
           <div className="flex items-center gap-3">
-            <div className="flex-1 flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2.5">
-              <span className="text-slate-400 text-xs font-semibold">Tax %</span>
+            <div className="flex-1 flex items-center gap-2 bg-surface border border-edge rounded-xl px-3 py-2.5">
+              <span className="text-subtle text-xs font-semibold">Tax %</span>
               <input type="number" value={taxRate} onChange={e => setTaxRate(e.target.value)}
                 min="0" max="100" step="0.1"
-                className="flex-1 text-sm font-bold text-slate-800 bg-transparent outline-none" />
+                className="flex-1 text-sm font-bold text-ink bg-transparent outline-none" />
             </div>
-            <label className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2.5 cursor-pointer select-none">
-              <span className="text-xs font-semibold text-slate-500">Grocery</span>
+            <label className="flex items-center gap-2 bg-surface border border-edge rounded-xl px-3 py-2.5 cursor-pointer select-none">
+              <span className="text-xs font-semibold text-muted">Grocery</span>
               <div
                 onClick={() => setIsGrocery(v => !v)}
-                className={`relative w-9 h-5 rounded-full transition-colors ${isGrocery ? '' : 'bg-slate-200'}`}
+                className={`relative w-9 h-5 rounded-full transition-colors ${isGrocery ? '' : 'bg-surface-alt'}`}
                 style={isGrocery ? { background: EMERALD } : {}}
               >
-                <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${isGrocery ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                <div className={`absolute top-0.5 w-4 h-4 bg-surface rounded-full shadow transition-transform ${isGrocery ? 'translate-x-4' : 'translate-x-0.5'}`} />
               </div>
             </label>
           </div>
@@ -311,7 +311,7 @@ export default function DetailPage() {
           {/* Items */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Items</p>
+              <p className="text-xs font-bold text-muted uppercase tracking-wide">Items</p>
               <button onClick={addItem}
                 className="flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors hover:bg-indigo-50"
                 style={{ color: INDIGO }}>
@@ -329,12 +329,12 @@ export default function DetailPage() {
                 const catOpen    = openCat === item.id;
 
                 return (
-                  <div key={item.id} id={`item-${item.id}`} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm anim-fade-up">
+                  <div key={item.id} id={`item-${item.id}`} className="bg-surface rounded-2xl p-4 border border-edge shadow-sm anim-fade-up">
                     {/* Name + delete */}
                     <div className="flex items-center gap-2 mb-3">
                       <input value={item.description} onChange={e => updateItem(item.id, 'description', e.target.value)}
                         placeholder="Item name"
-                        className="flex-1 font-bold text-sm text-slate-800 bg-transparent outline-none border-b border-slate-200 pb-0.5 placeholder-slate-300" />
+                        className="flex-1 font-bold text-sm text-ink bg-transparent outline-none border-b border-edge pb-0.5 placeholder-slate-300" />
                       <button onClick={() => deleteItem(item.id)} className="p-1 text-red-300 hover:text-red-500 transition-colors shrink-0">
                         <Trash2 size={16} />
                       </button>
@@ -342,24 +342,24 @@ export default function DetailPage() {
 
                     {/* Qty × Price = Total + Tax badge */}
                     <div className="flex items-center gap-2 mb-3 flex-wrap">
-                      <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
-                        <span className="text-xs text-slate-400 font-semibold">Qty</span>
+                      <div className="flex items-center gap-1 bg-surface-alt border border-edge rounded-lg px-2 py-1">
+                        <span className="text-xs text-subtle font-semibold">Qty</span>
                         <input type="number" value={item.quantity} min="0"
                           onChange={e => updateItem(item.id, 'quantity', e.target.value === '' ? '0' : e.target.value)}
                           onBlur={() => { if (!parseFloat(item.quantity)) updateItem(item.id, 'quantity', 1); }}
-                          className="w-10 text-sm font-bold text-slate-800 bg-transparent outline-none text-center" />
+                          className="w-10 text-sm font-bold text-ink bg-transparent outline-none text-center" />
                       </div>
-                      <span className="text-slate-300 font-bold text-sm">×</span>
-                      <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
-                        <span className="text-xs text-slate-400 font-semibold">$</span>
+                      <span className="text-subtle font-bold text-sm">×</span>
+                      <div className="flex items-center gap-1 bg-surface-alt border border-edge rounded-lg px-2 py-1">
+                        <span className="text-xs text-subtle font-semibold">$</span>
                         <input type="number" value={item.unit_price} min="0" step="0.01"
                           onChange={e => updateItem(item.id, 'unit_price', e.target.value)}
-                          className="w-16 text-sm font-bold text-slate-800 bg-transparent outline-none text-center" />
+                          className="w-16 text-sm font-bold text-ink bg-transparent outline-none text-center" />
                       </div>
-                      <span className="text-slate-300 font-bold text-sm">=</span>
-                      <span className="font-extrabold text-sm text-slate-800">${lineTotal.toFixed(2)}</span>
+                      <span className="text-subtle font-bold text-sm">=</span>
+                      <span className="font-extrabold text-sm text-ink">${lineTotal.toFixed(2)}</span>
                       <button onClick={() => toggleTaxExempt(item.id)}
-                        className={`ml-auto text-xs font-bold px-2 py-0.5 rounded-lg ${item.tax_exempt ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
+                        className={`ml-auto text-xs font-bold px-2 py-0.5 rounded-lg ${item.tax_exempt ? 'bg-emerald-100 text-emerald-600' : 'bg-surface-alt text-muted'}`}>
                         {item.tax_exempt ? 'Tax-free' : 'Taxed'}
                       </button>
                     </div>
@@ -368,17 +368,17 @@ export default function DetailPage() {
                     <div className="relative inline-block mb-3">
                       <button
                         onClick={e => { e.stopPropagation(); setOpenCat(catOpen ? null : item.id); }}
-                        className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 border border-slate-200 bg-slate-50 rounded-lg px-2.5 py-1 hover:border-indigo-200 transition-colors"
+                        className="flex items-center gap-1.5 text-xs font-semibold text-muted border border-edge bg-surface-alt rounded-lg px-2.5 py-1 hover:border-indigo-200 transition-colors"
                       >
                         {(item.category || 'other').charAt(0).toUpperCase() + (item.category || 'other').slice(1)}
                         <ChevronDown size={12} />
                       </button>
                       {catOpen && (
-                        <div className="absolute top-full mt-1 left-0 z-30 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden min-w-[130px] anim-scale-in origin-top-left">
+                        <div className="absolute top-full mt-1 left-0 z-30 bg-surface border border-edge rounded-xl shadow-lg overflow-hidden min-w-[130px] anim-scale-in origin-top-left">
                           {CATS.map(cat => (
                             <button key={cat} onClick={() => { updateItem(item.id, 'category', cat); setOpenCat(null); }}
                               className={`w-full text-left px-3 py-2 text-sm transition-colors flex items-center justify-between
-                                ${item.category === cat ? 'font-bold bg-indigo-50' : 'text-slate-600 hover:bg-slate-50'}`}
+                                ${item.category === cat ? 'font-bold bg-indigo-50' : 'text-muted hover:bg-surface-alt'}`}
                               style={item.category === cat ? { color: INDIGO } : {}}>
                               {cat.charAt(0).toUpperCase() + cat.slice(1)}
                               {item.category === cat && <CheckCircle2 size={14} style={{ color: INDIGO }} />}
@@ -391,20 +391,20 @@ export default function DetailPage() {
                     {/* Split mode toggle (only meaningful for qty > 1) */}
                     {Math.round(parseFloat(item.quantity) || 1) > 1 && (
                       <button onClick={() => toggleSplitMode(item.id)}
-                        className="mb-2 text-xs font-bold px-2.5 py-1 rounded-lg transition-colors hover:bg-indigo-100"
-                        style={{ background: '#eef1fb', color: INDIGO }}>
+                        className="mb-2 text-xs font-bold px-2.5 py-1 rounded-lg transition-colors hover:bg-indigo-100 tint-indigo-flat"
+                        style={{ color: INDIGO }}>
                         {item.split_mode === 'unit' ? 'Whole item' : 'Split per unit'}
                       </button>
                     )}
 
                     {item.split_mode === 'unit' ? (
                       /* Per-unit member pills — each of the `quantity` units gets its own split */
-                      <div className="flex flex-col gap-2.5 pl-3 border-l-2 border-slate-100">
+                      <div className="flex flex-col gap-2.5 pl-3 border-l-2 border-edge">
                         {item.unit_shares.map((u, unitIdx) => {
                           const unitAssignedIds = Object.keys(u).filter(id => u[id] > 0);
                           return (
                             <div key={unitIdx}>
-                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-1">Unit {unitIdx + 1}</p>
+                              <p className="text-[11px] font-bold text-subtle uppercase tracking-wide mb-1">Unit {unitIdx + 1}</p>
                               <div className="flex flex-wrap gap-1.5">
                                 {members.map(m => {
                                   const mid         = String(m.id);

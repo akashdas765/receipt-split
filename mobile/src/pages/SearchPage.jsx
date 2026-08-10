@@ -108,16 +108,16 @@ export default function SearchPage() {
           )}
 
           <div className="relative">
-            <SearchIcon size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <SearchIcon size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-subtle" />
             <input
               autoFocus
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="Search receipts, Splitwise, bank transactions…"
-              className="w-full bg-white border border-slate-200 rounded-2xl pl-10 pr-9 py-3 text-sm text-slate-800 outline-none focus:border-indigo-300 shadow-sm"
+              className="w-full bg-surface border border-edge rounded-2xl pl-10 pr-9 py-3 text-sm text-ink outline-none focus:border-indigo-300 shadow-sm"
             />
             {query && (
-              <button onClick={() => setQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+              <button onClick={() => setQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-subtle hover:text-muted">
                 <X size={16} />
               </button>
             )}
@@ -132,20 +132,20 @@ export default function SearchPage() {
               <div className="w-20 h-20 rounded-3xl bg-indigo-50 flex items-center justify-center mb-4 anim-float">
                 <SearchIcon size={32} style={{ color: '#a5b4fc' }} />
               </div>
-              <h2 className="text-lg font-bold text-slate-500 mb-1">Search everything</h2>
-              <p className="text-sm text-slate-400">Receipts, Splitwise expenses, and bank transactions</p>
+              <h2 className="text-lg font-bold text-muted mb-1">Search everything</h2>
+              <p className="text-sm text-subtle">Receipts, Splitwise expenses, and bank transactions</p>
             </div>
           ) : resultCount === 0 ? (
-            <div className="text-center py-16 text-sm text-slate-400">No matches for "{query}"</div>
+            <div className="text-center py-16 text-sm text-subtle">No matches for "{query}"</div>
           ) : (
             <div className="flex flex-col gap-3 stagger">
-              <p className="text-xs text-slate-400 font-medium">{resultCount} result{resultCount !== 1 ? 's' : ''}</p>
+              <p className="text-xs text-subtle font-medium">{resultCount} result{resultCount !== 1 ? 's' : ''}</p>
 
               {matchedReceipts.map(r => (
                 <button
                   key={r.id}
                   onClick={() => navigate('/detail', { state: r })}
-                  className="w-full text-left bg-white rounded-2xl p-4 border border-slate-100 shadow-sm hover:border-indigo-100 card-lift anim-fade-up"
+                  className="w-full text-left bg-surface rounded-2xl p-4 border border-edge shadow-sm hover:border-indigo-100 card-lift anim-fade-up"
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
@@ -155,9 +155,9 @@ export default function SearchPage() {
                       {r.approved ? <CheckCheck size={18} color="#fff" /> : <Receipt size={18} color="#fff" />}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-bold text-slate-800 text-sm truncate">{r.merchant || 'Unknown merchant'}</p>
+                      <p className="font-bold text-ink text-sm truncate">{r.merchant || 'Unknown merchant'}</p>
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-xs text-slate-400">{r.date || r.scanned_at?.slice(0, 10)}</span>
+                        <span className="text-xs text-subtle">{r.date || r.scanned_at?.slice(0, 10)}</span>
                         <span className="text-slate-200">·</span>
                         <span className="text-xs font-semibold" style={{ color: r.approved ? EMERALD : '#f59e0b' }}>
                           {r.approved ? 'Posted' : 'Pending'}
@@ -167,11 +167,11 @@ export default function SearchPage() {
                     <div className="text-right shrink-0">
                       {r.approved && myId && r.personTotals?.[myId] != null ? (
                         <>
-                          <p className="font-bold text-slate-800 text-sm">${r.personTotals[myId].toFixed(2)}</p>
-                          <p className="text-[10px] text-slate-400">of ${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</p>
+                          <p className="font-bold text-ink text-sm">${r.personTotals[myId].toFixed(2)}</p>
+                          <p className="text-[10px] text-subtle">of ${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</p>
                         </>
                       ) : (
-                        <p className="font-bold text-slate-800 text-sm">${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</p>
+                        <p className="font-bold text-ink text-sm">${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</p>
                       )}
                     </div>
                   </div>
@@ -179,75 +179,75 @@ export default function SearchPage() {
               ))}
 
               {matchedSwUsd.map(e => (
-                <div key={e.id} className="w-full bg-white rounded-2xl p-4 border border-teal-100 shadow-sm anim-fade-up flex items-center gap-3">
+                <div key={e.id} className="w-full bg-surface rounded-2xl p-4 border border-teal-100 shadow-sm anim-fade-up flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
                     style={{ background: 'linear-gradient(135deg, #14b8a6, #0ea5e9)' }}>
                     <Users size={18} color="#fff" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-bold text-slate-800 text-sm truncate">{e.description || 'Splitwise expense'}</p>
+                    <p className="font-bold text-ink text-sm truncate">{e.description || 'Splitwise expense'}</p>
                     <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                      <span className="text-xs text-slate-400">{e.date}</span>
+                      <span className="text-xs text-subtle">{e.date}</span>
                       <span className="text-slate-200">·</span>
                       <span className="text-xs font-semibold" style={{ color: TEAL }}>Splitwise</span>
                       {e.addedBy && (
                         <>
                           <span className="text-slate-200">·</span>
-                          <span className="text-xs text-slate-400 truncate">Added By {e.addedBy}</span>
+                          <span className="text-xs text-subtle truncate">Added By {e.addedBy}</span>
                         </>
                       )}
                     </div>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="font-bold text-slate-800 text-sm">${e.myOwedShare.toFixed(2)}</p>
+                    <p className="font-bold text-ink text-sm">${e.myOwedShare.toFixed(2)}</p>
                     {e.cost > e.myOwedShare && (
-                      <p className="text-[10px] text-slate-400">of ${e.cost.toFixed(2)}</p>
+                      <p className="text-[10px] text-subtle">of ${e.cost.toFixed(2)}</p>
                     )}
                   </div>
                 </div>
               ))}
 
               {matchedSwForeign.map(e => (
-                <div key={e.id} className="w-full bg-white rounded-2xl p-4 border border-amber-100 shadow-sm anim-fade-up flex items-center gap-3">
+                <div key={e.id} className="w-full bg-surface rounded-2xl p-4 border border-amber-100 shadow-sm anim-fade-up flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
                     style={{ background: 'linear-gradient(135deg, #f59e0b, #f97316)' }}>
                     <Users size={18} color="#fff" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-bold text-slate-800 text-sm truncate">{e.description || 'Splitwise expense'}</p>
+                    <p className="font-bold text-ink text-sm truncate">{e.description || 'Splitwise expense'}</p>
                     <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                      <span className="text-xs text-slate-400">{e.date}</span>
+                      <span className="text-xs text-subtle">{e.date}</span>
                       <span className="text-slate-200">·</span>
                       <span className="text-xs font-semibold text-amber-500">Splitwise · {e.currency_code}</span>
                       {e.addedBy && (
                         <>
                           <span className="text-slate-200">·</span>
-                          <span className="text-xs text-slate-400 truncate">Added By {e.addedBy}</span>
+                          <span className="text-xs text-subtle truncate">Added By {e.addedBy}</span>
                         </>
                       )}
                     </div>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="font-bold text-slate-800 text-sm">{formatWithCurrency(e.myOwedShare, e.currency_code)}</p>
+                    <p className="font-bold text-ink text-sm">{formatWithCurrency(e.myOwedShare, e.currency_code)}</p>
                     {e.cost > e.myOwedShare && (
-                      <p className="text-[10px] text-slate-400">of {formatWithCurrency(e.cost, e.currency_code)}</p>
+                      <p className="text-[10px] text-subtle">of {formatWithCurrency(e.cost, e.currency_code)}</p>
                     )}
                   </div>
                 </div>
               ))}
 
               {matchedBank.map(t => (
-                <div key={t.id} className="w-full bg-white rounded-2xl p-4 border border-slate-100 shadow-sm anim-fade-up flex items-center gap-3">
+                <div key={t.id} className="w-full bg-surface rounded-2xl p-4 border border-edge shadow-sm anim-fade-up flex items-center gap-3">
                   <span className="text-lg shrink-0">{getCategoryIcon(t.category)}</span>
                   <div className="flex-1 min-w-0">
-                    <p className="font-bold text-slate-800 text-sm truncate">{t.description}</p>
+                    <p className="font-bold text-ink text-sm truncate">{t.description}</p>
                     <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-xs text-slate-400">{formatShortDate(t.date)}</span>
+                      <span className="text-xs text-subtle">{formatShortDate(t.date)}</span>
                       <span className="text-slate-200">·</span>
-                      <span className="text-xs text-slate-400">Bank · {t.sourceName || t.source}</span>
+                      <span className="text-xs text-subtle">Bank · {t.sourceName || t.source}</span>
                     </div>
                   </div>
-                  <span className="font-bold text-slate-800 text-sm shrink-0">{formatCurrency(t.amount)}</span>
+                  <span className="font-bold text-ink text-sm shrink-0">{formatCurrency(t.amount)}</span>
                 </div>
               ))}
             </div>

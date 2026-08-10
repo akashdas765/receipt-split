@@ -81,62 +81,62 @@ export default function SplitwisePickerModal({ transaction, myId, groups, initia
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40 anim-fade-in" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-t-3xl max-h-[80vh] flex flex-col anim-sheet-up">
+      <div className="bg-surface rounded-t-3xl max-h-[80vh] flex flex-col anim-sheet-up">
         <div className="flex justify-center pt-3 pb-1">
-          <div className="w-10 h-1 rounded-full bg-slate-200" />
+          <div className="w-10 h-1 rounded-full bg-surface-alt" />
         </div>
 
-        <div className="px-4 py-3 border-b border-slate-100">
+        <div className="px-4 py-3 border-b border-edge">
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <p className="font-extrabold text-slate-800 text-sm">Link to Splitwise</p>
-                {loading && <Loader2 size={12} className="text-slate-400 animate-spin shrink-0" />}
+                <p className="font-extrabold text-ink text-sm">Link to Splitwise</p>
+                {loading && <Loader2 size={12} className="text-subtle animate-spin shrink-0" />}
               </div>
-              <p className="text-xs text-slate-400 mt-0.5 truncate">
+              <p className="text-xs text-subtle mt-0.5 truncate">
                 {transaction.description} · {formatCurrency(transaction.amount)}
               </p>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600">
+            <button onClick={onClose} className="p-1.5 rounded-lg text-subtle hover:text-muted">
               <X size={18} />
             </button>
           </div>
 
-          <p className="text-xs text-slate-400 mt-2">Tap to select — pick more than one if this charge was split across several Splitwise expenses.</p>
+          <p className="text-xs text-subtle mt-2">Tap to select — pick more than one if this charge was split across several Splitwise expenses.</p>
 
           <div className="flex items-center gap-2 mt-3">
             <button
               onClick={() => setPaidOnly(v => !v)}
-              className={`shrink-0 px-3 py-2 rounded-xl text-xs font-bold border transition-colors ${paidOnly ? 'text-white' : 'bg-white border-slate-200 text-slate-500'}`}
+              className={`shrink-0 px-3 py-2 rounded-xl text-xs font-bold border transition-colors ${paidOnly ? 'text-white' : 'bg-surface border-edge text-muted'}`}
               style={paidOnly ? { background: INDIGO, borderColor: INDIGO } : {}}
             >
               💳 Paid by me
             </button>
             <div className="relative flex-1">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-subtle" />
               <input
                 type="text"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="Search expenses…"
                 autoFocus
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-2.5 text-sm text-slate-800 outline-none focus:border-indigo-300"
+                className="w-full bg-surface-alt border border-edge rounded-xl pl-8 pr-3 py-2.5 text-sm text-ink outline-none focus:border-indigo-300"
               />
             </div>
           </div>
         </div>
 
         {!loading && (
-          <div className="px-4 py-1.5 border-b border-slate-100 flex items-center justify-between gap-2">
-            <p className="text-xs text-slate-400 shrink-0">
+          <div className="px-4 py-1.5 border-b border-edge flex items-center justify-between gap-2">
+            <p className="text-xs text-subtle shrink-0">
               {sorted.length} expense{sorted.length !== 1 ? 's' : ''}{paidOnly ? ' paid by you' : ''}
             </p>
             <div className="flex items-center gap-2 shrink-0">
-              <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+              <div className="flex rounded-lg border border-edge overflow-hidden">
                 <button
                   onClick={() => setSortBy('amount')}
                   title="Sort by closest amount"
-                  className={`flex items-center gap-1 px-2 py-1 text-[11px] font-semibold transition-colors ${sortBy === 'amount' ? 'text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                  className={`flex items-center gap-1 px-2 py-1 text-[11px] font-semibold transition-colors ${sortBy === 'amount' ? 'text-white' : 'bg-surface text-muted hover:bg-surface-alt'}`}
                   style={sortBy === 'amount' ? { background: INDIGO } : {}}
                 >
                   <DollarSign size={11} /> Amount
@@ -144,20 +144,20 @@ export default function SplitwisePickerModal({ transaction, myId, groups, initia
                 <button
                   onClick={() => setSortBy('date')}
                   title="Sort by most recent"
-                  className={`flex items-center gap-1 px-2 py-1 text-[11px] font-semibold transition-colors ${sortBy === 'date' ? 'text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                  className={`flex items-center gap-1 px-2 py-1 text-[11px] font-semibold transition-colors ${sortBy === 'date' ? 'text-white' : 'bg-surface text-muted hover:bg-surface-alt'}`}
                   style={sortBy === 'date' ? { background: INDIGO } : {}}
                 >
                   <Clock size={11} /> Date
                 </button>
               </div>
-              {paidOnly && <button onClick={() => setPaidOnly(false)} className="text-xs text-slate-400 hover:text-slate-600">Show all</button>}
+              {paidOnly && <button onClick={() => setPaidOnly(false)} className="text-xs text-subtle hover:text-muted">Show all</button>}
             </div>
           </div>
         )}
 
         <div className="overflow-y-auto flex-1 divide-y divide-slate-100">
           {sorted.length === 0 && !loading ? (
-            <p className="text-slate-400 text-sm text-center py-8">No expenses found</p>
+            <p className="text-subtle text-sm text-center py-8">No expenses found</p>
           ) : (
             sorted.map(exp => {
               const amtDiff = Math.abs(parseFloat(exp.cost) - Math.abs(transaction.amount || 0));
@@ -167,22 +167,22 @@ export default function SplitwisePickerModal({ transaction, myId, groups, initia
                 <button
                   key={exp.id}
                   onClick={() => toggle(exp.id)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 transition-colors text-left ${isSelected ? 'bg-indigo-50' : 'hover:bg-slate-50'}`}
+                  className={`w-full flex items-center gap-3 px-4 py-3 transition-colors text-left ${isSelected ? 'bg-indigo-50' : 'hover:bg-surface-alt'}`}
                 >
-                  <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${isSelected ? '' : 'border-slate-300'}`}
+                  <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${isSelected ? '' : 'border-edge'}`}
                     style={isSelected ? { background: INDIGO, borderColor: INDIGO } : {}}>
                     {isSelected && <Check size={13} className="text-white" />}
                   </div>
                   <span className="text-lg shrink-0">{getCategoryIcon(exp.category)}</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-slate-700 truncate">{exp.description}</p>
-                    <p className="text-xs text-slate-400 mt-0.5">
+                    <p className="text-sm font-semibold text-ink truncate">{exp.description}</p>
+                    <p className="text-xs text-subtle mt-0.5">
                       {formatShortDate(exp.date)}{groupName(exp.group_id) && <span className="ml-1.5">· {groupName(exp.group_id)}</span>}
                     </p>
                   </div>
                   <div className="text-right shrink-0 ml-2">
-                    <p className={`text-sm font-bold ${isClose ? 'text-emerald-500' : 'text-slate-800'}`}>{formatCurrency(exp.myOwedShare)}</p>
-                    <p className="text-xs text-slate-400">of {formatCurrency(exp.cost)}</p>
+                    <p className={`text-sm font-bold ${isClose ? 'text-emerald-500' : 'text-ink'}`}>{formatCurrency(exp.myOwedShare)}</p>
+                    <p className="text-xs text-subtle">of {formatCurrency(exp.cost)}</p>
                   </div>
                 </button>
               );
@@ -190,7 +190,7 @@ export default function SplitwisePickerModal({ transaction, myId, groups, initia
           )}
         </div>
 
-        <div className="px-4 py-3 border-t border-slate-100">
+        <div className="px-4 py-3 border-t border-edge">
           <button
             onClick={confirm}
             disabled={selected.size === 0}

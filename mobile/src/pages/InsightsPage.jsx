@@ -144,13 +144,13 @@ export default function InsightsPage() {
               <div className="w-20 h-20 rounded-3xl bg-indigo-50 flex items-center justify-center mb-4 anim-float">
                 <TrendingUp size={36} style={{ color: '#a5b4fc' }} />
               </div>
-              <h2 className="text-lg font-bold text-slate-500 mb-1">Nothing to analyze yet</h2>
-              <p className="text-sm text-slate-400">Scan a receipt, connect Splitwise, or import a bank statement</p>
+              <h2 className="text-lg font-bold text-muted mb-1">Nothing to analyze yet</h2>
+              <p className="text-sm text-subtle">Scan a receipt, connect Splitwise, or import a bank statement</p>
             </div>
           ) : (
             <>
               {/* Data sources — makes clear this isn't just scanned receipts */}
-              <p className="text-xs text-slate-400 anim-fade-up">
+              <p className="text-xs text-subtle anim-fade-up">
                 {stats.receiptCount} receipt{stats.receiptCount !== 1 ? 's' : ''}
                 {' · '}{stats.mySplitwiseShareCount} Splitwise expense{stats.mySplitwiseShareCount !== 1 ? 's' : ''}
                 {stats.hasBankData && <> · {stats.transactionCount} bank transaction{stats.transactionCount !== 1 ? 's' : ''}</>}
@@ -158,22 +158,22 @@ export default function InsightsPage() {
 
               {/* Stat cards */}
               <div className="grid grid-cols-2 gap-3 stagger">
-                <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm anim-fade-up">
-                  <p className="text-xs font-semibold text-slate-400 mb-1">Total spend</p>
-                  <p className="text-xl font-extrabold text-slate-800">${stats.totalSpent.toFixed(2)}</p>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
+                <div className="bg-surface rounded-2xl p-4 border border-edge shadow-sm anim-fade-up">
+                  <p className="text-xs font-semibold text-subtle mb-1">Total spend</p>
+                  <p className="text-xl font-extrabold text-ink">${stats.totalSpent.toFixed(2)}</p>
+                  <p className="text-[11px] text-subtle mt-0.5">
                     {stats.hasBankData ? 'reconciled with bank data' : 'Splitwise + pending receipts'}
                   </p>
                 </div>
-                <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm anim-fade-up">
-                  <p className="text-xs font-semibold text-slate-400 mb-1">Your Splitwise share</p>
+                <div className="bg-surface rounded-2xl p-4 border border-edge shadow-sm anim-fade-up">
+                  <p className="text-xs font-semibold text-subtle mb-1">Your Splitwise share</p>
                   {stats.hasMyShare ? (
                     <>
                       <p className="text-xl font-extrabold" style={{ color: INDIGO }}>${stats.mySplitwiseShare.toFixed(2)}</p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">across {stats.mySplitwiseShareCount} expense{stats.mySplitwiseShareCount !== 1 ? 's' : ''}</p>
+                      <p className="text-[11px] text-subtle mt-0.5">across {stats.mySplitwiseShareCount} expense{stats.mySplitwiseShareCount !== 1 ? 's' : ''}</p>
                     </>
                   ) : (
-                    <p className="text-sm text-slate-400 mt-1">Couldn't match your Splitwise profile</p>
+                    <p className="text-sm text-subtle mt-1">Couldn't match your Splitwise profile</p>
                   )}
                 </div>
               </div>
@@ -181,17 +181,17 @@ export default function InsightsPage() {
               {/* Top merchants */}
               {stats.topMerchants.length > 0 && (
                 <div className="anim-fade-up">
-                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Top merchants</p>
-                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                  <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">Top merchants</p>
+                  <div className="bg-surface rounded-2xl border border-edge shadow-sm overflow-hidden">
                     {stats.topMerchants.map((m, i) => {
                       const pct = stats.topMerchants[0].amount ? (m.amount / stats.topMerchants[0].amount) * 100 : 0;
                       return (
-                        <div key={m.merchant} className={`px-4 py-3 ${i < stats.topMerchants.length - 1 ? 'border-b border-slate-100' : ''}`}>
+                        <div key={m.merchant} className={`px-4 py-3 ${i < stats.topMerchants.length - 1 ? 'border-b border-edge' : ''}`}>
                           <div className="flex items-center justify-between mb-1.5 gap-2">
-                            <span className="text-sm font-semibold text-slate-700 truncate">{m.merchant}</span>
-                            <span className="text-sm font-bold text-slate-800 shrink-0">${m.amount.toFixed(2)}</span>
+                            <span className="text-sm font-semibold text-ink truncate">{m.merchant}</span>
+                            <span className="text-sm font-bold text-ink shrink-0">${m.amount.toFixed(2)}</span>
                           </div>
-                          <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                          <div className="h-1.5 rounded-full bg-surface-alt overflow-hidden">
                             <div className="h-full rounded-full" style={{ width: `${pct}%`, background: INDIGO }} />
                           </div>
                         </div>
@@ -204,17 +204,17 @@ export default function InsightsPage() {
               {/* Top categories */}
               {stats.topCategories.length > 0 && (
                 <div className="anim-fade-up">
-                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">By category</p>
-                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                  <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">By category</p>
+                  <div className="bg-surface rounded-2xl border border-edge shadow-sm overflow-hidden">
                     {stats.topCategories.map((c, i) => {
                       const pct = stats.topCategories[0].amount ? (c.amount / stats.topCategories[0].amount) * 100 : 0;
                       return (
-                        <div key={c.category} className={`px-4 py-3 ${i < stats.topCategories.length - 1 ? 'border-b border-slate-100' : ''}`}>
+                        <div key={c.category} className={`px-4 py-3 ${i < stats.topCategories.length - 1 ? 'border-b border-edge' : ''}`}>
                           <div className="flex items-center justify-between mb-1.5 gap-2">
-                            <span className="text-sm font-semibold text-slate-700 capitalize">{c.category}</span>
-                            <span className="text-sm font-bold text-slate-800 shrink-0">${c.amount.toFixed(2)}</span>
+                            <span className="text-sm font-semibold text-ink capitalize">{c.category}</span>
+                            <span className="text-sm font-bold text-ink shrink-0">${c.amount.toFixed(2)}</span>
                           </div>
-                          <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                          <div className="h-1.5 rounded-full bg-surface-alt overflow-hidden">
                             <div className="h-full rounded-full" style={{ width: `${pct}%`, background: EMERALD }} />
                           </div>
                         </div>
@@ -226,8 +226,8 @@ export default function InsightsPage() {
 
               {/* Chat */}
               <div className="anim-fade-up">
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Ask about your spending</p>
-                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex flex-col">
+                <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">Ask about your spending</p>
+                <div className="bg-surface rounded-2xl border border-edge shadow-sm overflow-hidden flex flex-col">
                   <div ref={scrollRef} className="max-h-80 overflow-y-auto p-4 space-y-3">
                     {messages.length === 0 ? (
                       <div className="flex flex-wrap gap-2">
@@ -235,7 +235,7 @@ export default function InsightsPage() {
                           <button
                             key={s}
                             onClick={() => send(s)}
-                            className="text-left text-xs font-semibold px-3 py-2 rounded-xl border border-slate-200 text-slate-500 hover:border-indigo-200 hover:text-indigo-500 transition-colors"
+                            className="text-left text-xs font-semibold px-3 py-2 rounded-xl border border-edge text-muted hover:border-indigo-200 hover:text-indigo-500 transition-colors"
                           >
                             {s}
                           </button>
@@ -248,7 +248,7 @@ export default function InsightsPage() {
                             className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-line ${
                               m.role === 'user'
                                 ? 'text-white rounded-br-md'
-                                : 'bg-slate-50 text-slate-700 rounded-bl-md'
+                                : 'bg-surface-alt text-ink rounded-bl-md'
                             }`}
                             style={m.role === 'user' ? { background: INDIGO } : {}}
                           >
@@ -259,7 +259,7 @@ export default function InsightsPage() {
                     )}
                     {chatLoading && (
                       <div className="flex justify-start">
-                        <div className="bg-slate-50 rounded-2xl rounded-bl-md px-3.5 py-2.5 flex items-center gap-2 text-slate-400 text-sm">
+                        <div className="bg-surface-alt rounded-2xl rounded-bl-md px-3.5 py-2.5 flex items-center gap-2 text-subtle text-sm">
                           <Loader2 size={14} className="animate-spin" /> Thinking…
                         </div>
                       </div>
@@ -272,14 +272,14 @@ export default function InsightsPage() {
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2 p-3 border-t border-slate-100">
+                  <div className="flex items-center gap-2 p-3 border-t border-edge">
                     <input
                       value={input}
                       onChange={e => setInput(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') send(); }}
                       placeholder="Ask a question…"
                       disabled={chatLoading}
-                      className="flex-1 text-sm bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-indigo-200 disabled:opacity-60"
+                      className="flex-1 text-sm bg-surface-alt border border-edge rounded-xl px-3.5 py-2.5 outline-none focus:border-indigo-200 disabled:opacity-60"
                     />
                     <button
                       onClick={() => send()}

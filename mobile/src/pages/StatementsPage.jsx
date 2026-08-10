@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { AlertCircle, CreditCard, Landmark, HelpCircle, Wallet, Upload, X } from 'lucide-react';
+import { AlertCircle, CreditCard, Landmark, HelpCircle, Wallet, Upload, X, RefreshCw, Loader2 } from 'lucide-react';
 import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride, reclassifyPayments, savePlaidConnection, TXN_MAX } from '../services/db';
 import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { syncPlaidConnection } from '../services/plaidSync';
@@ -9,6 +9,7 @@ import { detectTransfers } from '../utils/transferMatcher';
 import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { isPaymentTransaction, isCreditConfirmation } from '../utils/paymentDetector';
 import { session } from '../services/session';
+import { useToast } from '../components/ToastProvider';
 import StatementUpload from '../components/StatementUpload';
 import PlaidConnect from '../components/PlaidConnect';
 import ManualEntryForm from '../components/ManualEntryForm';
@@ -57,6 +58,7 @@ function matchesAccountFilter(source, filter) {
 const TABS = ['Manual', 'Transactions', 'Reports', 'Payments', 'Transfers'];
 
 export default function StatementsPage() {
+  const toast = useToast();
 
   const [transactions, setTransactions] = useState([]);
   const [loadingTxns,  setLoadingTxns]  = useState(true);
@@ -76,6 +78,7 @@ export default function StatementsPage() {
   const [addNewTarget, setAddNewTarget] = useState(null); // txn getting a brand-new Splitwise expense, or null
   const [uploadOpen, setUploadOpen] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
+  const [syncingAll, setSyncingAll] = useState(false);
 
   // Which loaded statement/account to scope the page to — a 'group:bank' /
   // 'group:credit' / 'group:other' scope, or a specific `source` id. Each
@@ -103,7 +106,7 @@ export default function StatementsPage() {
       setLoadingTxns(false);
     })();
 
-    fetchGroups().then(setGroups).catch(() => {});
+    fetchGroups().then(setGroups).catch(() => toast.error('Could not load your Splitwise groups'));
     fetchCurrentUser()
       .then(u => { setMyId(u.id); setMyFullName([u.name, u.lastName].filter(Boolean).join(' ')); })
       .catch(() => {});
@@ -414,6 +417,33 @@ export default function StatementsPage() {
     });
   }, []);
 
+  // Header "Sync" button — runs every connected account's sync in one tap
+  // instead of opening the Add sheet and driving PlaidConnect's per-
+  // connection tabs one at a time. Always full:true (re-pulls each
+  // connection's whole history, re-tagging every transaction by card) rather
+  // than a plain incremental sync — full is already a superset of a plain
+  // sync's result (see plaidSync.js), so running both back to back would
+  // just re-fetch the same data twice for no benefit.
+  const handleSyncAll = async () => {
+    const connections = session.getPlaidConnections();
+    if (!connections.length || syncingAll) return;
+    setSyncingAll(true);
+    let failures = 0;
+    for (const conn of connections) {
+      try {
+        const { cursor } = await syncPlaidConnection(conn, { full: true, onAdd: handleAdd });
+        session.upsertPlaidConnection({ itemId: conn.itemId, cursor });
+        await savePlaidConnection({ itemId: conn.itemId, cursor });
+      } catch (err) {
+        failures++;
+        console.error(`Sync failed for Plaid connection ${conn.itemId}:`, err);
+      }
+    }
+    setSyncingAll(false);
+    if (failures) toast.error(`Synced with ${failures} account${failures !== 1 ? 's' : ''} failing — try again`);
+    else toast.success('Accounts synced');
+  };
+
   // Auto-fixes transactions still carrying the pre-per-account-split source
   // format (`plaid-${itemId}`, no accountId suffix — from before this app's
   // Plaid integration split one login's transactions apart by card). Those
@@ -602,9 +632,19 @@ export default function StatementsPage() {
           <button
             onClick={() => setAccountsOpen(true)}
             title="Accounts"
-            className="p-2 rounded-full text-slate-500 hover:bg-slate-100 transition-colors shrink-0"
+            className="p-2 rounded-full text-muted hover:bg-surface-alt transition-colors shrink-0"
           >
             <Wallet size={16} />
+          </button>
+        )}
+        {session.getPlaidConnections().length > 0 && (
+          <button
+            onClick={handleSyncAll}
+            disabled={syncingAll}
+            title="Sync all accounts"
+            className="p-2 rounded-full text-muted hover:bg-surface-alt transition-colors shrink-0 disabled:opacity-60"
+          >
+            {syncingAll ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
           </button>
         )}
         <button
@@ -641,30 +681,30 @@ export default function StatementsPage() {
 
           {/* Stat bar */}
           <div className="grid grid-cols-2 gap-2">
-            <div className="bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
-              <p className="font-bold text-slate-800">{realExpenseTxns.length}</p>
-              <p className="text-slate-400 text-xs">Expenses this month</p>
+            <div className="bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
+              <p className="font-bold text-ink">{realExpenseTxns.length}</p>
+              <p className="text-subtle text-xs">Expenses this month</p>
             </div>
-            <div className="bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
-              <p className="font-bold text-slate-800">{formatCurrency(realExpenseTxns.reduce((s, t) => s + (t.amount || 0), 0))}</p>
-              <p className="text-slate-400 text-xs">Gross total</p>
+            <div className="bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
+              <p className="font-bold text-ink">{formatCurrency(realExpenseTxns.reduce((s, t) => s + (t.amount || 0), 0))}</p>
+              <p className="text-subtle text-xs">Gross total</p>
             </div>
-            <div className="col-span-2 rounded-xl px-3 py-2.5 border border-indigo-100" style={{ background: '#eef1fb' }}>
+            <div className="col-span-2 rounded-xl px-3 py-2.5 border border-indigo-100 card-month-total">
               <div className="flex items-baseline justify-between">
                 <p className="font-extrabold text-lg" style={{ color: INDIGO }}>{formatCurrency(summary.totalEffective)}</p>
                 {summary.totalSavings > 0.5 && (
                   <p className="text-emerald-500 text-xs font-semibold">-{formatCurrency(summary.totalSavings)} saved via splits</p>
                 )}
               </div>
-              <p className="text-slate-400 text-xs">My actual spend</p>
+              <p className="text-subtle text-xs">My actual spend</p>
             </div>
-            <div className="bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
-              <p className="font-bold text-slate-600">{paymentsToShow.length}</p>
-              <p className="text-slate-400 text-xs">Payments made</p>
+            <div className="bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
+              <p className="font-bold text-muted">{paymentsToShow.length}</p>
+              <p className="text-subtle text-xs">Payments made</p>
             </div>
-            <div className="bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
-              <p className="font-bold text-slate-600">{formatCurrency(paymentTotal)}</p>
-              <p className="text-slate-400 text-xs">Payments total</p>
+            <div className="bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
+              <p className="font-bold text-muted">{formatCurrency(paymentTotal)}</p>
+              <p className="text-subtle text-xs">Payments total</p>
             </div>
           </div>
 
@@ -680,7 +720,7 @@ export default function StatementsPage() {
           {statements.length > 1 && (() => {
             const chipClass = id =>
               `shrink-0 px-3 py-1 rounded-full text-xs font-semibold border transition-colors btn-press whitespace-nowrap ${
-                accountFilter === id ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                accountFilter === id ? 'bg-slate-700 text-white border-slate-700' : 'bg-surface text-muted border-edge hover:border-edge'
               }`;
             const groups = [
               { key: 'bank',   label: 'Bank',   icon: Landmark,    items: statements.filter(s => session.getAccountType(s.id) === 'bank') },
@@ -691,7 +731,7 @@ export default function StatementsPage() {
               <div className="space-y-1.5">
                 {groups.map(g => (
                   <div key={g.key} className="flex flex-wrap items-center gap-1.5">
-                    <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wide pr-0.5 w-14">
+                    <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-subtle uppercase tracking-wide pr-0.5 w-14">
                       <g.icon size={11} /> {g.label}
                     </span>
                     {g.items.length > 1 && (
@@ -711,12 +751,12 @@ export default function StatementsPage() {
           })()}
 
           {/* Tabs */}
-          <div className="flex bg-white rounded-xl p-1 gap-1 border border-slate-100 shadow-sm">
+          <div className="flex bg-surface rounded-xl p-1 gap-1 border border-edge shadow-sm">
             {TABS.map((label, i) => (
               <button
                 key={i}
                 onClick={() => setTab(i)}
-                className={`flex-1 py-2 px-2 text-xs font-bold rounded-lg transition-colors relative whitespace-nowrap ${tab === i ? 'text-white' : 'text-slate-500 hover:text-slate-700'}`}
+                className={`flex-1 py-2 px-2 text-xs font-bold rounded-lg transition-colors relative whitespace-nowrap ${tab === i ? 'text-white' : 'text-muted hover:text-ink'}`}
                 style={tab === i ? { background: INDIGO } : {}}
               >
                 {label}
@@ -795,30 +835,30 @@ export default function StatementsPage() {
                         per-account-type like accountSummary below — bank and
                         credit are never mixed in one view, so every row in
                         this list shares accountSummary.type. */}
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
+                    <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">
                       {accountSummary.type === 'bank' ? 'Money received' : 'Card payments'} — {monthRange.label}
                     </p>
                     {paymentsToShow.length === 0 ? (
-                      <div className="text-center py-6 text-sm text-slate-400 bg-white rounded-2xl border border-slate-100">Nothing this month</div>
+                      <div className="text-center py-6 text-sm text-subtle bg-surface rounded-2xl border border-edge">Nothing this month</div>
                     ) : (
                       <div className="space-y-2">
                         {paymentsToShow.map(txn => {
                           const isBankTxn = accountSummary.type === 'bank';
                           if (txn.paymentNeedsConfirm) {
                             return (
-                              <div key={txn.id} className="rounded-xl border border-amber-100 bg-white p-3">
+                              <div key={txn.id} className="rounded-xl border border-amber-100 bg-surface p-3">
                                 <div className="flex items-center gap-3">
                                   <span className="text-base shrink-0">💳</span>
                                   <div className="flex-1 min-w-0">
-                                    <p className="text-sm text-slate-700 truncate">{txn.description}</p>
+                                    <p className="text-sm text-ink truncate">{txn.description}</p>
                                     <p className="text-xs text-amber-500 mt-0.5">Possible bill payment · {formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
                                   </div>
-                                  <p className="text-sm font-semibold text-slate-600 shrink-0">{formatCurrency(txn.amount)}</p>
+                                  <p className="text-sm font-semibold text-muted shrink-0">{formatCurrency(txn.amount)}</p>
                                 </div>
-                                <div className="flex gap-2 pt-2 mt-2 border-t border-slate-100">
+                                <div className="flex gap-2 pt-2 mt-2 border-t border-edge">
                                   <button
                                     onClick={() => handleDismissPaymentHint(txn)}
-                                    className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-500 border border-slate-200 rounded-xl py-2 hover:bg-slate-50 transition-colors"
+                                    className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-muted border border-edge rounded-xl py-2 hover:bg-surface-alt transition-colors"
                                   >
                                     Not a payment
                                   </button>
@@ -834,16 +874,16 @@ export default function StatementsPage() {
                             );
                           }
                           return (
-                            <div key={txn.id} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
+                            <div key={txn.id} className="flex items-center gap-3 bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
                               <span className="text-base">{isBankTxn ? '💰' : '💳'}</span>
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm text-slate-700 truncate">{txn.description}</p>
-                                <p className="text-xs text-slate-400">
+                                <p className="text-sm text-ink truncate">{txn.description}</p>
+                                <p className="text-xs text-subtle">
                                   {formatShortDate(txn.date)} · {txn.sourceName || txn.source}
                                   {txn.paymentConfirmed && <span className="ml-1.5 font-semibold" style={{ color: INDIGO }}>· confirmed, excluded from credit</span>}
                                 </p>
                               </div>
-                              <p className={`text-sm font-semibold ${isBankTxn ? 'text-emerald-500' : 'text-slate-600'}`}>
+                              <p className={`text-sm font-semibold ${isBankTxn ? 'text-emerald-500' : 'text-muted'}`}>
                                 {isBankTxn ? '+' : ''}{formatCurrency(txn.amount)}
                               </p>
                             </div>
@@ -851,19 +891,19 @@ export default function StatementsPage() {
                         })}
                       </div>
                     )}
-                    <p className="text-xs text-slate-400 mt-1.5">Not counted in expense totals.</p>
+                    <p className="text-xs text-subtle mt-1.5">Not counted in expense totals.</p>
                   </div>
 
                   {swPayments.length > 0 && (
                     <div>
-                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Splitwise payments received</p>
+                      <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">Splitwise payments received</p>
                       <div className="space-y-2">
                         {swPayments.map(p => (
-                          <div key={p.id} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
+                          <div key={p.id} className="flex items-center gap-3 bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
                             <span className="text-base">🤝</span>
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm text-slate-700 truncate">{p.description}</p>
-                              <p className="text-xs text-slate-400">{formatShortDate(p.date)} · from {p.paidBy}</p>
+                              <p className="text-sm text-ink truncate">{p.description}</p>
+                              <p className="text-xs text-subtle">{formatShortDate(p.date)} · from {p.paidBy}</p>
                             </div>
                             <p className="text-sm font-semibold text-emerald-500">+{formatCurrency(p.amount)}</p>
                           </div>
@@ -916,13 +956,13 @@ export default function StatementsPage() {
           className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40 anim-fade-in"
           onClick={e => e.target === e.currentTarget && setUploadOpen(false)}
         >
-          <div className="bg-white rounded-t-3xl max-h-[85vh] flex flex-col anim-sheet-up">
+          <div className="bg-surface rounded-t-3xl max-h-[85vh] flex flex-col anim-sheet-up">
             <div className="flex justify-center pt-3 pb-1">
-              <div className="w-10 h-1 rounded-full bg-slate-200" />
+              <div className="w-10 h-1 rounded-full bg-surface-alt" />
             </div>
-            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-              <p className="font-extrabold text-slate-800 text-sm">Add transactions</p>
-              <button onClick={() => setUploadOpen(false)} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600">
+            <div className="px-4 py-3 border-b border-edge flex items-center justify-between">
+              <p className="font-extrabold text-ink text-sm">Add transactions</p>
+              <button onClick={() => setUploadOpen(false)} className="p-1.5 rounded-lg text-subtle hover:text-muted">
                 <X size={18} />
               </button>
             </div>

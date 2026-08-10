@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Receipt, LogOut, Trash2, CheckCheck, AlertTriangle, X, Users, AlertCircle, Landmark, CreditCard, Loader2 } from 'lucide-react';
-import { logout } from '../services/auth';
+import { Receipt, Settings as SettingsIcon, Trash2, CheckCheck, AlertTriangle, X, Users, AlertCircle, Landmark, CreditCard, Loader2 } from 'lucide-react';
 import { loadReceiptsForInsights, deleteReceipt, loadManualAccounts, saveManualAccount, deleteManualAccount } from '../services/db';
 import { fetchCurrentUser, fetchAllExpenses, fetchGroups, fetchNetBalance } from '../services/splitwise';
 import { fetchAccountBalances } from '../services/plaid';
 import { session } from '../services/session';
 import { accountLabel } from '../utils/accountLabel';
 import { getMonthRange } from '../utils/statementFormatters';
+import { maybeShowPendingReminder } from '../services/pwa';
+import { useToast } from '../components/ToastProvider';
 import BottomNav from '../components/BottomNav';
 import NetWorthDetail from '../components/NetWorthDetail';
 import SplitwiseExpenseDetail from '../components/SplitwiseExpenseDetail';
@@ -28,6 +29,7 @@ function formatWithCurrency(amount, currencyCode) {
 
 export default function HomePage() {
   const navigate = useNavigate();
+  const toast = useToast();
 
   // Receipts (added through this app) — loaded once, filtered to the
   // selected month client-side (same 200-receipt window Insights uses).
@@ -74,7 +76,7 @@ export default function HomePage() {
 
   useEffect(() => {
     loadReceiptsForInsights().then(list => { setReceipts(list); setLoadingReceipts(false); });
-    fetchGroups().then(setGroups).catch(() => {});
+    fetchGroups().then(setGroups).catch(() => toast.error('Could not load your Splitwise groups'));
     fetchCurrentUser()
       .then(u => setMyId(u.id))
       .catch(err => {
@@ -85,7 +87,7 @@ export default function HomePage() {
         setSwAuthError(err?.message || 'Could not connect to Splitwise — your share and Splitwise expenses won\'t show until this is fixed.');
       });
     fetchNetBalance().then(setSplitwiseNet).catch(() => {}).finally(() => setLoadingNet(false));
-    loadManualAccounts().then(setManualAccounts).catch(() => {});
+    loadManualAccounts().then(setManualAccounts).catch(() => toast.error('Could not load your manual accounts'));
   }, []);
 
   useEffect(() => {
@@ -198,6 +200,13 @@ export default function HomePage() {
 
   const pendingTotal = pendingMonthlyReceipts.reduce((s, r) => s + (r.grandTotal ?? r.total ?? 0), 0);
 
+  // Scoped to the currently-selected month, matching what's already shown
+  // in the "+$X pending" line below — not "all pending receipts ever".
+  useEffect(() => {
+    if (loadingReceipts) return;
+    maybeShowPendingReminder(pendingMonthlyReceipts.length, pendingTotal);
+  }, [loadingReceipts, pendingMonthlyReceipts.length, pendingTotal]);
+
   const monthCount = monthlyReceipts.length + splitwiseOnly.length + foreignCurrencyOnly.length;
 
   // Net worth = cash on hand + what you're owed - what you owe. Credit
@@ -263,14 +272,16 @@ export default function HomePage() {
   const confirmDelete = async () => {
     if (!confirmTarget) return;
     setDeleting(true);
-    await deleteReceipt(confirmTarget.id);
-    setReceipts(r => r.filter(x => x.id !== confirmTarget.id));
-    setDeleting(false);
-    setConfirmTarget(null);
-  };
-
-  const handleLogout = async () => {
-    await logout();
+    try {
+      await deleteReceipt(confirmTarget.id);
+      setReceipts(r => r.filter(x => x.id !== confirmTarget.id));
+      setConfirmTarget(null);
+      toast.success('Receipt removed');
+    } catch {
+      toast.error('Could not remove receipt');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const loading = loadingReceipts;
@@ -281,22 +292,22 @@ export default function HomePage() {
       {confirmTarget && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4 anim-fade-in"
           onClick={() => !deleting && setConfirmTarget(null)}>
-          <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl anim-sheet-up" onClick={e => e.stopPropagation()}>
+          <div className="bg-surface rounded-3xl p-6 w-full max-w-sm shadow-2xl anim-sheet-up" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <div className="w-9 h-9 rounded-xl bg-red-50 flex items-center justify-center shrink-0">
                   <AlertTriangle size={18} className="text-red-500" />
                 </div>
-                <h3 className="font-extrabold text-slate-800 text-base">Remove receipt?</h3>
+                <h3 className="font-extrabold text-ink text-base">Remove receipt?</h3>
               </div>
-              <button onClick={() => setConfirmTarget(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+              <button onClick={() => setConfirmTarget(null)} className="text-subtle hover:text-muted"><X size={18} /></button>
             </div>
-            <p className="text-sm text-slate-500 mb-5">
-              This will permanently remove <span className="font-semibold text-slate-700">{confirmTarget.merchant || 'this receipt'}</span> from your history.
+            <p className="text-sm text-muted mb-5">
+              This will permanently remove <span className="font-semibold text-ink">{confirmTarget.merchant || 'this receipt'}</span> from your history.
             </p>
             <div className="flex gap-2">
               <button onClick={() => setConfirmTarget(null)} disabled={deleting}
-                className="flex-1 py-2.5 rounded-xl font-bold text-sm text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors btn-press disabled:opacity-60">
+                className="flex-1 py-2.5 rounded-xl font-bold text-sm text-muted bg-surface-alt hover:bg-surface-alt transition-colors btn-press disabled:opacity-60">
                 Cancel
               </button>
               <button onClick={confirmDelete} disabled={deleting}
@@ -318,11 +329,11 @@ export default function HomePage() {
             <span className="font-extrabold text-gradient text-base tracking-tight">ReceiptSplit</span>
           </div>
           <button
-            onClick={handleLogout}
-            className="p-2 rounded-lg text-red-400 hover:bg-red-50 transition-colors"
-            title="Logout"
+            onClick={() => navigate('/settings')}
+            className="p-2 rounded-lg text-muted hover:bg-surface-alt transition-colors"
+            title="Settings"
           >
-            <LogOut size={18} />
+            <SettingsIcon size={18} />
           </button>
         </div>
       </header>
@@ -334,7 +345,7 @@ export default function HomePage() {
         {loading ? (
           <div className="flex flex-col gap-3 pt-4">
             {[0, 1, 2].map(i => (
-              <div key={i} className="rounded-2xl p-4 bg-white border border-slate-100">
+              <div key={i} className="rounded-2xl p-4 bg-surface border border-edge">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl skeleton shrink-0" />
                   <div className="flex-1 space-y-2">
@@ -363,38 +374,37 @@ export default function HomePage() {
             {hasNetWorthData && (
               <button
                 onClick={() => setNetWorthOpen(true)}
-                className="w-full text-left rounded-2xl p-4 mb-4 border border-emerald-100 anim-fade-up card-lift"
-                style={{ background: 'linear-gradient(135deg, #ecfdf5, #f0fdfa)' }}
+                className="w-full text-left rounded-2xl p-4 mb-4 border border-emerald-100 anim-fade-up card-lift card-networth"
               >
                 <div className="flex items-center justify-between gap-3 mb-1">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Net worth</p>
-                  {(loadingBalances || loadingNet) && <Loader2 size={12} className="animate-spin text-slate-400" />}
+                  <p className="text-xs font-bold text-subtle uppercase tracking-wide">Net worth</p>
+                  {(loadingBalances || loadingNet) && <Loader2 size={12} className="animate-spin text-subtle" />}
                 </div>
-                <p className="text-2xl font-extrabold text-slate-800">{formatWithCurrency(netWorth, 'USD')}</p>
+                <p className="text-2xl font-extrabold text-ink">{formatWithCurrency(netWorth, 'USD')}</p>
 
                 <div className="mt-3 pt-3 border-t border-emerald-100/60 space-y-1.5">
                   {hasPlaidAccounts && (
                     <div className="flex items-center justify-between text-xs">
-                      <span className="flex items-center gap-1.5 text-slate-500"><Landmark size={12} /> Bank balance</span>
-                      <span className="font-semibold text-slate-700">{formatWithCurrency(bankTotal, 'USD')}</span>
+                      <span className="flex items-center gap-1.5 text-muted"><Landmark size={12} /> Bank balance</span>
+                      <span className="font-semibold text-ink">{formatWithCurrency(bankTotal, 'USD')}</span>
                     </div>
                   )}
                   {creditDebtTotal > 0 && (
                     <div className="flex items-center justify-between text-xs">
-                      <span className="flex items-center gap-1.5 text-slate-500"><CreditCard size={12} /> Credit card debt</span>
+                      <span className="flex items-center gap-1.5 text-muted"><CreditCard size={12} /> Credit card debt</span>
                       <span className="font-semibold text-red-500">{formatWithCurrency(-creditDebtTotal, 'USD')}</span>
                     </div>
                   )}
                   <div className="flex items-center justify-between text-xs">
-                    <span className="flex items-center gap-1.5 text-slate-500"><Users size={12} /> Splitwise</span>
+                    <span className="flex items-center gap-1.5 text-muted"><Users size={12} /> Splitwise</span>
                     <span className={`font-semibold ${splitwiseNet >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
                       {splitwiseNet >= 0 ? '+' : ''}{formatWithCurrency(splitwiseNet, 'USD')}
                     </span>
                   </div>
                   {manualAccounts.length > 0 && (
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-500">Other accounts</span>
-                      <span className="font-semibold text-slate-700">
+                      <span className="text-muted">Other accounts</span>
+                      <span className="font-semibold text-ink">
                         {formatWithCurrency(manualAssetTotal - manualLiabilityTotal, 'USD')}
                       </span>
                     </div>
@@ -407,14 +417,13 @@ export default function HomePage() {
 
             {/* Month total */}
             <div
-              className="rounded-2xl p-4 mb-4 border border-indigo-100 anim-fade-up"
-              style={{ background: 'linear-gradient(135deg, #eef1fb, #f5f0fe)' }}
+              className="rounded-2xl p-4 mb-4 border border-indigo-100 anim-fade-up card-month-total"
             >
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">{monthRange.label}</p>
-                  <p className="text-2xl font-extrabold text-slate-800">${myShareTotal.toFixed(2)}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">
+                  <p className="text-xs font-bold text-subtle uppercase tracking-wide mb-1">{monthRange.label}</p>
+                  <p className="text-2xl font-extrabold text-ink">${myShareTotal.toFixed(2)}</p>
+                  <p className="text-xs text-subtle mt-0.5">
                     Your share · {myShareCount} transaction{myShareCount !== 1 ? 's' : ''}
                   </p>
                 </div>
@@ -432,7 +441,7 @@ export default function HomePage() {
                   <span className="text-xs font-bold" style={{ color: '#f59e0b' }}>
                     +${pendingTotal.toFixed(2)} pending
                   </span>
-                  <span className="text-xs text-slate-400">
+                  <span className="text-xs text-subtle">
                     {pendingMonthlyReceipts.length} not yet split — not counted above
                   </span>
                 </div>
@@ -444,8 +453,8 @@ export default function HomePage() {
                 <div className="w-20 h-20 rounded-3xl bg-indigo-50 flex items-center justify-center mb-4 anim-float">
                   <Receipt size={36} style={{ color: '#a5b4fc' }} />
                 </div>
-                <h2 className="text-lg font-bold text-slate-500 mb-1">Nothing in {monthRange.label}</h2>
-                <p className="text-sm text-slate-400">Scan a receipt or pick another month</p>
+                <h2 className="text-lg font-bold text-muted mb-1">Nothing in {monthRange.label}</h2>
+                <p className="text-sm text-subtle">Scan a receipt or pick another month</p>
               </div>
             ) : (
               <div className="flex flex-col gap-3 stagger">
@@ -453,7 +462,7 @@ export default function HomePage() {
                   <button
                     key={r.id}
                     onClick={() => r.approved ? setOpenReceipt(r) : navigate('/detail', { state: r })}
-                    className="w-full text-left bg-white rounded-2xl p-4 border border-slate-100 shadow-sm hover:border-indigo-100 card-lift anim-fade-up"
+                    className="w-full text-left bg-surface rounded-2xl p-4 border border-edge shadow-sm hover:border-indigo-100 card-lift anim-fade-up"
                   >
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
@@ -466,11 +475,11 @@ export default function HomePage() {
                       </div>
 
                       <div className="flex-1 min-w-0">
-                        <p className="font-bold text-slate-800 text-sm truncate">
+                        <p className="font-bold text-ink text-sm truncate">
                           {r.merchant || 'Unknown merchant'}
                         </p>
                         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                          <span className="text-xs text-slate-400">
+                          <span className="text-xs text-subtle">
                             {r.date || r.scanned_at?.slice(0, 10)}
                           </span>
                           <span className="text-slate-200">·</span>
@@ -478,11 +487,11 @@ export default function HomePage() {
                             {r.approved ? 'Posted' : 'Pending'}
                           </span>
                           <span className="text-slate-200">·</span>
-                          <span className="text-xs text-slate-400">{r.items?.length || 0} items</span>
+                          <span className="text-xs text-subtle">{r.items?.length || 0} items</span>
                           {groupName(r.groupId) && (
                             <>
                               <span className="text-slate-200">·</span>
-                              <span className="text-xs text-slate-400 truncate">{groupName(r.groupId)}</span>
+                              <span className="text-xs text-subtle truncate">{groupName(r.groupId)}</span>
                             </>
                           )}
                         </div>
@@ -492,11 +501,11 @@ export default function HomePage() {
                         <div className="text-right">
                           {r.approved && myId && r.personTotals?.[myId] != null ? (
                             <>
-                              <p className="font-bold text-slate-800 text-sm">${r.personTotals[myId].toFixed(2)}</p>
-                              <p className="text-[10px] text-slate-400">of ${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</p>
+                              <p className="font-bold text-ink text-sm">${r.personTotals[myId].toFixed(2)}</p>
+                              <p className="text-[10px] text-subtle">of ${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</p>
                             </>
                           ) : (
-                            <p className="font-bold text-slate-800 text-sm">${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</p>
+                            <p className="font-bold text-ink text-sm">${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</p>
                           )}
                         </div>
                         <button
@@ -515,35 +524,35 @@ export default function HomePage() {
                     clear these weren't scanned here. */}
                 {splitwiseOnly.map(e => (
                   <button key={e.id} onClick={() => setOpenExpense(e)}
-                    className="w-full text-left bg-white rounded-2xl p-4 border border-teal-100 shadow-sm hover:border-teal-200 card-lift anim-fade-up flex items-center gap-3">
+                    className="w-full text-left bg-surface rounded-2xl p-4 border border-teal-100 shadow-sm hover:border-teal-200 card-lift anim-fade-up flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
                       style={{ background: 'linear-gradient(135deg, #14b8a6, #0ea5e9)' }}>
                       <Users size={18} color="#fff" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-bold text-slate-800 text-sm truncate">{e.description || 'Splitwise expense'}</p>
+                      <p className="font-bold text-ink text-sm truncate">{e.description || 'Splitwise expense'}</p>
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-xs text-slate-400">{e.date}</span>
+                        <span className="text-xs text-subtle">{e.date}</span>
                         <span className="text-slate-200">·</span>
                         <span className="text-xs font-semibold" style={{ color: TEAL }}>Splitwise</span>
                         {groupName(e.group_id) && (
                           <>
                             <span className="text-slate-200">·</span>
-                            <span className="text-xs text-slate-400 truncate">{groupName(e.group_id)}</span>
+                            <span className="text-xs text-subtle truncate">{groupName(e.group_id)}</span>
                           </>
                         )}
                         {e.addedBy && (
                           <>
                             <span className="text-slate-200">·</span>
-                            <span className="text-xs text-slate-400 truncate">Added By {e.addedBy}</span>
+                            <span className="text-xs text-subtle truncate">Added By {e.addedBy}</span>
                           </>
                         )}
                       </div>
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="font-bold text-slate-800 text-sm">${e.myOwedShare.toFixed(2)}</p>
+                      <p className="font-bold text-ink text-sm">${e.myOwedShare.toFixed(2)}</p>
                       {e.cost > e.myOwedShare && (
-                        <p className="text-[10px] text-slate-400">of ${e.cost.toFixed(2)}</p>
+                        <p className="text-[10px] text-subtle">of ${e.cost.toFixed(2)}</p>
                       )}
                     </div>
                   </button>
@@ -555,35 +564,35 @@ export default function HomePage() {
                     them, e.g. a ₹3600 expense is not $3600). */}
                 {foreignCurrencyOnly.map(e => (
                   <button key={e.id} onClick={() => setOpenExpense(e)}
-                    className="w-full text-left bg-white rounded-2xl p-4 border border-amber-100 shadow-sm hover:border-amber-200 card-lift anim-fade-up flex items-center gap-3">
+                    className="w-full text-left bg-surface rounded-2xl p-4 border border-amber-100 shadow-sm hover:border-amber-200 card-lift anim-fade-up flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
                       style={{ background: 'linear-gradient(135deg, #f59e0b, #f97316)' }}>
                       <Users size={18} color="#fff" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-bold text-slate-800 text-sm truncate">{e.description || 'Splitwise expense'}</p>
+                      <p className="font-bold text-ink text-sm truncate">{e.description || 'Splitwise expense'}</p>
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-xs text-slate-400">{e.date}</span>
+                        <span className="text-xs text-subtle">{e.date}</span>
                         <span className="text-slate-200">·</span>
                         <span className="text-xs font-semibold text-amber-500">Splitwise · {e.currency_code}</span>
                         {groupName(e.group_id) && (
                           <>
                             <span className="text-slate-200">·</span>
-                            <span className="text-xs text-slate-400 truncate">{groupName(e.group_id)}</span>
+                            <span className="text-xs text-subtle truncate">{groupName(e.group_id)}</span>
                           </>
                         )}
                         {e.addedBy && (
                           <>
                             <span className="text-slate-200">·</span>
-                            <span className="text-xs text-slate-400 truncate">Added By {e.addedBy}</span>
+                            <span className="text-xs text-subtle truncate">Added By {e.addedBy}</span>
                           </>
                         )}
                       </div>
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="font-bold text-slate-800 text-sm">{formatWithCurrency(e.myOwedShare, e.currency_code)}</p>
+                      <p className="font-bold text-ink text-sm">{formatWithCurrency(e.myOwedShare, e.currency_code)}</p>
                       {e.cost > e.myOwedShare && (
-                        <p className="text-[10px] text-slate-400">of {formatWithCurrency(e.cost, e.currency_code)}</p>
+                        <p className="text-[10px] text-subtle">of {formatWithCurrency(e.cost, e.currency_code)}</p>
                       )}
                       <p className="text-[10px] text-amber-500">not in totals</p>
                     </div>
@@ -591,7 +600,7 @@ export default function HomePage() {
                 ))}
 
                 {loadingSw && (
-                  <div className="rounded-2xl p-4 bg-white border border-slate-100">
+                  <div className="rounded-2xl p-4 bg-surface border border-edge">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl skeleton shrink-0" />
                       <div className="flex-1 space-y-2">

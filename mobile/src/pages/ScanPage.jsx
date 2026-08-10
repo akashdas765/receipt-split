@@ -241,32 +241,31 @@ export default function ScanPage() {
               onDrop={e => { e.preventDefault(); setDragging(false); handleFiles(e.dataTransfer.files); }}
               onClick={() => fileRef.current?.click()}
               className={`relative flex flex-col items-center justify-center border-2 border-dashed rounded-3xl p-10 cursor-pointer transition-all select-none anim-fade-up
-                ${dragging ? 'dropzone-active bg-indigo-50 scale-[1.02]' : 'border-slate-200 bg-white/80 hover:border-indigo-300 hover:bg-indigo-50/30'}`}
+                ${dragging ? 'dropzone-active bg-indigo-50 scale-[1.02]' : 'border-edge bg-white/80 hover:border-indigo-300 hover:bg-indigo-50/30'}`}
             >
-              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-4 transition-transform ${dragging ? 'scale-110' : 'anim-float'}`}
-                style={{ background: 'linear-gradient(135deg, #e0e7ff, #ede9fe)' }}>
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-4 transition-transform tint-indigo-badge ${dragging ? 'scale-110' : 'anim-float'}`}>
                 <ImagePlus size={28} style={{ color: INDIGO }} />
               </div>
-              <p className="font-bold text-slate-600 text-base mb-1">
+              <p className="font-bold text-muted text-base mb-1">
                 {dragging ? 'Drop to scan' : 'Click or drag receipts here'}
               </p>
-              <p className="text-xs text-slate-400">JPG · PNG · WEBP · <span className="font-semibold" style={{ color: INDIGO }}>PDF</span> · multiple files OK</p>
+              <p className="text-xs text-subtle">JPG · PNG · WEBP · <span className="font-semibold" style={{ color: INDIGO }}>PDF</span> · multiple files OK</p>
               <input ref={fileRef} type="file" accept="image/*,application/pdf" multiple onChange={e => handleFiles(e.target.files)} className="hidden" />
             </div>
 
             <div className="flex items-center gap-3 anim-fade-up delay-1">
-              <div className="flex-1 h-px bg-slate-200" />
-              <span className="text-xs text-slate-400 font-medium">or</span>
-              <div className="flex-1 h-px bg-slate-200" />
+              <div className="flex-1 h-px bg-surface-alt" />
+              <span className="text-xs text-subtle font-medium">or</span>
+              <div className="flex-1 h-px bg-surface-alt" />
             </div>
 
             <div className="grid grid-cols-2 gap-3 anim-fade-up delay-2">
               <button onClick={() => cameraRef.current?.click()}
-                className="flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-slate-200 bg-white text-slate-700 font-bold text-sm hover:border-indigo-300 hover:text-indigo transition-colors btn-press">
+                className="flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-edge bg-surface text-ink font-bold text-sm hover:border-indigo-300 hover:text-indigo transition-colors btn-press">
                 <Camera size={17} /> Camera
               </button>
               <button onClick={() => fileRef.current?.click()}
-                className="flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-slate-200 bg-white text-slate-700 font-bold text-sm hover:border-indigo-300 hover:text-indigo transition-colors btn-press">
+                className="flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-edge bg-surface text-ink font-bold text-sm hover:border-indigo-300 hover:text-indigo transition-colors btn-press">
                 <FileText size={17} /> Browse / PDF
               </button>
             </div>
@@ -277,11 +276,11 @@ export default function ScanPage() {
             {/* Thumbnail grid */}
             <div className="grid grid-cols-2 gap-3 stagger">
               {entries.map(entry => (
-                <div key={entry.id} className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 aspect-[3/4] shadow-md anim-scale-in">
+                <div key={entry.id} className="relative rounded-2xl overflow-hidden border border-edge bg-surface-alt aspect-[3/4] shadow-md anim-scale-in">
                   {entry.rendering ? (
                     <div className="w-full h-full flex flex-col items-center justify-center gap-2">
                       <Loader2 size={24} className="animate-spin" style={{ color: INDIGO }} />
-                      <span className="text-xs text-slate-400">{entry.isPdf ? 'Rendering PDF…' : 'Loading photo…'}</span>
+                      <span className="text-xs text-subtle">{entry.isPdf ? 'Rendering PDF…' : 'Loading photo…'}</span>
                     </div>
                   ) : (
                     <img
@@ -302,7 +301,7 @@ export default function ScanPage() {
                   )}
                   <button
                     onClick={() => removeEntry(entry.id)}
-                    className="absolute top-2 right-2 w-7 h-7 rounded-full bg-white shadow-md flex items-center justify-center text-red-400 hover:text-red-600 transition-colors"
+                    className="absolute top-2 right-2 w-7 h-7 rounded-full bg-surface shadow-md flex items-center justify-center text-red-400 hover:text-red-600 transition-colors"
                   >
                     <X size={15} />
                   </button>
@@ -312,18 +311,18 @@ export default function ScanPage() {
               {/* Add more tile */}
               <button
                 onClick={() => addMoreRef.current?.click()}
-                className="aspect-[3/4] rounded-2xl border-2 border-dashed border-slate-200 bg-white/80 flex flex-col items-center justify-center gap-2 hover:border-indigo-300 hover:bg-indigo-50/30 transition-colors btn-press anim-scale-in"
+                className="aspect-[3/4] rounded-2xl border-2 border-dashed border-edge bg-white/80 flex flex-col items-center justify-center gap-2 hover:border-indigo-300 hover:bg-indigo-50/30 transition-colors btn-press anim-scale-in"
               >
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: '#e0e7ff' }}>
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center tint-indigo-flat">
                   <Plus size={20} style={{ color: INDIGO }} />
                 </div>
-                <span className="text-xs font-semibold text-slate-400">Add more</span>
+                <span className="text-xs font-semibold text-subtle">Add more</span>
               </button>
               <input ref={addMoreRef} type="file" accept="image/*,application/pdf" multiple onChange={e => handleFiles(e.target.files)} className="hidden" />
             </div>
 
             {entries.length > 1 && (
-              <p className="text-xs text-center text-slate-400">
+              <p className="text-xs text-center text-subtle">
                 {entries.length} images — items from all will be merged into one receipt
               </p>
             )}
@@ -347,7 +346,7 @@ export default function ScanPage() {
         )}
 
         {parsing && (
-          <p className="text-center text-xs text-slate-400 -mt-2 anim-fade-in">
+          <p className="text-center text-xs text-subtle -mt-2 anim-fade-in">
             Analysing {entries.length > 1 ? 'your receipts' : 'your receipt'}… this takes 10–20 seconds
           </p>
         )}

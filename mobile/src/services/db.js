@@ -76,6 +76,15 @@ export async function setTransactionOverride(id, overrideFields) {
   await setDoc(doc(transactionsCol(), id), overrideFields, { merge: true });
 }
 
+// Single-doc lookup by id — used by plaidSync.js to find a pending
+// transaction's doc (by its stable id) when the posted transaction that
+// supersedes it arrives, so any Splitwise match already set on the pending
+// row can be carried forward before that row is deleted.
+export async function getTransaction(id) {
+  const snap = await getDoc(doc(transactionsCol(), id));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
 export async function deleteTransaction(id) {
   await deleteDoc(doc(transactionsCol(), id));
 }

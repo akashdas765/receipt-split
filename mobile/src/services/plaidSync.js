@@ -1,6 +1,35 @@
 import { syncTransactions } from './plaid';
-import { deleteTransaction } from './db';
+import { deleteTransaction, getTransaction } from './db';
 import { accountLabel } from '../utils/accountLabel';
+
+// Every field a user can set on a transaction via the match/transfer/payment
+// review UI (see utils/matcher.js, StatementsPage.jsx) — carried from a
+// pending transaction onto the posted transaction that supersedes it, so a
+// Splitwise match made while a charge was still pending isn't lost when it
+// posts under a new id. Kept as one list so a new override field only needs
+// adding here, not re-derived per call site.
+const OVERRIDE_FIELDS = [
+  'overrideSplitwiseId', 'overrideSplitwiseIds',
+  'overrideExpenseData', 'overrideExpenseDataList',
+  'overrideForcedUnmatched',
+  'overrideConfirmedTransfer', 'overrideDismissedTransferHint',
+  'overrideConfirmedPayment', 'overrideDismissedPaymentHint',
+];
+
+// A posted transaction's pendingTransactionId (see services/plaid.js) points
+// at the pending row it replaces — look that row up and copy over whatever
+// override fields it has. Returns `txn` unchanged if there's no pending
+// link, no prior doc, or the prior doc has no overrides set.
+async function carryOverridesForward(txn) {
+  if (!txn.pendingTransactionId) return txn;
+  const prior = await getTransaction(txn.pendingTransactionId).catch(() => null);
+  if (!prior) return txn;
+  const carried = {};
+  for (const field of OVERRIDE_FIELDS) {
+    if (prior[field] !== undefined) carried[field] = prior[field];
+  }
+  return Object.keys(carried).length ? { ...txn, ...carried } : txn;
+}
 
 // Core of a Plaid sync, extracted from PlaidConnect.jsx's doSync so it can
 // run without that component being mounted — needed by StatementsPage.jsx's
@@ -36,7 +65,9 @@ export async function syncPlaidConnection(conn, { full = false, onAdd }) {
     for (const [accountId, txns] of byAccount) {
       const acct  = accounts.find(a => a.id === accountId);
       const label = acct ? accountLabel(acct) : (conn.institutionName || 'Bank (Plaid)');
-      const withSource = txns.map(t => ({ ...t, source: `plaid-${conn.itemId}-${accountId}` }));
+      const withSource = await Promise.all(
+        txns.map(t => carryOverridesForward({ ...t, source: `plaid-${conn.itemId}-${accountId}` }))
+      );
       await onAdd(withSource, label);
     }
   }

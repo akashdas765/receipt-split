@@ -352,6 +352,33 @@ export default function StatementsPage() {
   // not count a transfer as spend even though the row itself stays visible.
   const matched = useMemo(() => matchTransactions(bankExpenseTxns, swExpenses), [bankExpenseTxns, swExpenses]);
   const matchedBankOnly = useMemo(() => matched.filter(t => !t.isSplitOnly), [matched]);
+  // Run the same matcher over pending transactions, kept separate from
+  // `matched` (and everything derived from it — stat-bar totals,
+  // accountSummary — all deliberately still exclude pending, see
+  // accountSummary's comment above) so this only adds link/unlink capability
+  // and match display to the Pending rows themselves, without pending
+  // amounts leaking into any settled-only total. Needs the same
+  // isBankAccount/isTransfer enrichment bankExpenseTxns gets — matcher.js
+  // reads both as input to skip transactions that were never matchable in
+  // the first place (a pending checking-account debit, a pending transfer
+  // between your own accounts), not just settled ones.
+  // matchTransactions also appends a synthetic isSplitOnly row for every
+  // unmatched Splitwise expense (see matcher.js) — matchedBankOnly already
+  // filters those out for the settled list above; this needs the same
+  // filter, or every Splitwise expense not matched within *this* call
+  // (a separate matchTransactions call, so it has no idea what the settled
+  // call already matched) shows up as a phantom "pending" row, and since
+  // those rows are sourced straight from swExpenses (no `source`, no
+  // account), they're identical no matter which account filter is active.
+  const matchedPending = useMemo(() => matchTransactions(
+    pendingTxns.map(t => ({
+      ...t,
+      isBankAccount: session.isBankAccountSource(t.source),
+      isTransfer: transferLabelById.has(t.id),
+      transferHintLabel: transferLabelById.get(t.id),
+    })),
+    swExpenses
+  ).filter(t => !t.isSplitOnly), [pendingTxns, swExpenses, transferLabelById]);
   const summary = useMemo(() => computeSummary(matched.filter(t => !t.isTransfer)), [matched]);
 
   const splitwiseOwed = useMemo(() => swExpenses.reduce((s, e) => s + (e.myOwedShare || 0), 0), [swExpenses]);
@@ -807,7 +834,7 @@ export default function StatementsPage() {
                     <TransactionsList
                       matched={matchedBankOnly}
                       creditTxns={monthlyPaymentTxns}
-                      pendingTxns={pendingTxns}
+                      pendingTxns={matchedPending}
                       accountSummary={accountSummary}
                       groupName={groupName}
                       monthRange={monthRange}

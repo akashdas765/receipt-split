@@ -120,7 +120,6 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
         {filter === 0 ? (
           combinedAll.map(({ t, kind }) => (
             kind === 'credit' ? <CreditRow key={t.id} txn={t} onDelete={onDelete} /> :
-            kind === 'pending' ? <PendingRow key={t.id} txn={t} onDelete={onDelete} /> :
             <DebitRow key={t.id} txn={t} isOpen={!!expanded[t.id]} setExpanded={setExpanded}
               groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
               onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} />
@@ -128,7 +127,11 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
         ) : (
           <>
             {showCredits && creditTxns.map(txn => <CreditRow key={txn.id} txn={txn} onDelete={onDelete} />)}
-            {showPending && pendingTxns.map(txn => <PendingRow key={txn.id} txn={txn} onDelete={onDelete} />)}
+            {showPending && pendingTxns.map(txn => (
+              <DebitRow key={txn.id} txn={txn} isOpen={!!expanded[txn.id]} setExpanded={setExpanded}
+                groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
+                onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} />
+            ))}
             {displayed.map(txn => (
               <DebitRow key={txn.id} txn={txn} isOpen={!!expanded[txn.id]} setExpanded={setExpanded}
                 groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
@@ -166,31 +169,12 @@ function CreditRow({ txn, onDelete }) {
   );
 }
 
-function PendingRow({ txn, onDelete }) {
-  return (
-    <div className="rounded-2xl border border-edge border-dashed bg-surface p-3 flex items-center gap-3">
-      <Clock size={16} className="text-subtle shrink-0" />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
-          <p className="text-sm font-semibold text-muted truncate">{txn.description}</p>
-          <span className="text-[10px] font-bold text-muted bg-surface-alt px-1.5 rounded-full shrink-0">Pending</span>
-        </div>
-        <p className="text-xs text-subtle mt-0.5 truncate">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
-      </div>
-      <p className="text-sm font-bold text-muted shrink-0">-{formatCurrency(txn.amount)}</p>
-      <button onClick={() => onDelete(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
-        <Trash2 size={14} />
-      </button>
-    </div>
-  );
-}
-
 function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete }) {
   const isOverridden = txn.manualOverride;
   const suggestion   = !txn.isSplitwised ? txn.suggestedMatch : null;
 
   return (
-    <div className={`rounded-2xl overflow-hidden border bg-surface ${
+    <div className={`rounded-2xl overflow-hidden border bg-surface ${txn.isPending ? 'border-dashed' : ''} ${
       txn.isTransfer ? 'border-indigo-100' : txn.isSplitwised ? 'border-emerald-100' : suggestion ? 'border-indigo-100' : 'border-amber-100'
     }`}>
       <div className="w-full flex items-center gap-2 p-3">
@@ -209,6 +193,11 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
               {txn.transferHintLabel ? <ArrowLeftRight size={12} style={{ color: INDIGO }} className="shrink-0" /> : <span className="text-sm">{getCategoryIcon(txn.category)}</span>}
               <p className="text-sm font-semibold text-ink truncate">{txn.transferHintLabel || txn.description}</p>
               {isOverridden && <span className="text-xs bg-indigo-50 px-1.5 rounded-full shrink-0" style={{ color: INDIGO }}>manual</span>}
+              {txn.isPending && (
+                <span className="text-[10px] font-bold text-muted bg-surface-alt px-1.5 rounded-full shrink-0 flex items-center gap-0.5">
+                  <Clock size={9} /> Pending
+                </span>
+              )}
             </div>
             {txn.transferHintLabel && <p className="text-xs text-muted mt-0.5 truncate">{txn.description}</p>}
             <p className="text-xs text-subtle mt-0.5 truncate">

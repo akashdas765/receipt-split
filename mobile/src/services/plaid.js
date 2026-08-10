@@ -164,6 +164,12 @@ export async function syncTransactions(accessToken, cursor) {
         isPayment:   isCredit || isPaymentTransaction(desc),
         isCredit,
         isPending:   !!t.pending,
+        // Plaid sets this on the POSTED transaction to the transaction_id
+        // it had while pending — lets plaidSync.js carry a Splitwise match
+        // (or any other override) made on the pending row forward onto the
+        // posted one before the old pending doc is deleted. Omitted (not
+        // set to undefined/null) when absent, same reasoning as postedDate.
+        ...(t.pending_transaction_id ? { pendingTransactionId: `plaid-${t.pending_transaction_id}` } : {}),
         // One Plaid Item (one login) can cover several cards/accounts —
         // this is what lets PlaidConnect.jsx split a sync's results back
         // out per account instead of lumping every card into one group.

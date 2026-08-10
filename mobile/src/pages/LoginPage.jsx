@@ -1,15 +1,18 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Receipt, Mail, Lock, AlertCircle } from 'lucide-react';
-import { login } from '../services/auth';
+import { login, resetPassword } from '../services/auth';
+import { useToast } from '../components/ToastProvider';
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [email,   setEmail]   = useState('');
   const [pass,    setPass]    = useState('');
   const [showPw,  setShowPw]  = useState(false);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
+  const [resetting, setResetting] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -21,6 +24,19 @@ export default function LoginPage() {
       setError(err.message || 'Invalid email or password.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email.trim()) { setError('Enter your email above first, then tap "Forgot password?"'); return; }
+    setError(''); setResetting(true);
+    try {
+      await resetPassword(email.trim());
+      toast.success(`Password reset email sent to ${email.trim()}`);
+    } catch (err) {
+      toast.error(err?.message || 'Could not send reset email');
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -65,6 +81,12 @@ export default function LoginPage() {
                 {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
+            <button
+              type="button" onClick={handleForgotPassword} disabled={resetting}
+              className="text-xs font-semibold mt-2 disabled:opacity-60" style={{ color: 'var(--indigo)' }}
+            >
+              {resetting ? 'Sending…' : 'Forgot password?'}
+            </button>
           </div>
 
           {error && (

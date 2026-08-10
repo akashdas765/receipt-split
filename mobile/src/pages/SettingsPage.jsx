@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, Key, Mail, LogOut, Moon, Sun, Bell, BellOff } from 'lucide-react';
+import { Eye, EyeOff, Key, Mail, Lock, LogOut, Moon, Sun, Bell, BellOff } from 'lucide-react';
 import { auth } from '../services/firebase';
-import { logout } from '../services/auth';
+import { logout, changePassword } from '../services/auth';
 import { updateSplitwiseKey } from '../services/db';
 import { session } from '../services/session';
 import { requestNotificationPermission } from '../services/pwa';
@@ -31,6 +31,12 @@ export default function SettingsPage() {
   const [saving,   setSaving]   = useState(false);
   const [notifPermission, setNotifPermission] = useState(initialNotifPermission);
 
+  const [currentPw, setCurrentPw] = useState('');
+  const [newPw,      setNewPw]     = useState('');
+  const [confirmPw,  setConfirmPw] = useState('');
+  const [pwRevealed, setPwRevealed] = useState(false);
+  const [changingPw, setChangingPw] = useState(false);
+
   const savedKey = session.getKey() || '';
   const dirty    = apiKey.trim() !== savedKey;
 
@@ -43,6 +49,25 @@ export default function SettingsPage() {
       toast.error(err?.message || 'Could not update API key');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (!currentPw || !newPw || !confirmPw) { toast.error('Fill in all three password fields'); return; }
+    if (newPw.length < 6) { toast.error('New password must be at least 6 characters'); return; }
+    if (newPw !== confirmPw) { toast.error('New passwords do not match'); return; }
+    setChangingPw(true);
+    try {
+      await changePassword(currentPw, newPw);
+      setCurrentPw(''); setNewPw(''); setConfirmPw('');
+      toast.success('Password changed');
+    } catch (err) {
+      const message = err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential'
+        ? 'Current password is incorrect'
+        : (err?.message || 'Could not change password');
+      toast.error(message);
+    } finally {
+      setChangingPw(false);
     }
   };
 
@@ -90,6 +115,52 @@ export default function SettingsPage() {
             className="w-full py-2.5 rounded-xl font-bold text-sm text-white btn-gradient btn-press disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
           >
             {saving ? 'Verifying…' : 'Save key'}
+          </button>
+        </Section>
+
+        <Section title="Change password">
+          <div className="flex items-center gap-2 border-2 border-edge rounded-xl px-3 py-3 focus-within:border-indigo-300 transition-colors mb-2">
+            <Lock size={16} className="text-subtle shrink-0" />
+            <input
+              type={pwRevealed ? 'text' : 'password'}
+              value={currentPw}
+              onChange={e => setCurrentPw(e.target.value)}
+              placeholder="Current password"
+              autoComplete="current-password"
+              className="flex-1 text-sm text-ink bg-transparent outline-none placeholder-slate-300"
+            />
+          </div>
+          <div className="flex items-center gap-2 border-2 border-edge rounded-xl px-3 py-3 focus-within:border-indigo-300 transition-colors mb-2">
+            <Lock size={16} className="text-subtle shrink-0" />
+            <input
+              type={pwRevealed ? 'text' : 'password'}
+              value={newPw}
+              onChange={e => setNewPw(e.target.value)}
+              placeholder="New password (min 6 characters)"
+              autoComplete="new-password"
+              className="flex-1 text-sm text-ink bg-transparent outline-none placeholder-slate-300"
+            />
+          </div>
+          <div className="flex items-center gap-2 border-2 border-edge rounded-xl px-3 py-3 focus-within:border-indigo-300 transition-colors mb-3">
+            <Lock size={16} className="text-subtle shrink-0" />
+            <input
+              type={pwRevealed ? 'text' : 'password'}
+              value={confirmPw}
+              onChange={e => setConfirmPw(e.target.value)}
+              placeholder="Confirm new password"
+              autoComplete="new-password"
+              className="flex-1 text-sm text-ink bg-transparent outline-none placeholder-slate-300"
+            />
+            <button type="button" onClick={() => setPwRevealed(r => !r)} className="text-subtle hover:text-muted shrink-0">
+              {pwRevealed ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </div>
+          <button
+            onClick={handleChangePassword}
+            disabled={changingPw || !currentPw || !newPw || !confirmPw}
+            className="w-full py-2.5 rounded-xl font-bold text-sm text-white btn-gradient btn-press disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
+          >
+            {changingPw ? 'Changing…' : 'Change password'}
           </button>
         </Section>
 

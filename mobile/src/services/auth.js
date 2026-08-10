@@ -3,6 +3,10 @@ import {
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
+  sendPasswordResetEmail,
+  reauthenticateWithCredential,
+  updatePassword,
+  EmailAuthProvider,
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
@@ -52,4 +56,25 @@ export async function logout() {
 
 export function onAuthChange(callback) {
   return onAuthStateChanged(auth, callback);
+}
+
+// LoginPage's "Forgot password?" — Firebase handles the email delivery and
+// the actual reset form (hosted on the project's own auth domain), so this
+// app never sees or sets the new password itself.
+export async function resetPassword(email) {
+  await sendPasswordResetEmail(auth, email);
+}
+
+// SettingsPage's "Change password". updatePassword requires a *recent*
+// sign-in — reauthenticating with the current password first (rather than
+// just calling updatePassword and letting Firebase's auth/requires-recent-
+// login error surface) means the user never hits that error mid-flow, and
+// doubles as verifying they actually know the current password before
+// changing it.
+export async function changePassword(currentPassword, newPassword) {
+  const user = auth.currentUser;
+  if (!user?.email) throw new Error('Not signed in.');
+  const credential = EmailAuthProvider.credential(user.email, currentPassword);
+  await reauthenticateWithCredential(user, credential);
+  await updatePassword(user, newPassword);
 }

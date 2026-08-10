@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2, Clock, ArrowLeftRight, Plus } from 'lucide-react';
+import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2, Clock, ArrowLeftRight, Plus, CreditCard } from 'lucide-react';
 import { formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { getCategoryIcon, ALL_CATEGORIES } from '../utils/categoryDetector';
 
@@ -20,12 +20,13 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
   const [filter,   setFilter]   = useState(0); // 0=All 1=Unmatched 2=Matched 3=Credits 4=Pending
   const [expanded, setExpanded] = useState({});
 
-  // Transfers are neither — they're excluded from both (matcher.js never
-  // even tries to score them), but stay visible in the "All" view (which
-  // renders straight off `matched`, unfiltered) with their own distinct
-  // row treatment (see DebitRow's isTransfer branch below).
-  const matchedTxns   = matched.filter(t => t.isSplitwised && !t.isTransfer);
-  const unmatchedTxns = matched.filter(t => !t.isSplitwised && !t.isTransfer);
+  // Transfers and payments are neither — they're excluded from both
+  // (matcher.js never even tries to score them), but stay visible in the
+  // "All" view (which renders straight off `matched`, unfiltered) with
+  // their own distinct row treatment (see DebitRow's isTransfer/isPayment
+  // branches below).
+  const matchedTxns   = matched.filter(t => t.isSplitwised && !t.isTransfer && !t.isPayment);
+  const unmatchedTxns = matched.filter(t => !t.isSplitwised && !t.isTransfer && !t.isPayment);
   const suggestedCount = unmatchedTxns.filter(t => t.suggestedMatch).length;
   const displayed =
     filter === 1 ? unmatchedTxns :
@@ -175,18 +176,20 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
 
   return (
     <div className={`rounded-2xl overflow-hidden border bg-surface ${txn.isPending ? 'border-dashed' : ''} ${
-      txn.isTransfer ? 'border-indigo-100' : txn.isSplitwised ? 'border-emerald-100' : suggestion ? 'border-indigo-100' : 'border-amber-100'
+      txn.isTransfer ? 'border-indigo-100' : txn.isPayment ? 'border-edge' : txn.isSplitwised ? 'border-emerald-100' : suggestion ? 'border-indigo-100' : 'border-amber-100'
     }`}>
       <div className="w-full flex items-center gap-2 p-3">
         <button className="flex-1 flex items-center gap-3 text-left min-w-0" onClick={() => setExpanded(p => ({ ...p, [txn.id]: !p[txn.id] }))}>
           <div className="shrink-0">
             {txn.isTransfer
               ? <ArrowLeftRight size={18} style={{ color: INDIGO }} />
-              : txn.isSplitwised
-                ? <CheckCircle2 size={18} className="text-emerald-500" />
-                : suggestion
-                  ? <Sparkles size={18} style={{ color: INDIGO }} />
-                  : <AlertCircle size={18} className="text-amber-500" />}
+              : txn.isPayment
+                ? <CreditCard size={18} className="text-subtle" />
+                : txn.isSplitwised
+                  ? <CheckCircle2 size={18} className="text-emerald-500" />
+                  : suggestion
+                    ? <Sparkles size={18} style={{ color: INDIGO }} />
+                    : <AlertCircle size={18} className="text-amber-500" />}
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5">
@@ -254,6 +257,12 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
               </p>
               <p className="text-xs text-muted mt-1">Confirm or dismiss it from the Transfers tab.</p>
             </div>
+          ) : txn.isPayment ? (
+            <div className="rounded-xl p-2.5 bg-surface-alt">
+              <p className="text-xs flex items-center gap-1.5 text-muted">
+                <CreditCard size={12} /> Bill payment or account transfer — not spend, not Splitwise-matchable.
+              </p>
+            </div>
           ) : txn.isSplitwised ? (
             <div className="bg-emerald-50 rounded-xl p-2.5 space-y-1">
               <p className="text-emerald-600 text-xs font-semibold">
@@ -302,7 +311,7 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
             </div>
           )}
 
-          {!txn.isTransfer && (
+          {!txn.isTransfer && !txn.isPayment && (
           <div className="flex gap-2 pt-1">
             {txn.isSplitwised ? (
               <>

@@ -222,9 +222,20 @@ export default function StatementsPage() {
     [transferPairsThisMonth, transferHintsThisMonth]
   );
 
+  // Every settled DEBIT this month, period — this (and matched, which wraps
+  // it) is the ledger the "All" filter in the Transactions tab draws from,
+  // so it can't drop rows just because they're a bill payment/transfer
+  // (isPayment). Those still need to stay OUT of spend totals and
+  // Splitwise auto-matching (matcher.js's Section 3 skip now checks
+  // isPayment too) — but "not spend" and "not shown" are different things,
+  // and only the former is actually true for a real transaction that
+  // genuinely happened on this account. Credits are excluded here (not via
+  // the old isPayment flag, which happened to also be true for every
+  // credit — see plaid.js — but directly via isCredit) since they're
+  // already the paymentsReceived/creditTxns list's job to show.
   const bankExpenseTxns   = useMemo(() =>
     monthlyTransactions
-      .filter(t => !t.isPayment && !t.isPending)
+      .filter(t => !t.isCredit && !t.isPending)
       .map(t => ({
         ...t,
         isBankAccount: session.isBankAccountSource(t.source),
@@ -254,12 +265,27 @@ export default function StatementsPage() {
       .map(t => ({ ...t, isTransfer: transferLabelById.has(t.id), transferHintLabel: transferLabelById.get(t.id) })),
     [monthlyTransactions, transferLabelById]
   );
-  const pendingTxns = useMemo(() => monthlyTransactions.filter(t => t.isPending && !t.isPayment), [monthlyTransactions]);
+  // Same isCredit-not-isPayment reasoning as bankExpenseTxns above — a
+  // pending bill payment/transfer debit still belongs in the ledger.
+  // Pending credits are left out here (unchanged from before): they'd need
+  // DebitRow to render with credit sign/styling, which it doesn't do today
+  // — a separate gap from the one being fixed here.
+  const pendingTxns = useMemo(() => monthlyTransactions.filter(t => t.isPending && !t.isCredit), [monthlyTransactions]);
 
   // Spend/expense TOTALS still exclude transfers (a transfer was never
   // spend, however visible it stays in the actual transaction list) — used
-  // by the stat bar below instead of bankExpenseTxns directly.
-  const realExpenseTxns = useMemo(() => bankExpenseTxns.filter(t => !t.isTransfer), [bankExpenseTxns]);
+  // by the stat bar below instead of bankExpenseTxns directly. Excludes only
+  // CONFIRMED transfers (overrideConfirmedTransfer), not just detected ones
+  // (isTransfer) — same "don't change a total before confirmation" policy
+  // accountSummary/paymentsMade/paymentsReceived already use below. An
+  // unconfirmed candidate that turns out to be a false positive (two
+  // unrelated charges that coincidentally matched) would otherwise vanish
+  // from "Actual spend" the moment it's detected, before the user ever gets
+  // a chance to dismiss it as "not a transfer" in the Transfers tab. Also
+  // excludes isPayment (bill payments/account transfers) — bankExpenseTxns
+  // now includes those for ledger completeness (see its own comment), but
+  // paying your own card bill or moving money to savings still isn't spend.
+  const realExpenseTxns = useMemo(() => bankExpenseTxns.filter(t => !t.isPayment && !t.overrideConfirmedTransfer), [bankExpenseTxns]);
 
   // Account-aware Debit/Credit/Net summary — deliberately computed from the
   // RAW month(+account)-scoped transaction list, not bankExpenseTxns/
@@ -333,8 +359,11 @@ export default function StatementsPage() {
 
   // matched includes isTransfer rows (matcher.js just never scores them —
   // see its Section 3 skip) so they still render in the Transactions tab;
-  // computeSummary excludes them explicitly since "My actual spend" must
-  // not count a transfer as spend even though the row itself stays visible.
+  // computeSummary excludes only CONFIRMED transfers (same reasoning as
+  // realExpenseTxns above) since "My actual spend" must not count a
+  // transfer as spend once it's actually confirmed as one, but shouldn't
+  // silently drop an unconfirmed candidate before the user's had a chance
+  // to review it — plus isPayment rows, same as realExpenseTxns.
   const matched = useMemo(() => matchTransactions(bankExpenseTxns, swExpenses), [bankExpenseTxns, swExpenses]);
   const matchedBankOnly = useMemo(() => matched.filter(t => !t.isSplitOnly), [matched]);
   // Run the same matcher over pending transactions, kept separate from
@@ -364,7 +393,7 @@ export default function StatementsPage() {
     })),
     swExpenses
   ).filter(t => !t.isSplitOnly), [pendingTxns, swExpenses, transferLabelById]);
-  const summary = useMemo(() => computeSummary(matched.filter(t => !t.isTransfer)), [matched]);
+  const summary = useMemo(() => computeSummary(matched.filter(t => !t.isPayment && !t.overrideConfirmedTransfer)), [matched]);
 
   const splitwiseOwed = useMemo(() => swExpenses.reduce((s, e) => s + (e.myOwedShare || 0), 0), [swExpenses]);
   const personalTotal = useMemo(() =>
@@ -386,10 +415,10 @@ export default function StatementsPage() {
 
   const paymentsMadeTotal     = paymentsMade.reduce((s, t) => s + (t.amount || 0), 0);
   const paymentsReceivedTotal = paymentsReceived.reduce((s, t) => s + (t.amount || 0), 0);
-  // Excludes transfers — the "needs your attention" badge shouldn't count
-  // rows that were never Splitwise-matchable to begin with (same reasoning
-  // as excluding them from realExpenseTxns above).
-  const unmatchedCt  = matchedBankOnly.filter(t => !t.isSplitwised && !t.isTransfer).length;
+  // Excludes transfers and payments — the "needs your attention" badge
+  // shouldn't count rows that were never Splitwise-matchable to begin with
+  // (same reasoning as excluding them from realExpenseTxns above).
+  const unmatchedCt  = matchedBankOnly.filter(t => !t.isSplitwised && !t.isTransfer && !t.isPayment).length;
 
   // Transactions saved before their description was checked against the
   // payment patterns (isPayment is stamped once at write time, not

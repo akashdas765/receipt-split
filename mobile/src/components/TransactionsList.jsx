@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2, Clock, ArrowLeftRight, Plus } from 'lucide-react';
 import { formatCurrency, formatShortDate } from '../utils/statementFormatters';
-import { getCategoryIcon } from '../utils/categoryDetector';
+import { getCategoryIcon, ALL_CATEGORIES } from '../utils/categoryDetector';
 
 const INDIGO = '#6366f1';
 
@@ -16,7 +16,7 @@ const INDIGO = '#6366f1';
 // Previously two separate tabs (Review + All) — merged here so "all my
 // card activity" and "what still needs matching" live in one list instead
 // of two.
-export default function TransactionsList({ matched, creditTxns, pendingTxns = [], accountSummary, groupName, monthRange, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete }) {
+export default function TransactionsList({ matched, creditTxns, pendingTxns = [], accountSummary, groupName, monthRange, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory }) {
   const [filter,   setFilter]   = useState(0); // 0=All 1=Unmatched 2=Matched 3=Credits 4=Pending
   const [expanded, setExpanded] = useState({});
 
@@ -122,7 +122,7 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
             kind === 'credit' ? <CreditRow key={t.id} txn={t} onDelete={onDelete} /> :
             <DebitRow key={t.id} txn={t} isOpen={!!expanded[t.id]} setExpanded={setExpanded}
               groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
-              onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} />
+              onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} onChangeCategory={onChangeCategory} />
           ))
         ) : (
           <>
@@ -130,12 +130,12 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
             {showPending && pendingTxns.map(txn => (
               <DebitRow key={txn.id} txn={txn} isOpen={!!expanded[txn.id]} setExpanded={setExpanded}
                 groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
-                onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} />
+                onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} onChangeCategory={onChangeCategory} />
             ))}
             {displayed.map(txn => (
               <DebitRow key={txn.id} txn={txn} isOpen={!!expanded[txn.id]} setExpanded={setExpanded}
                 groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
-                onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} />
+                onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} onChangeCategory={onChangeCategory} />
             ))}
           </>
         )}
@@ -169,7 +169,7 @@ function CreditRow({ txn, onDelete }) {
   );
 }
 
-function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete }) {
+function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory }) {
   const isOverridden = txn.manualOverride;
   const suggestion   = !txn.isSplitwised ? txn.suggestedMatch : null;
 
@@ -233,6 +233,20 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
               <span className="text-muted">{formatShortDate(txn.postedDate)}</span>
             </div>
           )}
+          <div className="flex items-center justify-between gap-2 px-0.5">
+            <span className="text-xs text-subtle">Category</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm">{getCategoryIcon(txn.category)}</span>
+              <select
+                value={txn.category || 'Other'}
+                onChange={e => onChangeCategory(txn, e.target.value)}
+                onClick={e => e.stopPropagation()}
+                className="text-xs font-semibold text-ink bg-transparent outline-none text-right"
+              >
+                {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
           {txn.isTransfer ? (
             <div className="rounded-xl p-2.5 tint-indigo-flat">
               <p className="text-xs flex items-center gap-1.5" style={{ color: INDIGO }}>

@@ -4,6 +4,7 @@ import { Store, Calendar, List, DollarSign, Trash2, Plus, ChevronDown, CheckCirc
 import { fetchGroups } from '../services/splitwise';
 import { memberColor } from '../utils/memberColor';
 import { normalizeItems, lineAmount } from '../utils/receiptItems';
+import { ALL_CATEGORIES, getCategoryIcon } from '../utils/categoryDetector';
 import PageHeader from '../components/PageHeader';
 
 const INDIGO  = '#6366f1';
@@ -23,6 +24,7 @@ export default function DetailPage() {
 
   const [items,         setItems]         = useState(normalizeItems(receipt?.items));
   const [merchant,      setMerchant]      = useState(receipt?.merchant || '');
+  const [category,      setCategory]      = useState(receipt?.category || 'Other');
   const [date,          setDate]          = useState(receipt?.date     || new Date().toISOString().split('T')[0]);
   const [groups,        setGroups]        = useState([]);
   const [selectedGroup, setSelectedGroup] = useState(null);
@@ -264,6 +266,24 @@ export default function DetailPage() {
                 </Tag>
               );
             })}
+          </div>
+
+          {/* Overall spend category — separate from each item's food/drink/
+              alcohol/tip/fee/other category below, which only exists to
+              drive grocery tax-exemption. AI-suggested from the merchant/
+              items during parsing (see services/groq.js), editable here. */}
+          <div className="flex items-center justify-between gap-2 bg-surface rounded-2xl p-3 border border-edge shadow-sm anim-fade-up">
+            <span className="text-xs font-semibold text-subtle">Category</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm">{getCategoryIcon(category)}</span>
+              <select
+                value={category}
+                onChange={e => setCategory(e.target.value)}
+                className="text-sm font-bold text-ink bg-transparent outline-none text-right"
+              >
+                {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
           </div>
 
           {/* Group selector */}
@@ -528,6 +548,7 @@ export default function DetailPage() {
               personTotals: calcPersonTotals(),
               grandTotal:   grandTotal(),
               merchant:     merchant || receipt.merchant,
+              category,
               // Present if this receipt was already posted — re-posting
               // then updates that expense instead of creating a duplicate.
               existingExpenseId: receipt.splitwise_expense_id || null,

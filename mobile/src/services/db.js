@@ -76,6 +76,13 @@ export async function setTransactionOverride(id, overrideFields) {
   await setDoc(doc(transactionsCol(), id), overrideFields, { merge: true });
 }
 
+// Manual category correction from TransactionsList — separate from
+// setTransactionOverride's Splitwise-match fields since category isn't a
+// match-override, just a direct field update (same merge:true pattern).
+export async function updateTransactionCategory(id, category) {
+  await setDoc(doc(transactionsCol(), id), { category }, { merge: true });
+}
+
 // Single-doc lookup by id — used by plaidSync.js to find a pending
 // transaction's doc (by its stable id) when the posted transaction that
 // supersedes it arrives, so any Splitwise match already set on the pending

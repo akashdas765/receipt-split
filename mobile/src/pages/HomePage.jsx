@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Receipt, Settings as SettingsIcon, Trash2, CheckCheck, AlertTriangle, X, Users, AlertCircle, Landmark, CreditCard, Loader2 } from 'lucide-react';
-import { loadReceiptsForInsights, deleteReceipt, loadManualAccounts, saveManualAccount, deleteManualAccount } from '../services/db';
+import { loadReceiptsForInsights, deleteReceipt, saveReceipt, loadManualAccounts, saveManualAccount, deleteManualAccount } from '../services/db';
 import { fetchCurrentUser, fetchAllExpenses, fetchGroups, fetchNetBalance } from '../services/splitwise';
 import { fetchAccountBalances } from '../services/plaid';
 import { session } from '../services/session';
 import { accountLabel } from '../utils/accountLabel';
+import { getCategoryIcon } from '../utils/categoryDetector';
 import { getMonthRange } from '../utils/statementFormatters';
 import { maybeShowPendingReminder } from '../services/pwa';
 import { useToast } from '../components/ToastProvider';
@@ -284,6 +285,24 @@ export default function HomePage() {
     }
   };
 
+  // Inline category change from ReceiptDetail — no need to open the full
+  // Edit form just to fix a category. saveReceipt's merge:true write only
+  // touches this one field; receipts/openReceipt are both updated
+  // optimistically so the pill and the list behind it agree immediately,
+  // rolled back if the write fails.
+  const handleChangeReceiptCategory = async (receipt, category) => {
+    const previous = receipt.category;
+    setReceipts(r => r.map(x => x.id === receipt.id ? { ...x, category } : x));
+    setOpenReceipt(r => r && r.id === receipt.id ? { ...r, category } : r);
+    try {
+      await saveReceipt({ id: receipt.id, category });
+    } catch {
+      toast.error('Could not update category');
+      setReceipts(r => r.map(x => x.id === receipt.id ? { ...x, category: previous } : x));
+      setOpenReceipt(r => r && r.id === receipt.id ? { ...r, category: previous } : r);
+    }
+  };
+
   const loading = loadingReceipts;
 
   return (
@@ -488,6 +507,12 @@ export default function HomePage() {
                           </span>
                           <span className="text-slate-200">·</span>
                           <span className="text-xs text-subtle">{r.items?.length || 0} items</span>
+                          {r.category && (
+                            <>
+                              <span className="text-slate-200">·</span>
+                              <span className="text-xs text-subtle">{getCategoryIcon(r.category)} {r.category}</span>
+                            </>
+                          )}
                           {groupName(r.groupId) && (
                             <>
                               <span className="text-slate-200">·</span>
@@ -642,6 +667,7 @@ export default function HomePage() {
           groupName={groupName(openReceipt.groupId)}
           onEdit={() => navigate('/detail', { state: openReceipt })}
           onClose={() => setOpenReceipt(null)}
+          onChangeCategory={handleChangeReceiptCategory}
         />
       )}
 

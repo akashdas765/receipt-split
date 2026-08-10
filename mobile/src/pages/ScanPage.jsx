@@ -196,6 +196,12 @@ export default function ScanPage() {
         scanned_at: new Date().toISOString(),
         merchant:   base.merchant || null,
         date:       base.date     || null,
+        // Overall spend category for the whole receipt (Groceries, Food &
+        // Dining, ...) — separate from items[].category, which is a
+        // narrower food/drink/alcohol/tip/fee/other set that only exists to
+        // drive grocery tax-exemption (see DetailPage's isTaxable). Editable
+        // in DetailPage the same way bank transactions are in Statements.
+        category:   base.spendCategory || 'Other',
         subtotal:   results.reduce((s, r) => s + parseFloat(r.subtotal || 0), 0),
         tax:        results.reduce((s, r) => s + parseFloat(r.tax      || 0), 0),
         tip:        results.reduce((s, r) => s + parseFloat(r.tip      || 0), 0),

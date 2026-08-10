@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { AlertCircle, CreditCard, Landmark, HelpCircle, Wallet, Upload, X, RefreshCw, Loader2 } from 'lucide-react';
-import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride, reclassifyPayments, savePlaidConnection, TXN_MAX } from '../services/db';
+import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride, updateTransactionCategory, reclassifyPayments, savePlaidConnection, TXN_MAX } from '../services/db';
 import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { syncPlaidConnection } from '../services/plaidSync';
+import { categorizeTransactions } from '../services/categorize';
 import { fetchAccounts, defaultAccountType } from '../services/plaid';
 import { matchTransactions, computeSummary } from '../utils/matcher';
 import { detectTransfers } from '../utils/transferMatcher';
@@ -433,11 +434,23 @@ export default function StatementsPage() {
   // — this keeps local state consistent with that (no duplicate rows, and
   // any overrideSplitwiseId/etc. already applied locally survives).
   const handleAdd = useCallback(async (newTxns, sourceName) => {
-    await addTransactions(newTxns, sourceName);
+    // Manual entries already have a full category dropdown (see
+    // ManualEntryForm.jsx) — no AI call needed, and running one would just
+    // add latency to a single-row "Add transaction" click for no benefit.
+    // Everything else (Plaid/CSV/PDF) arrives with only a keyword-detected
+    // category, so refine those with an AI batch call before writing.
+    // Never blocks/fails the add itself — categorizeTransactions degrades
+    // to the existing keyword detection per-transaction if the call fails.
+    let txnsToAdd = newTxns;
+    if (sourceName !== 'Manual entry' && newTxns.length) {
+      const categories = await categorizeTransactions(newTxns.map(t => ({ id: t.id, description: t.description, amount: t.amount })));
+      txnsToAdd = newTxns.map(t => ({ ...t, category: categories.get(t.id) || t.category }));
+    }
+    await addTransactions(txnsToAdd, sourceName);
     const uploadedAt = new Date().toISOString();
     setTransactions(prev => {
       const byId = new Map(prev.map(t => [t.id, t]));
-      for (const t of newTxns) {
+      for (const t of txnsToAdd) {
         byId.set(t.id, { ...byId.get(t.id), ...t, sourceName, uploadedAt });
       }
       return Array.from(byId.values());
@@ -584,6 +597,16 @@ export default function StatementsPage() {
     overrideSplitwiseId: null, overrideExpenseData: null,
     overrideSplitwiseIds: null, overrideExpenseDataList: null,
   });
+
+  const handleChangeCategory = async (txn, category) => {
+    setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category } : t));
+    try {
+      await updateTransactionCategory(txn.id, category);
+    } catch {
+      toast.error('Could not update category');
+      setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category: txn.category } : t));
+    }
+  };
   // expenses: one or more picked in SplitwisePickerModal — a single card
   // charge sometimes needs linking to more than one Splitwise expense (see
   // matcher.js's forcedLinkIds/resolveForcedLinks for how these are read
@@ -844,6 +867,7 @@ export default function StatementsPage() {
                       onClearOverride={handleClearOverride}
                       onConfirmSuggestion={handleConfirmSuggestion}
                       onDelete={handleRemoveTxn}
+                      onChangeCategory={handleChangeCategory}
                     />
                   </>
                 )

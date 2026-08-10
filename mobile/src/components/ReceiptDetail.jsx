@@ -2,13 +2,14 @@ import React from 'react';
 import { X, CheckCircle2, Pencil } from 'lucide-react';
 import { memberColor } from '../utils/memberColor';
 import { normalizeItems, lineAmount, flattenShares } from '../utils/receiptItems';
+import { getCategoryIcon, getCategoryColor, ALL_CATEGORIES } from '../utils/categoryDetector';
 
 // View-only detail sheet for an already-posted receipt, opened from
 // HomePage. Shows the same total/split-breakdown/items summary
 // DetailPage's edit form works from, but read-only — "Edit" hands off to
 // that full form (navigate('/detail', {state: receipt})) instead of
 // switching modes in place, so there's exactly one editing surface.
-export default function ReceiptDetail({ receipt, groupName, onEdit, onClose }) {
+export default function ReceiptDetail({ receipt, groupName, onEdit, onClose, onChangeCategory }) {
   const items              = normalizeItems(receipt.items);
   const viewMembers        = receipt.members || [];
   const personTotals       = receipt.personTotals || {};
@@ -28,6 +29,20 @@ export default function ReceiptDetail({ receipt, groupName, onEdit, onClose }) {
           <div className="min-w-0">
             <p className="font-extrabold text-ink text-sm truncate">{receipt.merchant || 'Receipt'}</p>
             <p className="text-xl font-extrabold text-ink mt-0.5">${total.toFixed(2)}</p>
+            <span
+              className="inline-flex items-center gap-1 text-[11px] font-bold pl-2 pr-1 py-0.5 rounded-full mt-1.5"
+              style={{ background: getCategoryColor(receipt.category) + '1a', color: getCategoryColor(receipt.category) }}
+            >
+              {getCategoryIcon(receipt.category)}
+              <select
+                value={receipt.category || 'Other'}
+                onChange={e => onChangeCategory(receipt, e.target.value)}
+                className="bg-transparent outline-none font-bold"
+                style={{ color: getCategoryColor(receipt.category) }}
+              >
+                {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button

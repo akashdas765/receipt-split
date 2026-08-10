@@ -1,4 +1,5 @@
 import { auth } from './firebase';
+import { ALL_CATEGORIES } from '../utils/categoryDetector';
 
 // Requests go through our serverless proxy so the Groq API key never ships
 // in the client bundle (previously a VITE_* env var read straight from here).
@@ -18,7 +19,8 @@ JSON structure:
   "subtotal": 0.00,
   "tax": 0.00,
   "tip": 0.00,
-  "total": 0.00
+  "total": 0.00,
+  "spendCategory": "one of: ${ALL_CATEGORIES.join(', ')}"
 }
 
 Strict rules:
@@ -31,8 +33,9 @@ Strict rules:
 7. DO NOT TRUNCATE: Include every single item.
 8. VERIFY: Sum all items ≈ subtotal (pre-tax).
 9. TIP: Include as item with category "tip" AND set top-level tip field.
-10. CATEGORIES: food, drink, alcohol, tip, fee, other.
-11. All amounts positive. Use null for unknown fields.`;
+10. CATEGORIES (per item): food, drink, alcohol, tip, fee, other.
+11. All amounts positive. Use null for unknown fields.
+12. SPEND CATEGORY: "spendCategory" is ONE category for the WHOLE receipt (not per item) — pick from the exact list given above based on the merchant name and what was purchased (e.g. a grocery store → "Groceries", a restaurant → "Food & Dining", a pharmacy → "Healthcare"). If genuinely unclear, use "Other".`;
 
 function stripFences(text) {
   if (text.includes('```json')) return text.split('```json')[1].split('```')[0].trim();
@@ -69,6 +72,11 @@ function reconcile(parsed) {
     if (EXCLUDE_STARTS.some(p => desc.startsWith(p))) return false;
     return true;
   });
+  // Guard against a hallucinated/malformed value — spendCategory must be
+  // exactly one of the categories given in the prompt, or DetailPage's
+  // category dropdown (which only offers ALL_CATEGORIES) would show
+  // something not in its own option list.
+  if (!ALL_CATEGORIES.includes(parsed.spendCategory)) parsed.spendCategory = 'Other';
   return parsed;
 }
 

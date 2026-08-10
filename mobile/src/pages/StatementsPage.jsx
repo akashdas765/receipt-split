@@ -8,7 +8,7 @@ import { fetchAccounts, defaultAccountType } from '../services/plaid';
 import { matchTransactions, computeSummary } from '../utils/matcher';
 import { detectTransfers } from '../utils/transferMatcher';
 import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
-import { isPaymentTransaction, isCreditConfirmation } from '../utils/paymentDetector';
+import { isPaymentTransaction } from '../utils/paymentDetector';
 import { session } from '../services/session';
 import { useToast } from '../components/ToastProvider';
 import StatementUpload from '../components/StatementUpload';
@@ -192,7 +192,7 @@ export default function StatementsPage() {
   // rows made the Transactions tab disagree with what a real bank
   // statement shows (a transfer that's genuinely there just... wasn't).
   // Labeled wherever it appears instead (see bankExpenseTxns/
-  // monthlyPaymentTxns below); matcher.js separately skips scoring
+  // paymentsMade/paymentsReceived below); matcher.js separately skips scoring
   // isTransfer rows against Splitwise, same as it already does for
   // isBankAccount rows. Both sides of a pair get the identical label so
   // it reads the same regardless of which account you're viewing it from.
@@ -233,34 +233,27 @@ export default function StatementsPage() {
       })),
     [monthlyTransactions, transferLabelById]
   );
-  // A card "Payment Thank You"-style credit is your OWN money paying down
-  // your own balance — not new credit, same idea as a transfer not being
-  // real income. isCreditConfirmation's pattern match is reliable enough to
-  // surface as a suggestion, but (same lesson as the transfer false-
-  // positive) never confident enough to silently change a total on its own
-  // — so it's a candidate needing one tap to confirm, same shape as
-  // transfers. Bank accounts don't get this treatment — scoped via
-  // "not bank" rather than "=== 'credit'" since plenty of real card
-  // accounts never get an explicit accountType (unclassified/'other'
-  // sources are still cards, same convention accountSummary uses below
-  // for its bank-vs-card split).
-  const monthlyPaymentTxns = useMemo(() =>
+  // Payments tab: simple sign-based split, not pattern matching — every
+  // settled transaction this month is either money received (a credit) or
+  // money paid out (a debit), full stop. Replaces the old isCreditConfirmation
+  // guesswork (which tried to tell a card "payment thank you" apart from a
+  // plain merchant refund and needed its own confirm/dismiss step to do it).
+  // Transfers never count as either — same "only exclude once actually
+  // confirmed" policy used everywhere else in this file (an unconfirmed
+  // transfer candidate still counts here until confirmed in the Transfers
+  // tab), and pending is excluded since the amount isn't final yet.
+  const paymentsReceived = useMemo(() =>
     monthlyTransactions
-      .filter(t => t.isPayment)
-      .map(t => {
-        const isPaymentCandidate = t.isCredit && isCreditConfirmation(t.description) && session.getAccountType(t.source) !== 'bank';
-        return {
-          ...t,
-          isTransfer: transferLabelById.has(t.id),
-          transferHintLabel: transferLabelById.get(t.id),
-          isPaymentCandidate,
-          paymentConfirmed: isPaymentCandidate && !!t.overrideConfirmedPayment,
-          paymentNeedsConfirm: isPaymentCandidate && !t.overrideConfirmedPayment && !t.overrideDismissedPaymentHint,
-        };
-      }),
+      .filter(t => t.isCredit && !t.isPending && !t.overrideConfirmedTransfer)
+      .map(t => ({ ...t, isTransfer: transferLabelById.has(t.id), transferHintLabel: transferLabelById.get(t.id) })),
     [monthlyTransactions, transferLabelById]
   );
-  const unconfirmedPaymentCt = useMemo(() => monthlyPaymentTxns.filter(t => t.paymentNeedsConfirm).length, [monthlyPaymentTxns]);
+  const paymentsMade = useMemo(() =>
+    monthlyTransactions
+      .filter(t => !t.isCredit && !t.isPending && !t.overrideConfirmedTransfer)
+      .map(t => ({ ...t, isTransfer: transferLabelById.has(t.id), transferHintLabel: transferLabelById.get(t.id) })),
+    [monthlyTransactions, transferLabelById]
+  );
   const pendingTxns = useMemo(() => monthlyTransactions.filter(t => t.isPending && !t.isPayment), [monthlyTransactions]);
 
   // Spend/expense TOTALS still exclude transfers (a transfer was never
@@ -270,8 +263,8 @@ export default function StatementsPage() {
 
   // Account-aware Debit/Credit/Net summary — deliberately computed from the
   // RAW month(+account)-scoped transaction list, not bankExpenseTxns/
-  // monthlyPaymentTxns (which exclude confirmed transfers for Splitwise-
-  // matching purposes). A real bank statement counts a transfer-out as a
+  // paymentsMade/paymentsReceived (which exclude confirmed transfers for
+  // Splitwise-matching purposes). A real bank statement counts a transfer-out as a
   // debit and a transfer-in as a credit, so this reads isCredit straight
   // off monthlyTransactions instead, which already carries transfers with
   // their correct direction. Pending excluded (amount isn't final yet).
@@ -305,13 +298,12 @@ export default function StatementsPage() {
       // "don't change a total before confirmation" policy used everywhere
       // else in this file.
       const debit  = settled.filter(t => !t.isCredit && !t.overrideConfirmedTransfer).reduce((s, t) => s + (t.amount || 0), 0);
-      // Confirmed "payment thank you"-style credits are excluded here — your
-      // own money paying down your own card isn't real credit, same reason
-      // a confirmed transfer isn't real income (see transferAmt below).
-      // Unconfirmed candidates stay counted until the user actually
-      // confirms one, same "don't change a total before confirmation"
-      // policy used for transfers.
-      const credit = settled.filter(t => t.isCredit && !t.overrideConfirmedPayment && !t.overrideConfirmedTransfer).reduce((s, t) => s + (t.amount || 0), 0);
+      // Every credit is money received, full stop — no more guessing
+      // "is this specifically a bill-payment credit vs a refund" (see
+      // paymentsReceived/paymentsMade above for the same simplification).
+      // Confirmed transfers are still excluded — money moving in from one
+      // of your own accounts was never really a credit.
+      const credit = settled.filter(t => t.isCredit && !t.overrideConfirmedTransfer).reduce((s, t) => s + (t.amount || 0), 0);
       const inScope = scopePredicate;
       const transferPairAmt = transferPairsThisMonth
         .filter(p => p.confirmed && (inScope(p.debit.source) || inScope(p.credit.source)))
@@ -319,15 +311,7 @@ export default function StatementsPage() {
       const transferHintAmt = transferHintsThisMonth
         .filter(h => h.confirmed && inScope(h.txn.source))
         .reduce((s, h) => s + h.txn.amount, 0);
-      // "Payments made" (cards only) — the narrow isCreditConfirmation
-      // pattern ("payment thank you", "autopay", ...) specifically means a
-      // bill payment reduced the balance, as opposed to a merchant refund
-      // (also a credit, but not a payment) — isPayment alone can't tell
-      // these apart since every credit is already tagged isPayment.
-      const payments = settled
-        .filter(t => t.isCredit && isCreditConfirmation(t.description))
-        .reduce((s, t) => s + (t.amount || 0), 0);
-      return { debit, credit, net: credit - debit, transfers: transferPairAmt + transferHintAmt, payments };
+      return { debit, credit, net: credit - debit, transfers: transferPairAmt + transferHintAmt };
     };
 
     if (!accountFilter.startsWith('group:')) {
@@ -400,17 +384,8 @@ export default function StatementsPage() {
     [transactions, monthRange]
   );
 
-  // For a card, "Payments" should mean actual bill payments only — a
-  // merchant refund lands in the same isPayment bucket (it's a credit, not
-  // spend) but isn't a payment, so it stays out of this dedicated list
-  // (it's still visible in the Transactions tab's credit view). Bank
-  // accounts keep every isPayment credit — "money received" is a broader,
-  // legitimately mixed bucket there (interest, Zelle receipts, refunds).
-  const paymentsToShow = accountSummary.type === 'card'
-    ? monthlyPaymentTxns.filter(t => t.isPaymentCandidate)
-    : monthlyPaymentTxns;
-
-  const paymentTotal = paymentsToShow.reduce((s, t) => s + (t.amount || 0), 0);
+  const paymentsMadeTotal     = paymentsMade.reduce((s, t) => s + (t.amount || 0), 0);
+  const paymentsReceivedTotal = paymentsReceived.reduce((s, t) => s + (t.amount || 0), 0);
   // Excludes transfers — the "needs your attention" badge shouldn't count
   // rows that were never Splitwise-matchable to begin with (same reasoning
   // as excluding them from realExpenseTxns above).
@@ -669,12 +644,6 @@ export default function StatementsPage() {
     applyOverride(pair.credit.id, { overrideDismissedTransferHint: true });
   };
 
-  // Confirming/dismissing a card "payment thank you"-style credit — see
-  // monthlyPaymentTxns above for why this needs the same confirm step as a
-  // transfer before accountSummary pulls it out of the card's credit total.
-  const handleConfirmPayment = txn => applyOverride(txn.id, { overrideConfirmedPayment: true });
-  const handleDismissPaymentHint = txn => applyOverride(txn.id, { overrideDismissedPaymentHint: true });
-
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
       <PageHeader title="Statements" showBack={false}>
@@ -737,23 +706,22 @@ export default function StatementsPage() {
             </div>
             <div className="bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
               <p className="font-bold text-ink">{formatCurrency(realExpenseTxns.reduce((s, t) => s + (t.amount || 0), 0))}</p>
-              <p className="text-subtle text-xs">Gross total</p>
+              <p className="text-subtle text-xs">Total transactions amount</p>
             </div>
-            <div className="col-span-2 rounded-xl px-3 py-2.5 border border-indigo-100 card-month-total">
-              <div className="flex items-baseline justify-between">
-                <p className="font-extrabold text-lg" style={{ color: INDIGO }}>{formatCurrency(summary.totalEffective)}</p>
-                {summary.totalSavings > 0.5 && (
-                  <p className="text-emerald-500 text-xs font-semibold">-{formatCurrency(summary.totalSavings)} saved via splits</p>
-                )}
-              </div>
-              <p className="text-subtle text-xs">My actual spend</p>
+            <div className="rounded-xl px-3 py-2.5 border border-indigo-100 card-month-total">
+              <p className="font-extrabold text-lg" style={{ color: INDIGO }}>{formatCurrency(summary.totalEffective)}</p>
+              <p className="text-subtle text-xs">Actual spend</p>
+            </div>
+            <div className="rounded-xl px-3 py-2.5 border border-emerald-100 tint-emerald-card">
+              <p className="font-extrabold text-lg text-emerald-600">{formatCurrency(summary.totalSavings)}</p>
+              <p className="text-subtle text-xs">Amount saved via splits</p>
             </div>
             <div className="bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
-              <p className="font-bold text-muted">{paymentsToShow.length}</p>
+              <p className="font-bold text-muted">{paymentsMade.length}</p>
               <p className="text-subtle text-xs">Payments made</p>
             </div>
             <div className="bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
-              <p className="font-bold text-muted">{formatCurrency(paymentTotal)}</p>
+              <p className="font-bold text-muted">{formatCurrency(paymentsMadeTotal)}</p>
               <p className="text-subtle text-xs">Payments total</p>
             </div>
           </div>
@@ -820,11 +788,6 @@ export default function StatementsPage() {
                     {unconfirmedTransferCt > 9 ? '9+' : unconfirmedTransferCt}
                   </span>
                 )}
-                {label === 'Payments' && unconfirmedPaymentCt > 0 && tab !== i && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 text-white text-[10px] rounded-full flex items-center justify-center font-bold">
-                    {unconfirmedPaymentCt > 9 ? '9+' : unconfirmedPaymentCt}
-                  </span>
-                )}
               </button>
             ))}
           </div>
@@ -856,7 +819,7 @@ export default function StatementsPage() {
                     )}
                     <TransactionsList
                       matched={matchedBankOnly}
-                      creditTxns={monthlyPaymentTxns}
+                      creditTxns={paymentsReceived}
                       pendingTxns={matchedPending}
                       accountSummary={accountSummary}
                       groupName={groupName}
@@ -877,69 +840,60 @@ export default function StatementsPage() {
               )}
               {tab === 3 && (
                 <div className="space-y-4">
+                  {/* Simple sign-based split: every credit this month is
+                      money received, every debit is money paid out —
+                      transfers excluded from both (see paymentsReceived/
+                      paymentsMade above). */}
                   <div>
-                    {/* "Card payment" only makes sense for a credit card
-                        (paying down what you owe) -- the same isPayment
-                        bucket also holds bank-account credits like interest
-                        paid or a Zelle/person-to-person receipt, which read
-                        as money coming IN, not a payment going out. Labeled
-                        per-account-type like accountSummary below — bank and
-                        credit are never mixed in one view, so every row in
-                        this list shares accountSummary.type. */}
-                    <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">
-                      {accountSummary.type === 'bank' ? 'Money received' : 'Card payments'} — {monthRange.label}
-                    </p>
-                    {paymentsToShow.length === 0 ? (
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-bold text-muted uppercase tracking-wide">
+                        Payments received — {monthRange.label}
+                      </p>
+                      {paymentsReceived.length > 0 && (
+                        <p className="text-xs font-bold text-emerald-500">+{formatCurrency(paymentsReceivedTotal)}</p>
+                      )}
+                    </div>
+                    {paymentsReceived.length === 0 ? (
                       <div className="text-center py-6 text-sm text-subtle bg-surface rounded-2xl border border-edge">Nothing this month</div>
                     ) : (
                       <div className="space-y-2">
-                        {paymentsToShow.map(txn => {
-                          const isBankTxn = accountSummary.type === 'bank';
-                          if (txn.paymentNeedsConfirm) {
-                            return (
-                              <div key={txn.id} className="rounded-xl border border-amber-100 bg-surface p-3">
-                                <div className="flex items-center gap-3">
-                                  <span className="text-base shrink-0">💳</span>
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-sm text-ink truncate">{txn.description}</p>
-                                    <p className="text-xs text-amber-500 mt-0.5">Possible bill payment · {formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
-                                  </div>
-                                  <p className="text-sm font-semibold text-muted shrink-0">{formatCurrency(txn.amount)}</p>
-                                </div>
-                                <div className="flex gap-2 pt-2 mt-2 border-t border-edge">
-                                  <button
-                                    onClick={() => handleDismissPaymentHint(txn)}
-                                    className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-muted border border-edge rounded-xl py-2 hover:bg-surface-alt transition-colors"
-                                  >
-                                    Not a payment
-                                  </button>
-                                  <button
-                                    onClick={() => handleConfirmPayment(txn)}
-                                    className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-white rounded-xl py-2 transition-colors"
-                                    style={{ background: INDIGO }}
-                                  >
-                                    Confirm payment
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          }
-                          return (
-                            <div key={txn.id} className="flex items-center gap-3 bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
-                              <span className="text-base">{isBankTxn ? '💰' : '💳'}</span>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm text-ink truncate">{txn.description}</p>
-                                <p className="text-xs text-subtle">
-                                  {formatShortDate(txn.date)} · {txn.sourceName || txn.source}
-                                  {txn.paymentConfirmed && <span className="ml-1.5 font-semibold" style={{ color: INDIGO }}>· confirmed, excluded from credit</span>}
-                                </p>
-                              </div>
-                              <p className={`text-sm font-semibold ${isBankTxn ? 'text-emerald-500' : 'text-muted'}`}>
-                                {isBankTxn ? '+' : ''}{formatCurrency(txn.amount)}
-                              </p>
+                        {paymentsReceived.map(txn => (
+                          <div key={txn.id} className="flex items-center gap-3 bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
+                            <span className="text-base">💰</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-ink truncate">{txn.transferHintLabel || txn.description}</p>
+                              <p className="text-xs text-subtle">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
                             </div>
-                          );
-                        })}
+                            <p className="text-sm font-semibold text-emerald-500">+{formatCurrency(txn.amount)}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-bold text-muted uppercase tracking-wide">
+                        Payments made — {monthRange.label}
+                      </p>
+                      {paymentsMade.length > 0 && (
+                        <p className="text-xs font-bold text-muted">{formatCurrency(paymentsMadeTotal)}</p>
+                      )}
+                    </div>
+                    {paymentsMade.length === 0 ? (
+                      <div className="text-center py-6 text-sm text-subtle bg-surface rounded-2xl border border-edge">Nothing this month</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {paymentsMade.map(txn => (
+                          <div key={txn.id} className="flex items-center gap-3 bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
+                            <span className="text-base">💳</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-ink truncate">{txn.transferHintLabel || txn.description}</p>
+                              <p className="text-xs text-subtle">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
+                            </div>
+                            <p className="text-sm font-semibold text-muted">{formatCurrency(txn.amount)}</p>
+                          </div>
+                        ))}
                       </div>
                     )}
                     <p className="text-xs text-subtle mt-1.5">Not counted in expense totals.</p>

@@ -2,7 +2,6 @@ import { auth } from './firebase';
 import { matchTransactions, computeSummary } from '../utils/matcher';
 import { detectTransfers } from '../utils/transferMatcher';
 import { isPaymentTransaction } from '../utils/paymentDetector';
-import { mapReceiptCategory } from '../utils/categoryDetector';
 import { session } from './session';
 
 // Same auth-gated proxy groq.js uses — this just sends a text-only chat
@@ -117,18 +116,19 @@ export function computeStats({ receipts, myId, myFullName = '', transactions = [
     byMerchant[key] = (byMerchant[key] || 0) + receiptAmt(r);
   });
 
-  // Category uses ALL receipts (posted or not) for item-level
-  // food/drink/alcohol precision — bank/Splitwise category data for the
-  // same underlying spend is intentionally skipped below to avoid double
-  // counting, at the cost of not knowing the category of a posted expense
-  // that never came from a receipt scan. Good enough for "what am I
-  // spending on", not exact to the cent.
+  // Category uses ALL receipts (posted or not), grouped by each receipt's
+  // own AI-assigned spendCategory (see services/groq.js) — one category per
+  // receipt, not per item (items[].category is a separate, narrower
+  // food/drink/alcohol/tip/fee/other set that only exists to drive grocery
+  // tax-exemption, not spend categorization). Bank/Splitwise category data
+  // for the same underlying spend is intentionally skipped below to avoid
+  // double counting, at the cost of not knowing the category of a posted
+  // expense that never came from a receipt scan. Receipts scanned before
+  // this field existed fall back to 'Other'.
   receipts.forEach(r => {
-    (r.items || []).forEach(item => {
-      const cat = mapReceiptCategory(item.category);
-      const amt = parseFloat(item.amount) || 0;
-      byCategory[cat] = (byCategory[cat] || 0) + amt;
-    });
+    const cat = r.category || 'Other';
+    const amt = (r.items || []).reduce((s, item) => s + (parseFloat(item.amount) || 0), 0);
+    byCategory[cat] = (byCategory[cat] || 0) + amt;
   });
 
   matched.forEach(t => {
@@ -168,7 +168,7 @@ export function computeStats({ receipts, myId, myFullName = '', transactions = [
       itemizedTransactions.push({
         date:        r.date || r.scanned_at?.slice(0, 10) || null,
         description: `${item.description || 'Item'} (${r.merchant || 'receipt'})`,
-        category:    mapReceiptCategory(item.category),
+        category:    r.category || 'Other',
         amount:      amt,
         source:      r.approved ? 'receipt' : 'receipt (pending, not yet split)',
       });

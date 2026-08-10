@@ -4,6 +4,7 @@ import { loadReceiptsForInsights, loadTransactions } from '../services/db';
 import { fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { computeStats, askInsightsChat } from '../services/insights';
 import { getMonthRange } from '../utils/statementFormatters';
+import { getCategoryIcon } from '../utils/categoryDetector';
 import BottomNav from '../components/BottomNav';
 import MonthSlider from '../components/MonthSlider';
 import PageHeader from '../components/PageHeader';
@@ -211,7 +212,7 @@ export default function InsightsPage() {
                       return (
                         <div key={c.category} className={`px-4 py-3 ${i < stats.topCategories.length - 1 ? 'border-b border-edge' : ''}`}>
                           <div className="flex items-center justify-between mb-1.5 gap-2">
-                            <span className="text-sm font-semibold text-ink capitalize">{c.category}</span>
+                            <span className="text-sm font-semibold text-ink">{getCategoryIcon(c.category)} {c.category}</span>
                             <span className="text-sm font-bold text-ink shrink-0">${c.amount.toFixed(2)}</span>
                           </div>
                           <div className="h-1.5 rounded-full bg-surface-alt overflow-hidden">

@@ -391,7 +391,7 @@ function SummaryCard({ title, kind, data }) {
       {kind === 'bank' ? (
         <p className="text-xs text-muted">Transfers <span className="font-semibold text-ink">{formatCurrency(data.transfers)}</span></p>
       ) : (
-        <p className="text-xs text-muted">Payments made <span className="font-semibold text-ink">{formatCurrency(data.payments)}</span></p>
+        <p className="text-xs text-muted">Payments received <span className="font-semibold text-ink">{formatCurrency(data.credit)}</span></p>
       )}
     </div>
   );

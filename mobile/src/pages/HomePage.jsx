@@ -835,7 +835,7 @@ export default function HomePage() {
             <div className="w-7 h-7 rounded-lg flex items-center justify-center logo-glow">
               <Receipt size={15} color="#fff" />
             </div>
-            <span className="font-extrabold text-gradient text-base tracking-tight">ReceiptSplit</span>
+            <span className="font-extrabold text-gradient text-base tracking-tight">Truespend</span>
           </div>
           <button
             onClick={() => navigate('/settings')}

@@ -27,7 +27,7 @@ export function maybeShowPendingReminder(pendingCount, pendingTotal) {
   const last = localStorage.getItem(LAST_REMINDER_KEY);
   const today = new Date().toISOString().slice(0, 10);
   if (last === today) return;
-  new Notification('ReceiptSplit', {
+  new Notification('Truespend', {
     body: `You have ${pendingCount} pending receipt${pendingCount !== 1 ? 's' : ''} ($${pendingTotal.toFixed(2)}) not yet split.`,
     icon: '/favicon-32.png',
     tag: 'pending-receipts',

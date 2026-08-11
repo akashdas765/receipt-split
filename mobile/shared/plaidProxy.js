@@ -9,7 +9,7 @@ import { verifyFirebaseToken } from './verifyFirebaseToken.js';
 const ACTIONS = {
   create_link_token: (uid, payload) => ['/link/token/create', {
     user:          { client_user_id: uid },
-    client_name:   'ReceiptSplit',
+    client_name:   'Truespend',
     products:      ['transactions'],
     country_codes: ['US'],
     language:      'en',

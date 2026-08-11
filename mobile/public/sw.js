@@ -14,7 +14,7 @@
 // requires shipping a sw.js that unregisters itself (self.registration.
 // unregister()), not just deleting this file — deleting it server-side does
 // not un-register it from browsers that already have it installed.
-const CACHE_NAME = 'receiptsplit-shell-v1';
+const CACHE_NAME = 'truespend-shell-v1';
 
 const SHELL_URLS = ['/', '/index.html', '/manifest.json'];
 

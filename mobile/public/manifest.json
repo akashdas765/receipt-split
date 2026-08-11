@@ -1,6 +1,6 @@
 {
-  "name": "ReceiptSplit",
-  "short_name": "ReceiptSplit",
+  "name": "Truespend",
+  "short_name": "Truespend",
   "description": "Scan receipts and split with Splitwise",
   "start_url": "/",
   "display": "standalone",

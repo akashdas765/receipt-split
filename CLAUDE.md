@@ -16,7 +16,7 @@ vercel --prod          # build + deploy to Vercel (primary deploy target)
 
 ## Architecture
 
-**ReceiptSplit** is a React + Vite web app that lets users photograph receipts, split line items among Splitwise group members, and post the expense — all in one flow.
+**Truespend** (formerly ReceiptSplit) is a React + Vite web app that lets users photograph receipts, split line items among Splitwise group members, and post the expense — all in one flow. It's grown into a fuller personal-finance picture on top of that: bank statement reconciliation against Splitwise, net worth tracking, and an "Actual spend" vs "Your share" view of the month.
 
 ### User flow
 

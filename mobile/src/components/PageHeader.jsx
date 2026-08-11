@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Receipt } from 'lucide-react';
 
 // Shared header for every non-Home page — back button, the same
-// ReceiptSplit mark HomePage shows, the page title, and an optional
+// Truespend mark HomePage shows, the page title, and an optional
 // right-side action (children). Keeping the brand mark here too is what
 // gives the app symmetry: without it, navigating away from Home dropped
 // the logo and every other page felt like a bare utility screen.

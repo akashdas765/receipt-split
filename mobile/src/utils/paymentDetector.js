@@ -84,3 +84,26 @@ export function isCreditConfirmation(description = '') {
   if (EXPENSE_OVERRIDES.some(r => r.test(desc))) return false;
   return CREDIT_CONFIRMATION_PATTERNS.some(r => r.test(desc));
 }
+
+// Recognizes paycheck/income deposits — kept separate from
+// isPaymentTransaction (which is about excluding non-spend debits, not
+// classifying credits) and from isCreditConfirmation (which is about "you
+// paid your own card," the opposite direction). "Pyramid Consulti" is the
+// user's own employer's ACH deposit naming (bank descriptions routinely
+// truncate the payer's legal name) — the generic patterns below exist so
+// this isn't a single-employer hack forever if that ever changes.
+const INCOME_PATTERNS = [
+  /pyramid\s+consulti/i,
+  /payroll/i,
+  /direct\s+dep(osit)?/i,
+  /\bach\s+credit\b/i,
+  /\bsalary\b/i,
+  /\bwages\b/i,
+  /biweekly\s+pay/i,
+  /pay\s+period/i,
+];
+
+export function isIncomeTransaction(description = '') {
+  const desc = description.trim();
+  return INCOME_PATTERNS.some(r => r.test(desc));
+}

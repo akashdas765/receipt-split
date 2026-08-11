@@ -1,6 +1,6 @@
 import { auth } from './firebase';
 import { detectCategory } from '../utils/categoryDetector';
-import { isPaymentTransaction } from '../utils/paymentDetector';
+import { isPaymentTransaction, isIncomeTransaction } from '../utils/paymentDetector';
 
 // Same auth-gated proxy pattern as groq.js/splitwise.js.
 const PROXY = '/.netlify/functions/plaid';
@@ -163,6 +163,11 @@ export async function syncTransactions(accessToken, cursor) {
         // transfers/payments from Splitwise matching and spend totals.
         isPayment:   isCredit || isPaymentTransaction(desc),
         isCredit,
+        // A paycheck/income deposit is a credit, so it'd otherwise land in
+        // the generic "money received" bucket alongside refunds/Zelle
+        // receipts — flagged separately so it can be classified and
+        // totaled as income in its own right (see paymentDetector.js).
+        isIncome:    isCredit && isIncomeTransaction(desc),
         isPending:   !!t.pending,
         // Plaid sets this on the POSTED transaction to the transaction_id
         // it had while pending — lets plaidSync.js carry a Splitwise match

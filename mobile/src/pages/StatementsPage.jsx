@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { AlertCircle, CreditCard, Landmark, HelpCircle, Wallet, Upload, X, RefreshCw, Loader2 } from 'lucide-react';
-import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride, updateTransactionCategory, reclassifyPayments, savePlaidConnection, TXN_MAX } from '../services/db';
+import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride, updateTransactionCategory, reclassifyTransactions, savePlaidConnection, TXN_MAX } from '../services/db';
 import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { syncPlaidConnection } from '../services/plaidSync';
 import { categorizeTransactions } from '../services/categorize';
@@ -8,7 +8,7 @@ import { fetchAccounts, defaultAccountType } from '../services/plaid';
 import { matchTransactions, computeSummary } from '../utils/matcher';
 import { detectTransfers } from '../utils/transferMatcher';
 import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
-import { isPaymentTransaction } from '../utils/paymentDetector';
+import { isPaymentTransaction, isIncomeTransaction } from '../utils/paymentDetector';
 import { session } from '../services/session';
 import { useToast } from '../components/ToastProvider';
 import StatementUpload from '../components/StatementUpload';
@@ -94,6 +94,10 @@ export default function StatementsPage() {
   const autoFixingRef = useRef(new Set());
   // Same concurrency guard, for the account-type backfill effect below.
   const accountTypeFixingRef = useRef(new Set());
+  // Same concurrency guard, for the payment/income reclassification effect
+  // below — prevents a re-render mid-fix from firing a second concurrent
+  // batch write for the same set of stale rows.
+  const reclassifyingRef = useRef(false);
 
   const groupName = id => groups.find(g => g.id === id)?.name;
   const monthRange = useMemo(() => getMonthRange(currentMonth), [currentMonth]);
@@ -415,18 +419,28 @@ export default function StatementsPage() {
 
   const paymentsMadeTotal     = paymentsMade.reduce((s, t) => s + (t.amount || 0), 0);
   const paymentsReceivedTotal = paymentsReceived.reduce((s, t) => s + (t.amount || 0), 0);
+  // A subset of paymentsReceived, not a replacement — income transactions
+  // stay in paymentsReceived too (same "a transaction can belong to more
+  // than one view" pattern already used for regular purchases showing in
+  // both the Transactions and Payments tabs), so the ledger stays complete
+  // while this gives income its own distinct total and section.
+  const incomeTxns  = useMemo(() => paymentsReceived.filter(t => t.isIncome), [paymentsReceived]);
+  const incomeTotal = incomeTxns.reduce((s, t) => s + (t.amount || 0), 0);
   // Excludes transfers and payments — the "needs your attention" badge
   // shouldn't count rows that were never Splitwise-matchable to begin with
   // (same reasoning as excluding them from realExpenseTxns above).
   const unmatchedCt  = matchedBankOnly.filter(t => !t.isSplitwised && !t.isTransfer && !t.isPayment).length;
 
   // Transactions saved before their description was checked against the
-  // payment patterns (isPayment is stamped once at write time, not
-  // recomputed live) — surfaced so the user can fix them without a full
-  // re-sync/re-upload. Checked across ALL loaded transactions, not just
-  // this month, since a stale row could be from any past statement.
+  // payment/income patterns (isPayment/isIncome are stamped once at write
+  // time, not recomputed live) — surfaced so the user can fix them without
+  // a full re-sync/re-upload. Checked across ALL loaded transactions, not
+  // just this month, since a stale row could be from any past statement.
   const fixableCount = useMemo(() =>
-    transactions.filter(t => !t.isPayment && isPaymentTransaction(t.description)).length,
+    transactions.filter(t =>
+      (!t.isPayment && isPaymentTransaction(t.description)) ||
+      (t.isCredit && !t.isIncome && isIncomeTransaction(t.description))
+    ).length,
     [transactions]
   );
 
@@ -585,11 +599,27 @@ export default function StatementsPage() {
   }, []);
 
   const handleFixPaymentLabels = useCallback(async () => {
-    const fixed = await reclassifyPayments(transactions);
+    const fixed = await reclassifyTransactions(transactions);
     if (!fixed.length) return;
     const fixedMap = new Map(fixed.map(f => [f.id, f.fields]));
     setTransactions(prev => prev.map(t => fixedMap.has(t.id) ? { ...t, ...fixedMap.get(t.id) } : t));
   }, [transactions]);
+
+  // Runs the same fix automatically the moment stale rows are detected,
+  // rather than leaving it sitting behind the "Fix now" banner below (which
+  // stays as a visible fallback/indicator, same "silent auto-fix, banner
+  // only if something needs a closer look" split as the legacy-source
+  // effect above) — a transaction synced before isIncome/isPayment pattern
+  // coverage existed shouldn't require the user to go find a button on the
+  // one tab that happens to show it, when the numbers it affects (Actual
+  // spend, Income) are visible on every tab.
+  useEffect(() => {
+    if (loadingTxns || reclassifyingRef.current || fixableCount === 0) return;
+    reclassifyingRef.current = true;
+    handleFixPaymentLabels().catch(err => console.error('Auto-reclassify failed:', err)).finally(() => {
+      reclassifyingRef.current = false;
+    });
+  }, [loadingTxns, fixableCount, handleFixPaymentLabels]);
 
   const handleUnlink = txn => applyOverride(txn.id, {
     overrideForcedUnmatched: true,
@@ -753,6 +783,15 @@ export default function StatementsPage() {
               <p className="font-bold text-muted">{formatCurrency(paymentsMadeTotal)}</p>
               <p className="text-subtle text-xs">Payments total</p>
             </div>
+            {incomeTxns.length > 0 && (
+              <div className="col-span-2 rounded-xl px-3 py-2.5 border border-emerald-100 tint-emerald-card">
+                <div className="flex items-baseline justify-between">
+                  <p className="font-extrabold text-lg text-emerald-600">+{formatCurrency(incomeTotal)}</p>
+                  <p className="text-xs text-subtle">{incomeTxns.length} deposit{incomeTxns.length !== 1 ? 's' : ''}</p>
+                </div>
+                <p className="text-subtle text-xs">Income</p>
+              </div>
+            )}
           </div>
 
           {/* Card filter — deliberately styled unlike the month slider above:
@@ -839,7 +878,7 @@ export default function StatementsPage() {
                     {fixableCount > 0 && (
                       <div className="flex items-center justify-between gap-3 bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2.5 mb-3">
                         <p className="text-xs text-indigo-600 font-medium">
-                          {fixableCount} transaction{fixableCount !== 1 ? 's' : ''} look{fixableCount === 1 ? 's' : ''} like a payment but {fixableCount === 1 ? "isn't" : "aren't"} labeled that way yet.
+                          {fixableCount} transaction{fixableCount !== 1 ? 's' : ''} look{fixableCount === 1 ? 's' : ''} like a payment or income deposit but {fixableCount === 1 ? "isn't" : "aren't"} labeled that way yet.
                         </p>
                         <button onClick={handleFixPaymentLabels} className="shrink-0 text-xs font-bold text-white px-3 py-1.5 rounded-full btn-gradient btn-press">
                           Fix now
@@ -873,6 +912,29 @@ export default function StatementsPage() {
                       money received, every debit is money paid out —
                       transfers excluded from both (see paymentsReceived/
                       paymentsMade above). */}
+                  {incomeTxns.length > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs font-bold text-muted uppercase tracking-wide">
+                          Income — {monthRange.label}
+                        </p>
+                        <p className="text-xs font-bold text-emerald-500">+{formatCurrency(incomeTotal)}</p>
+                      </div>
+                      <div className="space-y-2">
+                        {incomeTxns.map(txn => (
+                          <div key={txn.id} className="flex items-center gap-3 bg-surface rounded-xl px-3 py-2.5 border border-emerald-100 shadow-sm">
+                            <span className="text-base">💵</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-ink truncate">{txn.description}</p>
+                              <p className="text-xs text-subtle">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
+                            </div>
+                            <p className="text-sm font-semibold text-emerald-500">+{formatCurrency(txn.amount)}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <p className="text-xs font-bold text-muted uppercase tracking-wide">
@@ -890,7 +952,12 @@ export default function StatementsPage() {
                           <div key={txn.id} className="flex items-center gap-3 bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
                             <span className="text-base">💰</span>
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm text-ink truncate">{txn.transferHintLabel || txn.description}</p>
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-sm text-ink truncate">{txn.transferHintLabel || txn.description}</p>
+                                {txn.isIncome && (
+                                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 rounded-full shrink-0">Income</span>
+                                )}
+                              </div>
                               <p className="text-xs text-subtle">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
                             </div>
                             <p className="text-sm font-semibold text-emerald-500">+{formatCurrency(txn.amount)}</p>

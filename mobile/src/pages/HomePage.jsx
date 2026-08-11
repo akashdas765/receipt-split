@@ -210,6 +210,35 @@ export default function HomePage() {
 
   const monthCount = monthlyReceipts.length + splitwiseOnly.length + foreignCurrencyOnly.length;
 
+  // One chronological feed instead of three stacked blocks (all receipts,
+  // then all Splitwise-only, then all foreign-currency) — each list was
+  // already in its own date order, but stacking three separately-ordered
+  // blocks isn't the same as one list actually in date order. Splitwise
+  // expenses only ever carry a date (no time); receipts carry both `date`
+  // and a `scanned_at` timestamp — sortKey uses whichever's available,
+  // and plain string comparison works correctly across both since a
+  // "YYYY-MM-DD" date sorts identically to the date-only prefix of an ISO
+  // datetime string.
+  const [txnFilter, setTxnFilter] = useState('all'); // 'all' | 'receipt' | 'splitwise'
+  const combinedTimeline = useMemo(() => {
+    const items = [
+      ...monthlyReceipts.map(r => ({ kind: 'receipt', item: r, sortKey: r.date || r.scanned_at || '' })),
+      ...splitwiseOnly.map(e => ({ kind: 'splitwise', item: e, sortKey: e.date || '' })),
+      ...foreignCurrencyOnly.map(e => ({ kind: 'foreign', item: e, sortKey: e.date || '' })),
+    ];
+    items.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+    return items;
+  }, [monthlyReceipts, splitwiseOnly, foreignCurrencyOnly]);
+  // "Splitwise" groups foreign-currency in with splitwise-only — both are
+  // expenses that never came from a receipt scan here, just in a different
+  // currency; "Posted" means receipt items regardless of posted/pending
+  // sub-state (that distinction already shows as a badge on each row).
+  const filteredTimeline = useMemo(() => {
+    if (txnFilter === 'receipt')   return combinedTimeline.filter(t => t.kind === 'receipt');
+    if (txnFilter === 'splitwise') return combinedTimeline.filter(t => t.kind !== 'receipt');
+    return combinedTimeline;
+  }, [combinedTimeline, txnFilter]);
+
   // Net worth = cash on hand + what you're owed - what you owe. Credit
   // card `current` balance is what you owe on it (a liability), so it
   // subtracts rather than adds — the whole reason PlaidConnect.jsx's
@@ -304,6 +333,156 @@ export default function HomePage() {
   };
 
   const loading = loadingReceipts;
+
+  // Row renderers for the combined timeline below — extracted so the single
+  // date-sorted map can call the right one per kind without three separate
+  // stacked .map() blocks (which was the actual bug: date order within each
+  // list, but not across all three together).
+  const renderReceiptRow = r => (
+    <button
+      key={r.id}
+      onClick={() => r.approved ? setOpenReceipt(r) : navigate('/detail', { state: r })}
+      className="w-full text-left bg-surface rounded-2xl p-4 border border-edge shadow-sm hover:border-indigo-100 card-lift anim-fade-up"
+    >
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
+          style={{ background: r.approved
+            ? 'linear-gradient(135deg, #10b981, #14b8a6)'
+            : 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+          {r.approved
+            ? <CheckCheck size={18} color="#fff" />
+            : <Receipt size={18} color="#fff" />}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <p className="font-bold text-ink text-sm truncate">
+            {r.merchant || 'Unknown merchant'}
+          </p>
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            <span className="text-xs text-subtle">
+              {r.date || r.scanned_at?.slice(0, 10)}
+            </span>
+            <span className="text-slate-200">·</span>
+            <span className="text-xs font-semibold" style={{ color: r.approved ? EMERALD : '#f59e0b' }}>
+              {r.approved ? 'Posted' : 'Pending'}
+            </span>
+            <span className="text-slate-200">·</span>
+            <span className="text-xs text-subtle">{r.items?.length || 0} items</span>
+            {r.category && (
+              <>
+                <span className="text-slate-200">·</span>
+                <span className="text-xs text-subtle">{getCategoryIcon(r.category)} {r.category}</span>
+              </>
+            )}
+            {groupName(r.groupId) && (
+              <>
+                <span className="text-slate-200">·</span>
+                <span className="text-xs text-subtle truncate">{groupName(r.groupId)}</span>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 shrink-0">
+          <div className="text-right">
+            {r.approved && myId && r.personTotals?.[myId] != null ? (
+              <>
+                <p className="font-bold text-ink text-sm">${r.personTotals[myId].toFixed(2)}</p>
+                <p className="text-[10px] text-subtle">of ${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</p>
+              </>
+            ) : (
+              <p className="font-bold text-ink text-sm">${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</p>
+            )}
+          </div>
+          <button
+            onClick={e => { e.stopPropagation(); setConfirmTarget({ id: r.id, merchant: r.merchant }); }}
+            className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+          >
+            <Trash2 size={15} />
+          </button>
+        </div>
+      </div>
+    </button>
+  );
+
+  // Splitwise expenses not added through this app — visually distinct
+  // (teal, Users icon, "Splitwise" badge) so it's clear these weren't
+  // scanned here.
+  const renderSplitwiseRow = e => (
+    <button key={e.id} onClick={() => setOpenExpense(e)}
+      className="w-full text-left bg-surface rounded-2xl p-4 border border-teal-100 shadow-sm hover:border-teal-200 card-lift anim-fade-up flex items-center gap-3">
+      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
+        style={{ background: 'linear-gradient(135deg, #14b8a6, #0ea5e9)' }}>
+        <Users size={18} color="#fff" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="font-bold text-ink text-sm truncate">{e.description || 'Splitwise expense'}</p>
+        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+          <span className="text-xs text-subtle">{e.date}</span>
+          <span className="text-slate-200">·</span>
+          <span className="text-xs font-semibold" style={{ color: TEAL }}>Splitwise</span>
+          {groupName(e.group_id) && (
+            <>
+              <span className="text-slate-200">·</span>
+              <span className="text-xs text-subtle truncate">{groupName(e.group_id)}</span>
+            </>
+          )}
+          {e.addedBy && (
+            <>
+              <span className="text-slate-200">·</span>
+              <span className="text-xs text-subtle truncate">Added By {e.addedBy}</span>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="text-right shrink-0">
+        <p className="font-bold text-ink text-sm">${e.myOwedShare.toFixed(2)}</p>
+        {e.cost > e.myOwedShare && (
+          <p className="text-[10px] text-subtle">of ${e.cost.toFixed(2)}</p>
+        )}
+      </div>
+    </button>
+  );
+
+  // Splitwise expenses logged in a non-USD currency — shown so they're not
+  // silently missing, but never folded into the $ totals above (mixing
+  // currencies would misreport them, e.g. a ₹3600 expense is not $3600).
+  const renderForeignRow = e => (
+    <button key={e.id} onClick={() => setOpenExpense(e)}
+      className="w-full text-left bg-surface rounded-2xl p-4 border border-amber-100 shadow-sm hover:border-amber-200 card-lift anim-fade-up flex items-center gap-3">
+      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
+        style={{ background: 'linear-gradient(135deg, #f59e0b, #f97316)' }}>
+        <Users size={18} color="#fff" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="font-bold text-ink text-sm truncate">{e.description || 'Splitwise expense'}</p>
+        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+          <span className="text-xs text-subtle">{e.date}</span>
+          <span className="text-slate-200">·</span>
+          <span className="text-xs font-semibold text-amber-500">Splitwise · {e.currency_code}</span>
+          {groupName(e.group_id) && (
+            <>
+              <span className="text-slate-200">·</span>
+              <span className="text-xs text-subtle truncate">{groupName(e.group_id)}</span>
+            </>
+          )}
+          {e.addedBy && (
+            <>
+              <span className="text-slate-200">·</span>
+              <span className="text-xs text-subtle truncate">Added By {e.addedBy}</span>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="text-right shrink-0">
+        <p className="font-bold text-ink text-sm">{formatWithCurrency(e.myOwedShare, e.currency_code)}</p>
+        {e.cost > e.myOwedShare && (
+          <p className="text-[10px] text-subtle">of {formatWithCurrency(e.cost, e.currency_code)}</p>
+        )}
+        <p className="text-[10px] text-amber-500">not in totals</p>
+      </div>
+    </button>
+  );
 
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
@@ -476,166 +655,48 @@ export default function HomePage() {
                 <p className="text-sm text-subtle">Scan a receipt or pick another month</p>
               </div>
             ) : (
-              <div className="flex flex-col gap-3 stagger">
-                {monthlyReceipts.map(r => (
-                  <button
-                    key={r.id}
-                    onClick={() => r.approved ? setOpenReceipt(r) : navigate('/detail', { state: r })}
-                    className="w-full text-left bg-surface rounded-2xl p-4 border border-edge shadow-sm hover:border-indigo-100 card-lift anim-fade-up"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
-                        style={{ background: r.approved
-                          ? 'linear-gradient(135deg, #10b981, #14b8a6)'
-                          : 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                        {r.approved
-                          ? <CheckCheck size={18} color="#fff" />
-                          : <Receipt size={18} color="#fff" />}
-                      </div>
+              <>
+                {/* Filter chips — same pill pattern as TransactionsList's */}
+                <div className="flex gap-1.5 mb-3">
+                  {[
+                    { key: 'all',       label: 'All',       count: combinedTimeline.length },
+                    { key: 'receipt',   label: 'Posted',    count: monthlyReceipts.length },
+                    { key: 'splitwise', label: 'Splitwise', count: splitwiseOnly.length + foreignCurrencyOnly.length },
+                  ].map(f => (
+                    <button key={f.key} onClick={() => setTxnFilter(f.key)}
+                      className={`flex-1 rounded-xl px-2 py-2 text-center border transition-colors ${txnFilter === f.key ? 'border-indigo-200 bg-indigo-50' : 'border-edge bg-surface hover:border-edge'}`}>
+                      <p className="font-extrabold text-sm" style={{ color: txnFilter === f.key ? INDIGO : undefined }}>
+                        {f.count}
+                      </p>
+                      <p className="text-[10px] text-subtle mt-0.5">{f.label}</p>
+                    </button>
+                  ))}
+                </div>
 
-                      <div className="flex-1 min-w-0">
-                        <p className="font-bold text-ink text-sm truncate">
-                          {r.merchant || 'Unknown merchant'}
-                        </p>
-                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                          <span className="text-xs text-subtle">
-                            {r.date || r.scanned_at?.slice(0, 10)}
-                          </span>
-                          <span className="text-slate-200">·</span>
-                          <span className="text-xs font-semibold" style={{ color: r.approved ? EMERALD : '#f59e0b' }}>
-                            {r.approved ? 'Posted' : 'Pending'}
-                          </span>
-                          <span className="text-slate-200">·</span>
-                          <span className="text-xs text-subtle">{r.items?.length || 0} items</span>
-                          {r.category && (
-                            <>
-                              <span className="text-slate-200">·</span>
-                              <span className="text-xs text-subtle">{getCategoryIcon(r.category)} {r.category}</span>
-                            </>
-                          )}
-                          {groupName(r.groupId) && (
-                            <>
-                              <span className="text-slate-200">·</span>
-                              <span className="text-xs text-subtle truncate">{groupName(r.groupId)}</span>
-                            </>
-                          )}
+                {filteredTimeline.length === 0 ? (
+                  <div className="text-center py-10 text-sm text-subtle">Nothing matches this filter</div>
+                ) : (
+                <div className="flex flex-col gap-3 stagger">
+                  {filteredTimeline.map(({ kind, item }) =>
+                    kind === 'receipt'   ? renderReceiptRow(item) :
+                    kind === 'splitwise' ? renderSplitwiseRow(item) :
+                    renderForeignRow(item)
+                  )}
+
+                  {loadingSw && (
+                    <div className="rounded-2xl p-4 bg-surface border border-edge">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl skeleton shrink-0" />
+                        <div className="flex-1 space-y-2">
+                          <div className="h-3.5 w-1/2 rounded-full skeleton" />
+                          <div className="h-3 w-3/4 rounded-full skeleton" />
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-3 shrink-0">
-                        <div className="text-right">
-                          {r.approved && myId && r.personTotals?.[myId] != null ? (
-                            <>
-                              <p className="font-bold text-ink text-sm">${r.personTotals[myId].toFixed(2)}</p>
-                              <p className="text-[10px] text-subtle">of ${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</p>
-                            </>
-                          ) : (
-                            <p className="font-bold text-ink text-sm">${(r.grandTotal ?? r.total ?? 0).toFixed(2)}</p>
-                          )}
-                        </div>
-                        <button
-                          onClick={e => { e.stopPropagation(); setConfirmTarget({ id: r.id, merchant: r.merchant }); }}
-                          className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
                     </div>
-                  </button>
-                ))}
-
-                {/* Splitwise expenses not added through this app — visually
-                    distinct (teal, Users icon, "Splitwise" badge) so it's
-                    clear these weren't scanned here. */}
-                {splitwiseOnly.map(e => (
-                  <button key={e.id} onClick={() => setOpenExpense(e)}
-                    className="w-full text-left bg-surface rounded-2xl p-4 border border-teal-100 shadow-sm hover:border-teal-200 card-lift anim-fade-up flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
-                      style={{ background: 'linear-gradient(135deg, #14b8a6, #0ea5e9)' }}>
-                      <Users size={18} color="#fff" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-bold text-ink text-sm truncate">{e.description || 'Splitwise expense'}</p>
-                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-xs text-subtle">{e.date}</span>
-                        <span className="text-slate-200">·</span>
-                        <span className="text-xs font-semibold" style={{ color: TEAL }}>Splitwise</span>
-                        {groupName(e.group_id) && (
-                          <>
-                            <span className="text-slate-200">·</span>
-                            <span className="text-xs text-subtle truncate">{groupName(e.group_id)}</span>
-                          </>
-                        )}
-                        {e.addedBy && (
-                          <>
-                            <span className="text-slate-200">·</span>
-                            <span className="text-xs text-subtle truncate">Added By {e.addedBy}</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="font-bold text-ink text-sm">${e.myOwedShare.toFixed(2)}</p>
-                      {e.cost > e.myOwedShare && (
-                        <p className="text-[10px] text-subtle">of ${e.cost.toFixed(2)}</p>
-                      )}
-                    </div>
-                  </button>
-                ))}
-
-                {/* Splitwise expenses logged in a non-USD currency — shown
-                    so they're not silently missing, but never folded into
-                    the $ totals above (mixing currencies would misreport
-                    them, e.g. a ₹3600 expense is not $3600). */}
-                {foreignCurrencyOnly.map(e => (
-                  <button key={e.id} onClick={() => setOpenExpense(e)}
-                    className="w-full text-left bg-surface rounded-2xl p-4 border border-amber-100 shadow-sm hover:border-amber-200 card-lift anim-fade-up flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
-                      style={{ background: 'linear-gradient(135deg, #f59e0b, #f97316)' }}>
-                      <Users size={18} color="#fff" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-bold text-ink text-sm truncate">{e.description || 'Splitwise expense'}</p>
-                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-xs text-subtle">{e.date}</span>
-                        <span className="text-slate-200">·</span>
-                        <span className="text-xs font-semibold text-amber-500">Splitwise · {e.currency_code}</span>
-                        {groupName(e.group_id) && (
-                          <>
-                            <span className="text-slate-200">·</span>
-                            <span className="text-xs text-subtle truncate">{groupName(e.group_id)}</span>
-                          </>
-                        )}
-                        {e.addedBy && (
-                          <>
-                            <span className="text-slate-200">·</span>
-                            <span className="text-xs text-subtle truncate">Added By {e.addedBy}</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="font-bold text-ink text-sm">{formatWithCurrency(e.myOwedShare, e.currency_code)}</p>
-                      {e.cost > e.myOwedShare && (
-                        <p className="text-[10px] text-subtle">of {formatWithCurrency(e.cost, e.currency_code)}</p>
-                      )}
-                      <p className="text-[10px] text-amber-500">not in totals</p>
-                    </div>
-                  </button>
-                ))}
-
-                {loadingSw && (
-                  <div className="rounded-2xl p-4 bg-surface border border-edge">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl skeleton shrink-0" />
-                      <div className="flex-1 space-y-2">
-                        <div className="h-3.5 w-1/2 rounded-full skeleton" />
-                        <div className="h-3 w-3/4 rounded-full skeleton" />
-                      </div>
-                    </div>
-                  </div>
+                  )}
+                </div>
                 )}
-              </div>
+              </>
             )}
           </>
         )}

@@ -2,12 +2,16 @@ import React from 'react';
 import { X, Users, Calendar, Tag } from 'lucide-react';
 import { memberColor } from '../utils/memberColor';
 
-// View-only detail sheet for a Splitwise expense not created through this
-// app (HomePage's "splitwiseOnly"/"foreignCurrencyOnly" cards) — shows
-// exactly what fetchAllExpenses pulls from Splitwise: the full per-member
-// paid/owed breakdown, not just the current user's own share. No edit or
-// delete here — this app didn't create the expense, Splitwise did.
-export default function SplitwiseExpenseDetail({ expense, groupName, onClose }) {
+// Detail sheet for a Splitwise expense not created through this app
+// (HomePage's "splitwiseOnly"/"foreignCurrencyOnly" cards) — shows exactly
+// what fetchAllExpenses pulls from Splitwise: the full per-member paid/owed
+// breakdown, not just the current user's own share. Mostly view-only (this
+// app didn't create the expense, Splitwise did — no editing cost/split/
+// description here), except Category, which is editable and writes back to
+// Splitwise itself via updateExpenseCategory so the group sees the change
+// too. categories (Splitwise's own tree, not this app's ALL_CATEGORIES)
+// falls back to the plain read-only Row if it hasn't loaded yet.
+export default function SplitwiseExpenseDetail({ expense, groupName, categories = [], onChangeCategory, onClose }) {
   const splits = (expense.splits || []).filter(s => (s.paidShare || 0) > 0 || (s.owedShare || 0) > 0);
   const fmt = (n) => {
     try {
@@ -38,7 +42,28 @@ export default function SplitwiseExpenseDetail({ expense, groupName, onClose }) 
           <div className="bg-surface rounded-xl border border-edge divide-y divide-slate-50 px-3">
             <Row icon={<Calendar size={13} />} label="Date" value={expense.date} />
             {groupName && <Row icon={<Users size={13} />} label="Group" value={groupName} />}
-            {expense.category && <Row icon={<Tag size={13} />} label="Category" value={expense.category} />}
+            {categories.length > 0 ? (
+              <div className="flex items-center justify-between py-2.5 gap-3">
+                <span className="flex items-center gap-1.5 text-sm text-muted shrink-0"><Tag size={13} />Category</span>
+                <select
+                  value={expense.categoryId ?? ''}
+                  onChange={e => onChangeCategory(expense, e.target.value)}
+                  className="text-sm font-semibold text-ink bg-transparent outline-none text-right min-w-0"
+                >
+                  {categories.map(c => (
+                    c.subcategories.length > 0 ? (
+                      <optgroup key={c.id} label={c.name}>
+                        {c.subcategories.map(sc => <option key={sc.id} value={sc.id}>{sc.name}</option>)}
+                      </optgroup>
+                    ) : (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    )
+                  ))}
+                </select>
+              </div>
+            ) : (
+              expense.category && <Row icon={<Tag size={13} />} label="Category" value={expense.category} />
+            )}
             {expense.addedBy && <Row label="Added by" value={expense.addedBy} />}
           </div>
 

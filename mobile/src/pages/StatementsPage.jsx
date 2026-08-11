@@ -846,12 +846,6 @@ export default function StatementsPage() {
               <p className="font-extrabold text-lg text-emerald-600">{formatCurrency(actualCreditTotal)}</p>
               <p className="text-subtle text-xs">Actual Credit</p>
             </button>
-            <div className={`col-span-2 rounded-xl px-3 py-2.5 border ${netSpendTotal >= 0 ? 'border-red-100' : 'border-emerald-100'}`}>
-              <p className={`font-extrabold text-lg ${netSpendTotal >= 0 ? 'text-red-500' : 'text-emerald-600'}`}>
-                {netSpendTotal >= 0 ? '' : '+'}{formatCurrency(Math.abs(netSpendTotal))}
-              </p>
-              <p className="text-subtle text-xs">Net spend · Actual spend − Actual Credit</p>
-            </div>
             <button
               onClick={() => setStatBreakdown({
                 title: 'Payments made', subtitle: monthRange.label,
@@ -872,19 +866,27 @@ export default function StatementsPage() {
               <p className="font-bold text-muted">{formatCurrency(paymentsMadeTotal)}</p>
               <p className="text-subtle text-xs">Payments total</p>
             </button>
+            {/* Net spend + Income side by side — both are month-level
+                summary figures (one derived, one a straight total), so
+                pairing them into one row instead of each claiming a full
+                width row reads as "these two go together" rather than two
+                unrelated stat cards. */}
+            <div className={`rounded-xl px-3 py-2.5 border ${netSpendTotal >= 0 ? 'border-red-100' : 'border-emerald-100'}`}>
+              <p className={`font-extrabold text-lg ${netSpendTotal >= 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+                {formatCurrency(Math.abs(netSpendTotal))}
+              </p>
+              <p className="text-subtle text-xs">Net spend</p>
+            </div>
             {incomeTxns.length > 0 && (
               <button
                 onClick={() => setStatBreakdown({
                   title: 'Income', subtitle: monthRange.label,
                   transactions: incomeTxns, getAmount: t => t.amount, total: incomeTotal,
                 })}
-                className="text-left col-span-2 rounded-xl px-3 py-2.5 border border-emerald-100 tint-emerald-card card-lift"
+                className="text-left rounded-xl px-3 py-2.5 border border-emerald-100 tint-emerald-card card-lift"
               >
-                <div className="flex items-baseline justify-between">
-                  <p className="font-extrabold text-lg text-emerald-600">+{formatCurrency(incomeTotal)}</p>
-                  <p className="text-xs text-subtle">{incomeTxns.length} deposit{incomeTxns.length !== 1 ? 's' : ''}</p>
-                </div>
-                <p className="text-subtle text-xs">Income</p>
+                <p className="font-extrabold text-lg text-emerald-600">{formatCurrency(incomeTotal)}</p>
+                <p className="text-subtle text-xs">Income · {incomeTxns.length} deposit{incomeTxns.length !== 1 ? 's' : ''}</p>
               </button>
             )}
           </div>

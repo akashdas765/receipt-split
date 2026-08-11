@@ -16,7 +16,7 @@ const INDIGO = '#6366f1';
 // Previously two separate tabs (Review + All) — merged here so "all my
 // card activity" and "what still needs matching" live in one list instead
 // of two.
-export default function TransactionsList({ matched, creditTxns, pendingTxns = [], accountSummary, groupName, monthRange, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory }) {
+export default function TransactionsList({ matched, creditTxns, pendingTxns = [], accountSummary, groupName, monthRange, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory, onDebitClick, onCreditClick }) {
   const [filter,   setFilter]   = useState(0); // 0=All 1=Unmatched 2=Matched 3=Credits 4=Pending
   const [expanded, setExpanded] = useState({});
 
@@ -77,7 +77,7 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
       {accountSummary && (
         <>
           <p className="text-xs font-bold text-subtle uppercase tracking-wide -mb-1">{monthRange.label}</p>
-          <SummaryCard title={accountSummary.title} kind={accountSummary.type} data={accountSummary} />
+          <SummaryCard title={accountSummary.title} kind={accountSummary.type} data={accountSummary} onDebitClick={onDebitClick} onCreditClick={onCreditClick} />
           {savedTotal > 0.5 && (
             <p className="text-xs text-emerald-600 font-semibold">-{formatCurrency(savedTotal)} saved via Splitwise splits</p>
           )}
@@ -375,7 +375,7 @@ function Row({ label, value, valueClass = 'text-ink' }) {
 // type: a bank account's "Transfers" vs. a card's "Payments made"
 // (bill payments specifically, not merchant refunds — see
 // StatementsPage.jsx's accountSummary for how that's told apart).
-function SummaryCard({ title, kind, data }) {
+function SummaryCard({ title, kind, data, onDebitClick, onCreditClick }) {
   const netPositive = data.net >= 0;
   return (
     <div className="bg-surface rounded-2xl p-4 border border-edge shadow-sm">
@@ -386,14 +386,14 @@ function SummaryCard({ title, kind, data }) {
         </p>
       </div>
       <div className="grid grid-cols-2 gap-2 mb-2">
-        <div className="bg-red-50 rounded-xl px-3 py-2">
+        <button onClick={onDebitClick} className="text-left bg-red-50 rounded-xl px-3 py-2 hover:bg-red-100 transition-colors">
           <p className="text-base font-bold text-red-500">-{formatCurrency(data.debit)}</p>
           <p className="text-[10px] text-subtle">Debit</p>
-        </div>
-        <div className="bg-emerald-50 rounded-xl px-3 py-2">
+        </button>
+        <button onClick={onCreditClick} className="text-left bg-emerald-50 rounded-xl px-3 py-2 hover:bg-emerald-100 transition-colors">
           <p className="text-base font-bold text-emerald-600">+{formatCurrency(data.credit)}</p>
           <p className="text-[10px] text-subtle">Credit</p>
-        </div>
+        </button>
       </div>
       {kind === 'bank' ? (
         <p className="text-xs text-muted">Transfers <span className="font-semibold text-ink">{formatCurrency(data.transfers)}</span></p>

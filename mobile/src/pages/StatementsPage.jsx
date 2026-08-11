@@ -23,6 +23,7 @@ import TransfersList from '../components/TransfersList';
 import BottomNav from '../components/BottomNav';
 import MonthSlider from '../components/MonthSlider';
 import PageHeader from '../components/PageHeader';
+import StatBreakdown from '../components/StatBreakdown';
 
 const INDIGO = '#6366f1';
 
@@ -80,6 +81,7 @@ export default function StatementsPage() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [syncingAll, setSyncingAll] = useState(false);
+  const [statBreakdown, setStatBreakdown] = useState(null); // { title, transactions, getAmount, total } | null — see StatBreakdown.jsx
 
   // Which loaded statement/account to scope the page to — a 'group:bank' /
   // 'group:credit' / 'group:other' scope, or a specific `source` id. Each
@@ -327,13 +329,15 @@ export default function StatementsPage() {
       // candidates stay counted until the user actually confirms one, same
       // "don't change a total before confirmation" policy used everywhere
       // else in this file.
-      const debit  = settled.filter(t => !t.isCredit && !t.overrideConfirmedTransfer).reduce((s, t) => s + (t.amount || 0), 0);
+      const debitTxns  = settled.filter(t => !t.isCredit && !t.overrideConfirmedTransfer);
       // Every credit is money received, full stop — no more guessing
       // "is this specifically a bill-payment credit vs a refund" (see
       // paymentsReceived/paymentsMade above for the same simplification).
       // Confirmed transfers are still excluded — money moving in from one
       // of your own accounts was never really a credit.
-      const credit = settled.filter(t => t.isCredit && !t.overrideConfirmedTransfer).reduce((s, t) => s + (t.amount || 0), 0);
+      const creditTxns = settled.filter(t => t.isCredit && !t.overrideConfirmedTransfer);
+      const debit  = debitTxns.reduce((s, t) => s + (t.amount || 0), 0);
+      const credit = creditTxns.reduce((s, t) => s + (t.amount || 0), 0);
       const inScope = scopePredicate;
       const transferPairAmt = transferPairsThisMonth
         .filter(p => p.confirmed && (inScope(p.debit.source) || inScope(p.credit.source)))
@@ -341,7 +345,11 @@ export default function StatementsPage() {
       const transferHintAmt = transferHintsThisMonth
         .filter(h => h.confirmed && inScope(h.txn.source))
         .reduce((s, h) => s + h.txn.amount, 0);
-      return { debit, credit, net: credit - debit, transfers: transferPairAmt + transferHintAmt };
+      // debitTxns/creditTxns exposed alongside the sums so the Debit/Credit
+      // boxes in TransactionsList's SummaryCard can drill down into exactly
+      // what makes up each number (see StatBreakdown.jsx) — not just for
+      // display, the actual filtered list the total was computed from.
+      return { debit, credit, debitTxns, creditTxns, net: credit - debit, transfers: transferPairAmt + transferHintAmt };
     };
 
     if (!accountFilter.startsWith('group:')) {
@@ -398,6 +406,14 @@ export default function StatementsPage() {
     swExpenses
   ).filter(t => !t.isSplitOnly), [pendingTxns, swExpenses, transferLabelById]);
   const summary = useMemo(() => computeSummary(matched.filter(t => !t.isPayment && !t.overrideConfirmedTransfer)), [matched]);
+  // Exact same filter computeSummary applies internally (it skips isSplitOnly
+  // rows itself, but doesn't exclude them from its input) — this is the
+  // drill-down list for "Actual spend"/"Amount saved via splits", kept in
+  // sync with summary by construction rather than recomputed separately.
+  const spendBreakdownTxns = useMemo(() =>
+    matched.filter(t => !t.isPayment && !t.overrideConfirmedTransfer && !t.isSplitOnly),
+    [matched]
+  );
 
   const splitwiseOwed = useMemo(() => swExpenses.reduce((s, e) => s + (e.myOwedShare || 0), 0), [swExpenses]);
   const personalTotal = useMemo(() =>
@@ -759,38 +775,82 @@ export default function StatementsPage() {
 
           {/* Stat bar */}
           <div className="grid grid-cols-2 gap-2">
-            <div className="bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
+            <button
+              onClick={() => setStatBreakdown({
+                title: 'Expenses this month', subtitle: monthRange.label,
+                transactions: realExpenseTxns, getAmount: t => t.amount,
+                total: realExpenseTxns.reduce((s, t) => s + (t.amount || 0), 0),
+              })}
+              className="text-left bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm card-lift"
+            >
               <p className="font-bold text-ink">{realExpenseTxns.length}</p>
               <p className="text-subtle text-xs">Expenses this month</p>
-            </div>
-            <div className="bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
+            </button>
+            <button
+              onClick={() => setStatBreakdown({
+                title: 'Total transactions amount', subtitle: monthRange.label,
+                transactions: realExpenseTxns, getAmount: t => t.amount,
+                total: realExpenseTxns.reduce((s, t) => s + (t.amount || 0), 0),
+              })}
+              className="text-left bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm card-lift"
+            >
               <p className="font-bold text-ink">{formatCurrency(realExpenseTxns.reduce((s, t) => s + (t.amount || 0), 0))}</p>
               <p className="text-subtle text-xs">Total transactions amount</p>
-            </div>
-            <div className="rounded-xl px-3 py-2.5 border border-indigo-100 card-month-total">
+            </button>
+            <button
+              onClick={() => setStatBreakdown({
+                title: 'Actual spend', subtitle: monthRange.label,
+                transactions: spendBreakdownTxns, getAmount: t => t.effectiveAmount, total: summary.totalEffective,
+              })}
+              className="text-left rounded-xl px-3 py-2.5 border border-indigo-100 card-month-total card-lift"
+            >
               <p className="font-extrabold text-lg" style={{ color: INDIGO }}>{formatCurrency(summary.totalEffective)}</p>
               <p className="text-subtle text-xs">Actual spend</p>
-            </div>
-            <div className="rounded-xl px-3 py-2.5 border border-emerald-100 tint-emerald-card">
+            </button>
+            <button
+              onClick={() => setStatBreakdown({
+                title: 'Amount saved via splits', subtitle: monthRange.label,
+                transactions: spendBreakdownTxns.filter(t => t.savings > 0.5), getAmount: t => t.savings, total: summary.totalSavings,
+              })}
+              className="text-left rounded-xl px-3 py-2.5 border border-emerald-100 tint-emerald-card card-lift"
+            >
               <p className="font-extrabold text-lg text-emerald-600">{formatCurrency(summary.totalSavings)}</p>
               <p className="text-subtle text-xs">Amount saved via splits</p>
-            </div>
-            <div className="bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
+            </button>
+            <button
+              onClick={() => setStatBreakdown({
+                title: 'Payments made', subtitle: monthRange.label,
+                transactions: paymentsMade, getAmount: t => t.amount, total: paymentsMadeTotal,
+              })}
+              className="text-left bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm card-lift"
+            >
               <p className="font-bold text-muted">{paymentsMade.length}</p>
               <p className="text-subtle text-xs">Payments made</p>
-            </div>
-            <div className="bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
+            </button>
+            <button
+              onClick={() => setStatBreakdown({
+                title: 'Payments made', subtitle: monthRange.label,
+                transactions: paymentsMade, getAmount: t => t.amount, total: paymentsMadeTotal,
+              })}
+              className="text-left bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm card-lift"
+            >
               <p className="font-bold text-muted">{formatCurrency(paymentsMadeTotal)}</p>
               <p className="text-subtle text-xs">Payments total</p>
-            </div>
+            </button>
             {incomeTxns.length > 0 && (
-              <div className="col-span-2 rounded-xl px-3 py-2.5 border border-emerald-100 tint-emerald-card">
+              <button
+                onClick={() => setStatBreakdown({
+                  title: 'Income', subtitle: monthRange.label,
+                  transactions: incomeTxns, getAmount: t => t.amount, total: incomeTotal,
+                })}
+                className="text-left col-span-2 rounded-xl px-3 py-2.5 border border-emerald-100 tint-emerald-card card-lift"
+              >
                 <div className="flex items-baseline justify-between">
                   <p className="font-extrabold text-lg text-emerald-600">+{formatCurrency(incomeTotal)}</p>
                   <p className="text-xs text-subtle">{incomeTxns.length} deposit{incomeTxns.length !== 1 ? 's' : ''}</p>
                 </div>
                 <p className="text-subtle text-xs">Income</p>
-              </div>
+              </button>
             )}
           </div>
 
@@ -899,6 +959,14 @@ export default function StatementsPage() {
                       onConfirmSuggestion={handleConfirmSuggestion}
                       onDelete={handleRemoveTxn}
                       onChangeCategory={handleChangeCategory}
+                      onDebitClick={() => setStatBreakdown({
+                        title: `${accountSummary.title} — Debit`, subtitle: monthRange.label,
+                        transactions: accountSummary.debitTxns, getAmount: t => t.amount, total: accountSummary.debit,
+                      })}
+                      onCreditClick={() => setStatBreakdown({
+                        title: `${accountSummary.title} — Credit`, subtitle: monthRange.label,
+                        transactions: accountSummary.creditTxns, getAmount: t => t.amount, total: accountSummary.credit,
+                      })}
                     />
                   </>
                 )
@@ -1087,6 +1155,13 @@ export default function StatementsPage() {
           monthRange={monthRange}
           onSelectAccount={sourceId => { setAccountFilter(sourceId); setTab(1); setAccountsOpen(false); }}
           onClose={() => setAccountsOpen(false)}
+        />
+      )}
+
+      {statBreakdown && (
+        <StatBreakdown
+          {...statBreakdown}
+          onClose={() => setStatBreakdown(null)}
         />
       )}
 

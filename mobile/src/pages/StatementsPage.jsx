@@ -265,21 +265,33 @@ export default function StatementsPage() {
       .map(t => ({ ...t, isTransfer: transferLabelById.has(t.id), transferHintLabel: transferLabelById.get(t.id) })),
     [monthlyTransactions, transferLabelById]
   );
+  // In cards mode (viewing a single credit card or "All Cards"), "money
+  // paid out" isn't the interesting question — a card's own purchases
+  // already show up elsewhere (Actual spend). What you actually paid
+  // TOWARD the card shows up as a CREDIT on its statement ("Payment Thank
+  // You-Mobile"), so isCardsView switches paymentsMade to count those
+  // instead of the plain sign-based debit split bank accounts use.
+  const isCardsView = accountFilter.startsWith('group:')
+    ? accountFilter !== 'group:bank'
+    : session.getAccountType(accountFilter) !== 'bank';
   const paymentsMade = useMemo(() =>
     monthlyTransactions
-      .filter(t => !t.isCredit && !t.isPending && !t.overrideConfirmedTransfer)
+      .filter(t => isCardsView
+        ? (t.isCredit && !t.isPending && isCreditConfirmation(t.description))
+        : (!t.isCredit && !t.isPending && !t.overrideConfirmedTransfer))
       .map(t => ({ ...t, isTransfer: transferLabelById.has(t.id), transferHintLabel: transferLabelById.get(t.id) })),
-    [monthlyTransactions, transferLabelById]
+    [monthlyTransactions, transferLabelById, isCardsView]
   );
-  // "Actual Credit" — real incoming money only: paymentsReceived already
-  // excludes confirmed transfers, this additionally drops card-payment
-  // credits (a credit card's own "payment thank you" bill-payoff credit)
-  // so a stat meant to read as "money that actually came in" isn't inflated
-  // by paying yourself back. isCreditConfirmation, not t.isPayment — the
-  // latter is stamped true on EVERY credit at ingestion (see
-  // plaid.js/csvParser.js), so it can't distinguish a real credit from a
-  // card payment; same exclusion accountSummary's computeFor uses.
-  const actualCreditTxns  = useMemo(() => paymentsReceived.filter(t => !isCreditConfirmation(t.description)), [paymentsReceived]);
+  // "Actual Credit" — money that came in but wasn't already accounted for
+  // elsewhere: paymentsReceived already excludes confirmed transfers, this
+  // additionally drops card-payment credits (a credit card's own "payment
+  // thank you" bill-payoff credit — isCreditConfirmation, not t.isPayment,
+  // since the latter is stamped true on EVERY credit at ingestion, see
+  // plaid.js/csvParser.js) and isIncome rows (paychecks — those already get
+  // their own Income card below, so counting them here too would double
+  // them up). What's left is refunds, cashback, reimbursements — "extra"
+  // money in, not salary and not paying yourself back.
+  const actualCreditTxns  = useMemo(() => paymentsReceived.filter(t => !isCreditConfirmation(t.description) && !t.isIncome), [paymentsReceived]);
   const actualCreditTotal = useMemo(() => actualCreditTxns.reduce((s, t) => s + (t.amount || 0), 0), [actualCreditTxns]);
   // Same isCredit-not-isPayment reasoning as bankExpenseTxns above — a
   // pending bill payment/transfer debit still belongs in the ledger.
@@ -418,6 +430,11 @@ export default function StatementsPage() {
     swExpenses
   ).filter(t => !t.isSplitOnly), [pendingTxns, swExpenses, transferLabelById]);
   const summary = useMemo(() => computeSummary(matched.filter(t => !t.isPayment && !t.overrideConfirmedTransfer)), [matched]);
+  // Net spend — Actual spend minus Actual Credit (both defined above). Not
+  // its own drill-down list (it's a difference of two totals, not a
+  // filtered transaction set) — the two cards it's built from are each
+  // already one tap away for the breakdown.
+  const netSpendTotal = summary.totalEffective - actualCreditTotal;
   // Exact same filter computeSummary applies internally (it skips isSplitOnly
   // rows itself, but doesn't exclude them from its input) — this is the
   // drill-down list for "Actual spend"/"Amount saved via splits", kept in
@@ -829,6 +846,12 @@ export default function StatementsPage() {
               <p className="font-extrabold text-lg text-emerald-600">{formatCurrency(actualCreditTotal)}</p>
               <p className="text-subtle text-xs">Actual Credit</p>
             </button>
+            <div className={`col-span-2 rounded-xl px-3 py-2.5 border ${netSpendTotal >= 0 ? 'border-red-100' : 'border-emerald-100'}`}>
+              <p className={`font-extrabold text-lg ${netSpendTotal >= 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+                {netSpendTotal >= 0 ? '' : '+'}{formatCurrency(Math.abs(netSpendTotal))}
+              </p>
+              <p className="text-subtle text-xs">Net spend · Actual spend − Actual Credit</p>
+            </div>
             <button
               onClick={() => setStatBreakdown({
                 title: 'Payments made', subtitle: monthRange.label,

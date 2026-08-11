@@ -343,19 +343,46 @@ export default function HomePage() {
     return combinedTimeline;
   }, [combinedTimeline, txnFilter]);
 
+  // Non-receipt Splitwise expenses represented via a matched bank
+  // transaction — reusing matcher.js's own resolved (live-or-snapshot)
+  // myOwedShare per match rather than re-deriving it from splitwiseOnly.
+  // splitwiseOnly is scoped by the *expense's own date* (fetchAllExpenses's
+  // datedAfter/datedBefore), but a manually-linked bank charge can post in
+  // a different month than the expense it's linked to (the same "add an
+  // item later, second charge posts" pattern as the Walmart pro-rating
+  // case above, just crossing a month boundary) — that expense is real
+  // spend for this month (the bank charge says so) but invisible to
+  // splitwiseOnly, so summing splitwiseOnly alone silently dropped it from
+  // "Your share" even though "Actual spend" already counted it via the
+  // matched transaction.
+  const matchedSplitwiseOnlyShare = useMemo(() => {
+    let total = 0;
+    for (const t of matchedSpendTxns) {
+      if (!t.isSplitwised) continue;
+      const matches = t.splitwiseMatches?.length ? t.splitwiseMatches : (t.splitwiseId ? [{ id: t.splitwiseId, myOwedShare: t.effectiveAmount }] : []);
+      for (const m of matches) {
+        if (!postedExpenseIds.has(m.id)) total += (m.myOwedShare || 0);
+      }
+    }
+    return total;
+  }, [matchedSpendTxns, postedExpenseIds]);
+
   // "Your share" — tracks whichever filter chip is selected below instead
   // of always summing everything, so the number at top always matches what
   // the list underneath it is actually showing. Same per-kind share
   // definition as before: approved receipts contribute their actual split
-  // amount (personTotals, set at approval — see ApprovePage), Splitwise-
-  // only expenses their owed share, personal bank spend its full
-  // effectiveAmount (100% yours, nothing to split). Pending receipts aren't
-  // split yet, so their "my share" isn't knowable — kept out of every
-  // bucket and shown separately below instead of silently inflating one of
-  // them with a full amount that isn't really "my spend" yet.
+  // amount (personTotals, set at approval — see ApprovePage), Splitwise
+  // expenses their owed share (matched-to-bank ones via
+  // matchedSplitwiseOnlyShare above, unmatched ones via splitwiseSpendTotal
+  // — together the same split "Actual spend" uses, so the two totals stay
+  // in agreement), personal bank spend its full effectiveAmount (100%
+  // yours, nothing to split). Pending receipts aren't split yet, so their
+  // "my share" isn't knowable — kept out of every bucket and shown
+  // separately below instead of silently inflating one of them with a full
+  // amount that isn't really "my spend" yet.
   const { myShareTotal, myShareCount } = useMemo(() => {
     const receiptShare  = approvedMonthlyReceipts.reduce((s, r) => s + (myId && r.personTotals?.[myId] || 0), 0);
-    const splitwiseShare = splitwiseOnly.reduce((s, e) => s + (e.myOwedShare || 0), 0);
+    const splitwiseShare = splitwiseSpendTotal + matchedSplitwiseOnlyShare;
     const personalShare  = personalTxns.reduce((s, t) => s + (t.effectiveAmount || 0), 0);
     if (txnFilter === 'receipt')   return { myShareTotal: receiptShare, myShareCount: approvedMonthlyReceipts.length };
     if (txnFilter === 'splitwise') return { myShareTotal: splitwiseShare, myShareCount: splitwiseOnly.length };
@@ -364,7 +391,7 @@ export default function HomePage() {
       myShareTotal: receiptShare + splitwiseShare + personalShare,
       myShareCount: approvedMonthlyReceipts.length + splitwiseOnly.length + personalTxns.length,
     };
-  }, [txnFilter, approvedMonthlyReceipts, splitwiseOnly, personalTxns, myId]);
+  }, [txnFilter, approvedMonthlyReceipts, splitwiseOnly, personalTxns, myId, splitwiseSpendTotal, matchedSplitwiseOnlyShare]);
 
   // Net worth = cash on hand + what you're owed - what you owe. Credit
   // card `current` balance is what you owe on it (a liability), so it

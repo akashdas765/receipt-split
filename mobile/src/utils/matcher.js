@@ -118,6 +118,35 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
     }
   }
 
+  // Second pre-pass: a single Splitwise expense can legitimately span more
+  // than one bank charge — e.g. adding an item to a Walmart order after the
+  // fact posts a second, separate charge against the same receipt/expense.
+  // Without this, every transaction manually linked to that expense counted
+  // its FULL owed share independently, so the same $23 could get counted
+  // twice (once per charge) instead of split between them. This maps each
+  // forced-linked expense id to every transaction that claims it (and that
+  // claimant's own bank amount), so each transaction's owed share below can
+  // be pro-rated by its portion of the total bank amount claimed for that
+  // expense — one full share when there's a single claimant (unchanged
+  // behavior), split proportionally to each transaction's amount otherwise.
+  const claimantAmounts = new Map(); // expenseId -> Map<txnId, bankAmount>
+  for (const txn of bankTransactions) {
+    if (txn.overrideForcedUnmatched) continue;
+    const forcedList = resolveForcedLinks(txn, splitwiseExpenses);
+    if (!forcedList.length) continue;
+    const txnAmount = Math.abs(txn.amount || 0);
+    for (const f of forcedList) {
+      if (!claimantAmounts.has(f.id)) claimantAmounts.set(f.id, new Map());
+      claimantAmounts.get(f.id).set(txn.id, txnAmount);
+    }
+  }
+  const shareOf = (expenseId, txnAmount) => {
+    const claimants = claimantAmounts.get(expenseId);
+    if (!claimants || claimants.size <= 1) return 1;
+    const total = [...claimants.values()].reduce((s, a) => s + a, 0);
+    return total > 0 ? txnAmount / total : 1 / claimants.size;
+  };
+
   for (const txn of bankTransactions) {
     const txnDate   = parseDate(txn.date) || new Date();
     const txnAmount = Math.abs(txn.amount || 0);
@@ -143,15 +172,17 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
     if (forcedLinkIds(txn).length) {
       const forcedList = resolveForcedLinks(txn, splitwiseExpenses);
       if (forcedList.length) {
-        const totalOwed = forcedList.reduce((s, f) => s + (f.myOwedShare || 0), 0);
-        const totalCost = forcedList.reduce((s, f) => s + (parseFloat(f.cost) || 0), 0);
+        const owedFor  = f => (f.myOwedShare || 0) * shareOf(f.id, txnAmount);
+        const costFor  = f => (parseFloat(f.cost) || 0) * shareOf(f.id, txnAmount);
+        const totalOwed = forcedList.reduce((s, f) => s + owedFor(f), 0);
+        const totalCost = forcedList.reduce((s, f) => s + costFor(f), 0);
         result.push({
           ...txn,
           isSplitwised:      true,
           splitwiseId:       forcedList[0].id,
           splitwiseMatches:  forcedList.map(f => ({
             id: f.id, description: f.description, date: f.date,
-            cost: parseFloat(f.cost) || 0, myOwedShare: f.myOwedShare || 0, group_id: f.group_id,
+            cost: costFor(f), myOwedShare: owedFor(f), group_id: f.group_id,
           })),
           splitwiseDesc:     forcedList.map(f => f.description).join(', '),
           splitwiseDate:     forcedList[0].date,

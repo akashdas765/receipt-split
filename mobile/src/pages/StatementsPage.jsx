@@ -340,26 +340,16 @@ export default function StatementsPage() {
       // "don't change a total before confirmation" policy used everywhere
       // else in this file.
       const debitTxns  = settled.filter(t => !t.isCredit && !t.overrideConfirmedTransfer);
-      // Real credits only — refunds, cashback, deposits — not a credit
-      // card payment showing up as a credit on the card account (paying
-      // your own bill isn't money received, it's just moving money you
-      // already had). Confirmed transfers are still excluded — money moving
-      // in from one of your own accounts was never really a credit either.
-      // NOTE: t.isPayment is NOT the right flag to exclude here — plaid.js/
-      // csvParser.js stamp isPayment=true on every credit unconditionally
-      // (isCredit || isPaymentTransaction(desc)), so filtering on it would
-      // wipe out real income/refunds too. isCreditConfirmation's narrower
-      // "payment thank you"/"autopay"/etc. patterns are what actually
-      // distinguish a card bill-payment credit from a real one.
-      const creditTxns = settled.filter(t => t.isCredit && !isCreditConfirmation(t.description) && !t.overrideConfirmedTransfer);
-      // The card-payment credits creditTxns just excluded, kept separately
-      // so the "Payments received" caption below (card accounts only) still
-      // has something real to point at instead of reusing the now-filtered
-      // credit figure.
-      const paymentTxns = settled.filter(t => t.isCredit && isCreditConfirmation(t.description) && !t.overrideConfirmedTransfer);
-      const debit    = debitTxns.reduce((s, t) => s + (t.amount || 0), 0);
-      const credit   = creditTxns.reduce((s, t) => s + (t.amount || 0), 0);
-      const payments = paymentTxns.reduce((s, t) => s + (t.amount || 0), 0);
+      // This is a ledger view (mirrors the real card/bank statement for
+      // this account), so every credit counts here — including card
+      // payments — unlike the Statements stat bar's "Actual Credit" card,
+      // which deliberately excludes those to answer a different question
+      // ("how much real money came in this month"). Only confirmed
+      // transfers are excluded — money moving in from one of your own
+      // accounts was never really a credit either.
+      const creditTxns = settled.filter(t => t.isCredit && !t.overrideConfirmedTransfer);
+      const debit  = debitTxns.reduce((s, t) => s + (t.amount || 0), 0);
+      const credit = creditTxns.reduce((s, t) => s + (t.amount || 0), 0);
       const inScope = scopePredicate;
       const transferPairAmt = transferPairsThisMonth
         .filter(p => p.confirmed && (inScope(p.debit.source) || inScope(p.credit.source)))
@@ -371,7 +361,7 @@ export default function StatementsPage() {
       // boxes in TransactionsList's SummaryCard can drill down into exactly
       // what makes up each number (see StatBreakdown.jsx) — not just for
       // display, the actual filtered list the total was computed from.
-      return { debit, credit, debitTxns, creditTxns, payments, paymentTxns, net: credit - debit, transfers: transferPairAmt + transferHintAmt };
+      return { debit, credit, debitTxns, creditTxns, net: credit - debit, transfers: transferPairAmt + transferHintAmt };
     };
 
     if (!accountFilter.startsWith('group:')) {

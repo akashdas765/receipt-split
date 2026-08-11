@@ -241,22 +241,71 @@ export default function HomePage() {
   );
   const personalTxns = useMemo(() => matchedSpendTxns.filter(t => !t.isSplitwised), [matchedSpendTxns]);
 
+  // Splitwise expense ids already represented in matchedSpendTxns (a bank
+  // charge the auto-matcher linked to that expense) — used below so a
+  // posted receipt's spend isn't counted twice: once via its own bank
+  // charge, once via the receipt itself.
+  const matchedSplitwiseExpenseIds = useMemo(() => {
+    const ids = new Set();
+    for (const t of matchedSpendTxns) {
+      if (!t.isSplitwised) continue;
+      if (t.splitwiseId) ids.add(t.splitwiseId);
+      (t.splitwiseMatches || []).forEach(m => ids.add(m.id));
+    }
+    return ids;
+  }, [matchedSpendTxns]);
+  // Approved receipts whose Splitwise expense has no matching bank charge
+  // yet — e.g. that card's statement hasn't been uploaded to Statements,
+  // or the auto-matcher just didn't find it. Without this, a posted
+  // receipt's spend was invisible to "Actual spend" (unless its bank
+  // charge happened to independently match), even though "Your share"
+  // always counted it — the two totals could disagree for exactly this
+  // reason. Reshaped to the same {effectiveAmount, category, ...} fields
+  // bank transactions use so it folds cleanly into rentUtilTxns/miscTxns
+  // below (a receipt's category is already this app's own ALL_CATEGORIES
+  // taxonomy, unlike a raw Splitwise expense's, so no separate section is
+  // needed the way splitwiseSpendTxns needed one).
+  const unmatchedReceiptTxns = useMemo(() =>
+    approvedMonthlyReceipts
+      .filter(r => !r.splitwise_expense_id || !matchedSplitwiseExpenseIds.has(r.splitwise_expense_id))
+      .map(r => ({
+        id:              r.id,
+        description:     r.merchant || 'Receipt',
+        date:            r.date || r.scanned_at,
+        effectiveAmount: (myId && r.personTotals?.[myId]) || 0,
+        originalAmount:  r.grandTotal ?? r.total ?? 0,
+        isSplitwised:    true,
+        sourceName:      'Receipt',
+        category:        r.category,
+      })),
+    [approvedMonthlyReceipts, matchedSplitwiseExpenseIds, myId]
+  );
+
   // Same splitwiseOnly list the timeline's "Splitwise" filter already
-  // shows, reshaped to the {description, date, effectiveAmount,
-  // originalAmount, sourceName} fields SpendingDetail's Section renders —
-  // shown there as its own section (kept out of the Rent & Utilities/Misc
-  // category split since it never moved through a bank account of yours,
-  // but still folded into actualSpend below — it's real money you owe/
-  // spent, just paid by someone else on your behalf).
-  const splitwiseSpendTxns = useMemo(() => splitwiseOnly.map(e => ({
-    id:              e.id,
-    description:     e.description,
-    date:            e.date,
-    effectiveAmount: e.myOwedShare,
-    originalAmount:  e.cost,
-    isSplitwised:    true,
-    sourceName:      groupName(e.group_id) || 'Splitwise',
-  })), [splitwiseOnly, groups]);
+  // shows, minus any expense already represented via a matched bank
+  // transaction (same reasoning as unmatchedReceiptTxns above — the
+  // matcher scores a bank charge against every Splitwise expense, not just
+  // receipt-posted ones, so a Splitwise-only expense someone else added
+  // can still get auto-matched to one of your card charges; without this
+  // filter that expense's share would be counted twice: once via the
+  // matched bank transaction, once via splitwiseSpendTotal here). Reshaped
+  // to the {description, date, effectiveAmount, originalAmount,
+  // sourceName} fields SpendingDetail's Section renders — shown there as
+  // its own section (kept out of the Rent & Utilities/Misc category split
+  // since it never moved through a bank account of yours, but still
+  // folded into actualSpend below — it's real money you owe/spent, just
+  // paid by someone else on your behalf).
+  const splitwiseSpendTxns = useMemo(() => splitwiseOnly
+    .filter(e => !matchedSplitwiseExpenseIds.has(e.id))
+    .map(e => ({
+      id:              e.id,
+      description:     e.description,
+      date:            e.date,
+      effectiveAmount: e.myOwedShare,
+      originalAmount:  e.cost,
+      isSplitwised:    true,
+      sourceName:      groupName(e.group_id) || 'Splitwise',
+    })), [splitwiseOnly, groups, matchedSplitwiseExpenseIds]);
   const splitwiseSpendTotal = useMemo(() => splitwiseSpendTxns.reduce((s, t) => s + (t.effectiveAmount || 0), 0), [splitwiseSpendTxns]);
 
   const monthCount = monthlyReceipts.length + splitwiseOnly.length + foreignCurrencyOnly.length + personalTxns.length;
@@ -349,8 +398,12 @@ export default function HomePage() {
   const netWorth = bankTotal - creditDebtTotal + splitwiseNet + manualAssetTotal - manualLiabilityTotal;
   const hasNetWorthData = hasPlaidAccounts || manualAccounts.length > 0;
 
-  const rentUtilTxns = useMemo(() => matchedSpendTxns.filter(t => RENT_UTILITY_CATEGORIES.has(t.category)), [matchedSpendTxns]);
-  const miscTxns     = useMemo(() => matchedSpendTxns.filter(t => !RENT_UTILITY_CATEGORIES.has(t.category)), [matchedSpendTxns]);
+  // Bank transactions + unmatched posted receipts, combined before the
+  // category split so a receipt's spend lands in the right bucket the same
+  // way a bank transaction's does (see unmatchedReceiptTxns above).
+  const categorizedSpendTxns = useMemo(() => [...matchedSpendTxns, ...unmatchedReceiptTxns], [matchedSpendTxns, unmatchedReceiptTxns]);
+  const rentUtilTxns = useMemo(() => categorizedSpendTxns.filter(t => RENT_UTILITY_CATEGORIES.has(t.category)), [categorizedSpendTxns]);
+  const miscTxns     = useMemo(() => categorizedSpendTxns.filter(t => !RENT_UTILITY_CATEGORIES.has(t.category)), [categorizedSpendTxns]);
   const rentUtilTotal = useMemo(() => rentUtilTxns.reduce((s, t) => s + (t.effectiveAmount || 0), 0), [rentUtilTxns]);
   const miscTotal      = useMemo(() => miscTxns.reduce((s, t) => s + (t.effectiveAmount || 0), 0), [miscTxns]);
   // Bank spend (Rent & Utilities + Misc) plus your share of Splitwise
@@ -358,7 +411,7 @@ export default function HomePage() {
   // this month, just from different sources, so "Actual spend" counts
   // both instead of only the bank-transaction half of it.
   const actualSpend = rentUtilTotal + miscTotal + splitwiseSpendTotal;
-  const hasSpendingData = matchedSpendTxns.length > 0 || splitwiseSpendTxns.length > 0;
+  const hasSpendingData = categorizedSpendTxns.length > 0 || splitwiseSpendTxns.length > 0;
 
   const handleCarouselScroll = e => {
     const { scrollLeft, clientWidth } = e.currentTarget;

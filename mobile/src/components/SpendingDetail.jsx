@@ -10,11 +10,11 @@ const SORTS = [
 // Breakdown sheet opened by tapping the Spending card on HomePage — the
 // same Rent & Utilities / Misc split shown on the card face, expanded into
 // the actual transaction lists behind each number. One sort toggle shared
-// by both sections rather than one each, so switching order doesn't leave
-// the two sections inconsistent with each other.
-export default function SpendingDetail({ total, subtitle, rentUtilTxns, rentUtilTotal, miscTxns, miscTotal, onClose }) {
+// by all sections rather than one each, so switching order doesn't leave
+// them inconsistent with each other.
+export default function SpendingDetail({ total, subtitle, rentUtilTxns, rentUtilTotal, miscTxns, miscTotal, splitwiseTxns = [], splitwiseTotal = 0, onClose }) {
   const [sortBy, setSortBy] = useState('amount');
-  const hasAny = rentUtilTxns.length + miscTxns.length > 1;
+  const hasAny = rentUtilTxns.length + miscTxns.length + splitwiseTxns.length > 1;
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40 anim-fade-in" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -52,6 +52,12 @@ export default function SpendingDetail({ total, subtitle, rentUtilTxns, rentUtil
         <div className="overflow-y-auto px-4 py-4 space-y-5">
           <Section title="Rent & Utilities" total={rentUtilTotal} txns={rentUtilTxns} sortBy={sortBy} />
           <Section title="Misc" total={miscTotal} txns={miscTxns} sortBy={sortBy} />
+          {splitwiseTxns.length > 0 && (
+            <div>
+              <Section title="Splitwise · paid by someone else" total={splitwiseTotal} txns={splitwiseTxns} sortBy={sortBy} />
+              <p className="text-[10px] text-subtle mt-1.5">Paid directly by someone else, not out of your bank account — still counted in Actual spend above since it&rsquo;s your share of real money spent.</p>
+            </div>
+          )}
         </div>
       </div>
     </div>

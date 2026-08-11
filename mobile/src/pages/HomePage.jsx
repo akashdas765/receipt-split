@@ -207,17 +207,6 @@ export default function HomePage() {
   const approvedMonthlyReceipts = useMemo(() => monthlyReceipts.filter(r => r.approved), [monthlyReceipts]);
   const pendingMonthlyReceipts  = useMemo(() => monthlyReceipts.filter(r => !r.approved), [monthlyReceipts]);
 
-  // "Your share" — approved receipts contribute their actual split amount
-  // (personTotals, set at approval — see ApprovePage), not the full group
-  // total, plus every Splitwise-only expense's owed share. Pending receipts
-  // aren't split yet, so their "my share" isn't knowable — kept out of this
-  // total and shown separately below instead of silently inflating it with
-  // a full amount that isn't really "my spend" yet.
-  const myShareTotal =
-    approvedMonthlyReceipts.reduce((s, r) => s + (myId && r.personTotals?.[myId] || 0), 0) +
-    splitwiseOnly.reduce((s, e) => s + (e.myOwedShare || 0), 0);
-  const myShareCount = approvedMonthlyReceipts.length + splitwiseOnly.length;
-
   const pendingTotal = pendingMonthlyReceipts.reduce((s, r) => s + (r.grandTotal ?? r.total ?? 0), 0);
 
   // Scoped to the currently-selected month, matching what's already shown
@@ -251,6 +240,24 @@ export default function HomePage() {
     [realBankExpenseTxns, splitwiseExpenses]
   );
   const personalTxns = useMemo(() => matchedSpendTxns.filter(t => !t.isSplitwised), [matchedSpendTxns]);
+
+  // Same splitwiseOnly list the timeline's "Splitwise" filter already
+  // shows, reshaped to the {description, date, effectiveAmount,
+  // originalAmount, sourceName} fields SpendingDetail's Section renders —
+  // shown there as its own section (kept out of the Rent & Utilities/Misc
+  // category split since it never moved through a bank account of yours,
+  // but still folded into actualSpend below — it's real money you owe/
+  // spent, just paid by someone else on your behalf).
+  const splitwiseSpendTxns = useMemo(() => splitwiseOnly.map(e => ({
+    id:              e.id,
+    description:     e.description,
+    date:            e.date,
+    effectiveAmount: e.myOwedShare,
+    originalAmount:  e.cost,
+    isSplitwised:    true,
+    sourceName:      groupName(e.group_id) || 'Splitwise',
+  })), [splitwiseOnly, groups]);
+  const splitwiseSpendTotal = useMemo(() => splitwiseSpendTxns.reduce((s, t) => s + (t.effectiveAmount || 0), 0), [splitwiseSpendTxns]);
 
   const monthCount = monthlyReceipts.length + splitwiseOnly.length + foreignCurrencyOnly.length + personalTxns.length;
 
@@ -287,6 +294,29 @@ export default function HomePage() {
     return combinedTimeline;
   }, [combinedTimeline, txnFilter]);
 
+  // "Your share" — tracks whichever filter chip is selected below instead
+  // of always summing everything, so the number at top always matches what
+  // the list underneath it is actually showing. Same per-kind share
+  // definition as before: approved receipts contribute their actual split
+  // amount (personTotals, set at approval — see ApprovePage), Splitwise-
+  // only expenses their owed share, personal bank spend its full
+  // effectiveAmount (100% yours, nothing to split). Pending receipts aren't
+  // split yet, so their "my share" isn't knowable — kept out of every
+  // bucket and shown separately below instead of silently inflating one of
+  // them with a full amount that isn't really "my spend" yet.
+  const { myShareTotal, myShareCount } = useMemo(() => {
+    const receiptShare  = approvedMonthlyReceipts.reduce((s, r) => s + (myId && r.personTotals?.[myId] || 0), 0);
+    const splitwiseShare = splitwiseOnly.reduce((s, e) => s + (e.myOwedShare || 0), 0);
+    const personalShare  = personalTxns.reduce((s, t) => s + (t.effectiveAmount || 0), 0);
+    if (txnFilter === 'receipt')   return { myShareTotal: receiptShare, myShareCount: approvedMonthlyReceipts.length };
+    if (txnFilter === 'splitwise') return { myShareTotal: splitwiseShare, myShareCount: splitwiseOnly.length };
+    if (txnFilter === 'personal')  return { myShareTotal: personalShare, myShareCount: personalTxns.length };
+    return {
+      myShareTotal: receiptShare + splitwiseShare + personalShare,
+      myShareCount: approvedMonthlyReceipts.length + splitwiseOnly.length + personalTxns.length,
+    };
+  }, [txnFilter, approvedMonthlyReceipts, splitwiseOnly, personalTxns, myId]);
+
   // Net worth = cash on hand + what you're owed - what you owe. Credit
   // card `current` balance is what you owe on it (a liability), so it
   // subtracts rather than adds — the whole reason PlaidConnect.jsx's
@@ -321,10 +351,14 @@ export default function HomePage() {
 
   const rentUtilTxns = useMemo(() => matchedSpendTxns.filter(t => RENT_UTILITY_CATEGORIES.has(t.category)), [matchedSpendTxns]);
   const miscTxns     = useMemo(() => matchedSpendTxns.filter(t => !RENT_UTILITY_CATEGORIES.has(t.category)), [matchedSpendTxns]);
-  const actualSpend  = useMemo(() => matchedSpendTxns.reduce((s, t) => s + (t.effectiveAmount || 0), 0), [matchedSpendTxns]);
   const rentUtilTotal = useMemo(() => rentUtilTxns.reduce((s, t) => s + (t.effectiveAmount || 0), 0), [rentUtilTxns]);
   const miscTotal      = useMemo(() => miscTxns.reduce((s, t) => s + (t.effectiveAmount || 0), 0), [miscTxns]);
-  const hasSpendingData = matchedSpendTxns.length > 0;
+  // Bank spend (Rent & Utilities + Misc) plus your share of Splitwise
+  // expenses someone else paid — both are real money you actually spent
+  // this month, just from different sources, so "Actual spend" counts
+  // both instead of only the bank-transaction half of it.
+  const actualSpend = rentUtilTotal + miscTotal + splitwiseSpendTotal;
+  const hasSpendingData = matchedSpendTxns.length > 0 || splitwiseSpendTxns.length > 0;
 
   const handleCarouselScroll = e => {
     const { scrollLeft, clientWidth } = e.currentTarget;
@@ -401,6 +435,12 @@ export default function HomePage() {
           <span className="text-muted">Misc</span>
           <span className="font-semibold text-ink">{formatCurrency(miscTotal)}</span>
         </div>
+        {splitwiseSpendTxns.length > 0 && (
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted">Splitwise</span>
+            <span className="font-semibold text-ink">{formatCurrency(splitwiseSpendTotal)}</span>
+          </div>
+        )}
       </div>
       <p className="text-[10px] text-indigo-500/70 mt-2 font-semibold">Tap for details</p>
     </button>
@@ -894,6 +934,8 @@ export default function HomePage() {
           rentUtilTotal={rentUtilTotal}
           miscTxns={miscTxns}
           miscTotal={miscTotal}
+          splitwiseTxns={splitwiseSpendTxns}
+          splitwiseTotal={splitwiseSpendTotal}
           onClose={() => setSpendingOpen(false)}
         />
       )}

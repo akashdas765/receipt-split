@@ -8,6 +8,7 @@ import { getCategoryIcon } from '../utils/categoryDetector';
 import BottomNav from '../components/BottomNav';
 import MonthSlider from '../components/MonthSlider';
 import PageHeader from '../components/PageHeader';
+import CategoryDetail from '../components/CategoryDetail';
 
 const INDIGO  = '#6366f1';
 const EMERALD = '#10b981';
@@ -34,6 +35,8 @@ export default function InsightsPage() {
   const [statsLoading, setStatsLoading] = useState(true);
   const [error, setError] = useState('');
   const [stats, setStats] = useState(null);
+
+  const [selectedCategory, setSelectedCategory] = useState(null); // category name being drilled into | null
 
   const [messages,   setMessages]   = useState([]); // [{ role, content }]
   const [input,      setInput]      = useState('');
@@ -97,6 +100,7 @@ export default function InsightsPage() {
   // referencing a different period than newer ones, so start fresh instead.
   useEffect(() => {
     setMessages([]);
+    setSelectedCategory(null);
   }, [currentMonth]);
 
   const loading = initialLoading || statsLoading;
@@ -210,7 +214,11 @@ export default function InsightsPage() {
                     {stats.topCategories.map((c, i) => {
                       const pct = stats.topCategories[0].amount ? (c.amount / stats.topCategories[0].amount) * 100 : 0;
                       return (
-                        <div key={c.category} className={`px-4 py-3 ${i < stats.topCategories.length - 1 ? 'border-b border-edge' : ''}`}>
+                        <button
+                          key={c.category}
+                          onClick={() => setSelectedCategory(c.category)}
+                          className={`w-full text-left px-4 py-3 hover:bg-surface-alt transition-colors ${i < stats.topCategories.length - 1 ? 'border-b border-edge' : ''}`}
+                        >
                           <div className="flex items-center justify-between mb-1.5 gap-2">
                             <span className="text-sm font-semibold text-ink">{getCategoryIcon(c.category)} {c.category}</span>
                             <span className="text-sm font-bold text-ink shrink-0">${c.amount.toFixed(2)}</span>
@@ -218,7 +226,7 @@ export default function InsightsPage() {
                           <div className="h-1.5 rounded-full bg-surface-alt overflow-hidden">
                             <div className="h-full rounded-full" style={{ width: `${pct}%`, background: EMERALD }} />
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -299,6 +307,15 @@ export default function InsightsPage() {
       </main>
 
       <BottomNav />
+
+      {selectedCategory && stats && (
+        <CategoryDetail
+          category={selectedCategory}
+          total={stats.topCategories.find(c => c.category === selectedCategory)?.amount || 0}
+          items={stats.itemizedTransactions.filter(t => (t.category || 'Other') === selectedCategory)}
+          onClose={() => setSelectedCategory(null)}
+        />
+      )}
     </div>
   );
 }

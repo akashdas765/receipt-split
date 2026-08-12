@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2, Clock, ArrowLeftRight, Plus, CreditCard } from 'lucide-react';
 import { formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { getCategoryIcon, ALL_CATEGORIES } from '../utils/categoryDetector';
@@ -16,9 +16,32 @@ const INDIGO = '#6366f1';
 // Previously two separate tabs (Review + All) — merged here so "all my
 // card activity" and "what still needs matching" live in one list instead
 // of two.
-export default function TransactionsList({ matched, creditTxns, pendingTxns = [], accountSummary, groupName, monthRange, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory, onDebitClick, onCreditClick }) {
+export default function TransactionsList({ matched, creditTxns, pendingTxns = [], accountSummary, groupName, monthRange, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory, onDebitClick, onCreditClick, initialExpandedId }) {
   const [filter,   setFilter]   = useState(0); // 0=All 1=Unmatched 2=Matched 3=Credits 4=Pending
-  const [expanded, setExpanded] = useState({});
+  const [expanded, setExpanded] = useState(() => initialExpandedId ? { [initialExpandedId]: true } : {});
+
+  // Deep-link from InsightsPage's category drill-down (see StatementsPage's
+  // pendingOpenTxnId) — expands that row and scrolls it into view once its
+  // DOM node exists. DebitRow carries a matching `id` attribute for this to
+  // find. A short retry loop (not a single lookup) because the row may not
+  // be in the DOM yet on the same tick this fires (filter/tab/data still
+  // settling) — gives up after ~1s rather than polling forever.
+  useEffect(() => {
+    if (!initialExpandedId) return;
+    setExpanded(p => ({ ...p, [initialExpandedId]: true }));
+    let attempts = 0;
+    const timer = setInterval(() => {
+      attempts++;
+      const el = document.getElementById(`txn-row-${initialExpandedId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        clearInterval(timer);
+      } else if (attempts > 10) {
+        clearInterval(timer);
+      }
+    }, 100);
+    return () => clearInterval(timer);
+  }, [initialExpandedId]);
 
   // Transfers and payments are neither — they're excluded from both
   // (matcher.js never even tries to score them), but stay visible in the
@@ -173,7 +196,7 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
   const suggestion   = !txn.isSplitwised ? txn.suggestedMatch : null;
 
   return (
-    <div className={`rounded-2xl overflow-hidden border bg-surface ${txn.isPending ? 'border-dashed' : ''} ${
+    <div id={`txn-row-${txn.id}`} className={`rounded-2xl overflow-hidden border bg-surface ${txn.isPending ? 'border-dashed' : ''} ${
       txn.isTransfer ? 'border-indigo-100' : txn.isPayment ? 'border-edge' : txn.isSplitwised ? 'border-emerald-100' : suggestion ? 'border-indigo-100' : 'border-amber-100'
     }`}>
       <div className="w-full flex items-center gap-2 p-3">

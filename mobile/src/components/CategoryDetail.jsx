@@ -8,15 +8,23 @@ const SORTS = [
   { key: 'date',   label: 'Date' },
 ];
 
-// Bottom sheet opened by tapping a category row in InsightsPage's "By
-// category" list — same pattern as HomePage's SpendingDetail (tap a total,
-// see the actual line items behind it), just single-section since a
-// category has one flat list rather than Rent&Utilities/Misc/Splitwise
-// buckets. items: stats.itemizedTransactions already filtered to this
-// category — see computeStats in services/insights.js for how each entry's
-// date/description/source/amount is assembled from receipts, matched bank
-// transactions, and Splitwise-only expenses.
-export default function CategoryDetail({ category, total, items, onClose }) {
+// Bottom sheet opened by tapping a category (or merchant) row in
+// InsightsPage's "By category"/"Top merchants" lists — same pattern as
+// HomePage's SpendingDetail (tap a total, see the actual line items behind
+// it), just single-section since a category/merchant has one flat list
+// rather than Rent&Utilities/Misc/Splitwise buckets. items:
+// stats.itemizedTransactions already filtered to this category or merchant
+// — see computeStats in services/insights.js for how each entry's date/
+// description/source/amount (and id/kind/accountSource, used by onSelect
+// to route to the right editor) is assembled from receipts, matched bank
+// transactions, and Splitwise-only expenses. `category` doubles as the
+// header label for either use (a merchant name isn't a real category, so
+// pass `icon` explicitly in that case — it otherwise defaults to
+// getCategoryIcon(category), which falls back to a generic box for an
+// unrecognized string). onSelect is optional — omit it to keep rows static
+// (e.g. if a caller doesn't have enough context to navigate anywhere
+// useful).
+export default function CategoryDetail({ category, icon, total, items, onClose, onSelect }) {
   const [sortBy, setSortBy] = useState('amount');
   const sorted = [...items].sort((a, b) =>
     sortBy === 'date'
@@ -33,7 +41,7 @@ export default function CategoryDetail({ category, total, items, onClose }) {
 
         <div className="px-4 py-3 border-b border-edge flex items-start justify-between">
           <div>
-            <p className="font-extrabold text-ink text-sm">{getCategoryIcon(category)} {category}</p>
+            <p className="font-extrabold text-ink text-sm">{icon ?? getCategoryIcon(category)} {category}</p>
             <p className="text-xl font-extrabold text-ink mt-0.5">{formatCurrency(total)}</p>
             <p className="text-xs text-subtle mt-0.5">{items.length} item{items.length !== 1 ? 's' : ''}</p>
           </div>
@@ -63,13 +71,18 @@ export default function CategoryDetail({ category, total, items, onClose }) {
           ) : (
             <div className="bg-surface rounded-xl border border-edge divide-y divide-slate-50 px-3">
               {sorted.map((t, i) => (
-                <div key={i} className="flex items-center justify-between py-2 gap-3">
+                <button
+                  key={i}
+                  onClick={() => onSelect?.(t)}
+                  disabled={!onSelect || !t.id}
+                  className="w-full flex items-center justify-between py-2 gap-3 text-left disabled:cursor-default hover:enabled:bg-surface-alt -mx-3 px-3 rounded-lg transition-colors"
+                >
                   <div className="min-w-0">
                     <p className="text-sm text-ink truncate">{t.description || 'Unknown'}</p>
                     <p className="text-[10px] text-subtle truncate">{formatShortDate(t.date)} · {t.source}</p>
                   </div>
                   <span className="text-sm font-semibold text-ink shrink-0">{formatCurrency(t.amount)}</span>
-                </div>
+                </button>
               ))}
             </div>
           )}

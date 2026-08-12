@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, CreditCard, Landmark, HelpCircle, Wallet, Upload, X, RefreshCw, Loader2 } from 'lucide-react';
 import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride, updateTransactionCategory, reclassifyTransactions, savePlaidConnection, TXN_MAX } from '../services/db';
 import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
@@ -61,6 +62,14 @@ const TABS = ['Manual', 'Transactions', 'Reports', 'Payments', 'Transfers'];
 
 export default function StatementsPage() {
   const toast = useToast();
+  const location = useLocation();
+  const navigate = useNavigate();
+  // Deep-link target from InsightsPage's category drill-down (a bank
+  // transaction row there navigates here with { openTxnId, accountSource,
+  // date } in location.state) — kept in its own state (not read from
+  // location.state directly) so it survives the state-clearing navigate()
+  // below and keeps working across re-renders/tab switches.
+  const [pendingOpenTxnId, setPendingOpenTxnId] = useState(location.state?.openTxnId || null);
 
   const [transactions, setTransactions] = useState([]);
   const [loadingTxns,  setLoadingTxns]  = useState(true);
@@ -103,6 +112,27 @@ export default function StatementsPage() {
 
   const groupName = id => groups.find(g => g.id === id)?.name;
   const monthRange = useMemo(() => getMonthRange(currentMonth), [currentMonth]);
+
+  // Applies an incoming deep-link once: switches to the Transactions tab,
+  // scopes to the right account/card, and jumps to the transaction's own
+  // month so it's actually in the currently-loaded range (Statements and
+  // Insights track month independently). Clears location.state right after
+  // (navigate replace) so a later back/forward or refresh on this route
+  // doesn't keep re-applying it — pendingOpenTxnId itself is separate local
+  // state, so TransactionsList still gets it to expand/scroll to.
+  useEffect(() => {
+    const st = location.state;
+    if (!st?.openTxnId) return;
+    setTab(1);
+    if (st.accountSource) setAccountFilter(st.accountSource);
+    if (st.date) {
+      const [y, m] = st.date.split('-').map(Number);
+      if (y && m) setCurrentMonth(new Date(y, m - 1, 1));
+    }
+    setPendingOpenTxnId(st.openTxnId);
+    navigate(location.pathname, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   // ── Initial load: transactions + groups + current Splitwise user ─────────
   useEffect(() => {
@@ -996,6 +1026,7 @@ export default function StatementsPage() {
                       onConfirmSuggestion={handleConfirmSuggestion}
                       onDelete={handleRemoveTxn}
                       onChangeCategory={handleChangeCategory}
+                      initialExpandedId={pendingOpenTxnId}
                       onDebitClick={() => setStatBreakdown({
                         title: `${accountSummary.title} — Debit`, subtitle: monthRange.label,
                         transactions: accountSummary.debitTxns, getAmount: t => t.amount, total: accountSummary.debit,

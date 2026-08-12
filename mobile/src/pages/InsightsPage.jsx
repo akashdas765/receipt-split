@@ -1,15 +1,20 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { TrendingUp, Loader2, AlertCircle, Send } from 'lucide-react';
-import { loadReceiptsForInsights, loadTransactions } from '../services/db';
-import { fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
+import { loadReceiptsForInsights, loadTransactions, saveReceipt, updateTransactionCategory } from '../services/db';
+import { fetchCurrentUser, fetchAllExpenses, fetchGroups, fetchCategories, updateExpenseCategory } from '../services/splitwise';
 import { computeStats, askInsightsChat } from '../services/insights';
 import { getMonthRange } from '../utils/statementFormatters';
-import { getCategoryIcon } from '../utils/categoryDetector';
+import { getCategoryIcon, mapToSplitwiseCategory } from '../utils/categoryDetector';
+import { useToast } from '../components/ToastProvider';
 import BottomNav from '../components/BottomNav';
 import MonthSlider from '../components/MonthSlider';
 import PageHeader from '../components/PageHeader';
 import CategoryDetail from '../components/CategoryDetail';
 import CategoryDonut from '../components/CategoryDonut';
+import ReceiptDetail from '../components/ReceiptDetail';
+import SplitwiseExpenseDetail from '../components/SplitwiseExpenseDetail';
+import BankTransactionDetail from '../components/BankTransactionDetail';
 
 const INDIGO  = '#6366f1';
 const EMERALD = '#10b981';
@@ -34,6 +39,8 @@ const SUGGESTIONS = [
 ];
 
 export default function InsightsPage() {
+  const navigate = useNavigate();
+  const toast = useToast();
   // Full receipt/transaction history, loaded once — filtered to the
   // selected month client-side, same pattern HomePage uses.
   const [receipts,     setReceipts]     = useState([]);
@@ -44,13 +51,32 @@ export default function InsightsPage() {
   // account, same as StatementsPage's transfer detection.
   const [myFullName,   setMyFullName]   = useState('');
   const [initialLoading, setInitialLoading] = useState(true);
+  // Splitwise groups (for group-name display) and category tree (for
+  // editing a Splitwise-only expense's category) — same data HomePage
+  // fetches once at mount for the same reason.
+  const [groups,       setGroups]       = useState([]);
+  const [swCategories, setSwCategories] = useState([]);
 
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [statsLoading, setStatsLoading] = useState(true);
   const [error, setError] = useState('');
   const [stats, setStats] = useState(null);
+  // Kept alongside `stats` (not just passed into computeStats and
+  // discarded) so a category-detail row for a Splitwise-only expense can
+  // be looked up by id when clicked — see handleSelectItem below.
+  const [splitwiseExpenses, setSplitwiseExpenses] = useState([]);
+  const [openReceipt, setOpenReceipt] = useState(null); // posted receipt being viewed | null
+  const [openExpense, setOpenExpense] = useState(null); // Splitwise-only expense being viewed | null
+  const [openTxn,     setOpenTxn]     = useState(null); // bank transaction being viewed | null
+  // Whether openTxn is matched to a Splitwise expense — captured from the
+  // itemized item's own `source` label (already computed by
+  // computeStats/matchTransactions) at the moment it's opened, since the
+  // raw transaction doc itself doesn't carry match state (that's derived,
+  // not stored).
+  const [openTxnMatchLabel, setOpenTxnMatchLabel] = useState('');
 
   const [selectedCategory, setSelectedCategory] = useState(null); // category name being drilled into | null
+  const [selectedMerchant, setSelectedMerchant] = useState(null); // merchant name being drilled into | null
 
   const [messages,   setMessages]   = useState([]); // [{ role, content }]
   const [input,      setInput]      = useState('');
@@ -76,7 +102,11 @@ export default function InsightsPage() {
         setInitialLoading(false);
       }
     })();
+    fetchGroups().then(setGroups).catch(() => {});
+    fetchCategories().then(setSwCategories).catch(() => {});
   }, []);
+
+  const groupName = id => groups.find(g => g.id === id)?.name;
 
   // Re-scopes Splitwise history to the selected month and recomputes stats
   // — mirrors HomePage/Statements' per-month fetch pattern.
@@ -87,11 +117,13 @@ export default function InsightsPage() {
       setStatsLoading(true);
       try {
         const { start, end } = getMonthRange(currentMonth);
-        let splitwiseExpenses = [];
+        let monthSwExpenses = [];
         if (myId) {
           const sw = await fetchAllExpenses(myId, { datedAfter: start, datedBefore: end }).catch(() => ({ expenses: [] }));
-          splitwiseExpenses = sw.expenses;
+          monthSwExpenses = sw.expenses;
         }
+        if (!cancelled) setSplitwiseExpenses(monthSwExpenses);
+        const splitwiseExpenses = monthSwExpenses;
         const monthlyReceipts = receipts.filter(r => {
           const d = (r.date || r.scanned_at || '').slice(0, 10);
           return d >= start && d <= end;
@@ -116,21 +148,24 @@ export default function InsightsPage() {
   // passes a single month's receipts/transactions/splitwiseExpenses into
   // it), so in practice it can only ever resolve to one bucket — not a
   // usable trend. Receipts are the one dataset already loaded un-scoped, so
-  // this uses their own grandTotal/total (same amount the "By category"
-  // section already sums), across every receipt regardless of approval
-  // status, mirroring that section's scope.
+  // this reuses insights.js's own receiptShareAmt logic (personTotals[myId]
+  // once approved and split, full amount while still pending) rather than
+  // the raw grandTotal/total — same reasoning as the "By category" section:
+  // a receipt split among roommates shouldn't count the whole group's cost
+  // as your monthly spend.
   const monthlyTrend = useMemo(() => {
     const byMonth = {};
     for (const r of receipts) {
       const key = (r.date || r.scanned_at || '').slice(0, 7); // YYYY-MM
       if (!key) continue;
-      byMonth[key] = (byMonth[key] || 0) + (r.grandTotal ?? r.total ?? 0);
+      const amt = r.approved ? (myId && r.personTotals?.[myId] || 0) : (r.grandTotal ?? r.total ?? 0);
+      byMonth[key] = (byMonth[key] || 0) + amt;
     }
     return Object.entries(byMonth)
       .sort((a, b) => a[0].localeCompare(b[0]))
       .slice(-6)
       .map(([month, amount]) => ({ month, amount }));
-  }, [receipts]);
+  }, [receipts, myId]);
   const currentMonthKey = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}`;
 
   // The chat's context is tied to whichever month's stats it was sent —
@@ -139,7 +174,108 @@ export default function InsightsPage() {
   useEffect(() => {
     setMessages([]);
     setSelectedCategory(null);
+    setSelectedMerchant(null);
   }, [currentMonth]);
+
+  // Inline category change from ReceiptDetail — same optimistic-then-
+  // revert shape as HomePage's own handleChangeReceiptCategory.
+  const handleChangeReceiptCategory = async (receipt, category) => {
+    const previous = receipt.category;
+    setReceipts(r => r.map(x => x.id === receipt.id ? { ...x, category } : x));
+    setOpenReceipt(r => r && r.id === receipt.id ? { ...r, category } : r);
+    try {
+      await saveReceipt({ id: receipt.id, category });
+    } catch {
+      toast.error('Could not update category');
+      setReceipts(r => r.map(x => x.id === receipt.id ? { ...x, category: previous } : x));
+      setOpenReceipt(r => r && r.id === receipt.id ? { ...r, category: previous } : r);
+    }
+  };
+
+  // Category on a Splitwise-original expense — writes through to Splitwise
+  // itself since this app didn't create the expense. Same shape as
+  // HomePage's handleChangeExpenseCategory — ourCategory is one of
+  // ALL_CATEGORIES (SplitwiseExpenseDetail's dropdown, not Splitwise's own
+  // tree), mapped to a real Splitwise category before saving.
+  const handleChangeExpenseCategory = async (expense, ourCategory) => {
+    const swCat = mapToSplitwiseCategory(ourCategory, swCategories);
+    if (!swCat) { toast.error('Could not find a matching Splitwise category yet — try again in a moment.'); return; }
+    const previous = { category: expense.category, categoryId: expense.categoryId };
+    const apply = patch => {
+      setSplitwiseExpenses(prev => prev.map(e => e.id === expense.id ? { ...e, ...patch } : e));
+      setOpenExpense(prev => prev && prev.id === expense.id ? { ...prev, ...patch } : prev);
+    };
+    apply({ category: ourCategory, categoryId: swCat.id });
+    try {
+      const { category, categoryId: confirmedId } = await updateExpenseCategory(expense.id, swCat.id);
+      apply({ category, categoryId: confirmedId });
+    } catch {
+      toast.error('Could not update category on Splitwise');
+      apply(previous);
+    }
+  };
+
+  // Inline category change from BankTransactionDetail — same optimistic-
+  // then-revert shape as StatementsPage's own handleChangeCategory.
+  const handleChangeTransactionCategory = async (txn, category) => {
+    setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category } : t));
+    setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, category } : prev);
+    try {
+      await updateTransactionCategory(txn.id, category);
+    } catch {
+      toast.error('Could not update category');
+      setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category: txn.category } : t));
+      setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, category: txn.category } : prev);
+    }
+  };
+
+  // BankTransactionDetail's escape hatch for anything beyond a category
+  // change (link/unlink Splitwise, delete, ...) — same openTxnId deep-link
+  // StatementsPage already supports, just triggered from inside the sheet
+  // instead of directly from the drill-down row.
+  const openTxnInStatements = () => {
+    if (!openTxn) return;
+    navigate('/statements', { state: { openTxnId: openTxn.id, accountSource: openTxn.source, date: openTxn.date } });
+  };
+
+  // A category- or merchant-detail row click, routed to wherever that item
+  // is actually editable — a receipt's own detail sheet (or the full edit
+  // flow for a still-pending one), a Splitwise-only expense's detail
+  // sheet, or a bank transaction's detail sheet (view + category edit,
+  // same shape as the other two — anything beyond that opens Statements
+  // from inside that sheet instead, see openTxnInStatements above). Closes
+  // whichever drill-down sheet triggered it first so sheets never stack.
+  const handleSelectItem = item => {
+    if (!item.id) return;
+    if (item.kind === 'receipt') {
+      const receipt = receipts.find(r => r.id === item.id);
+      if (!receipt) { toast.error("Couldn't find that receipt — try refreshing."); return; }
+      setSelectedCategory(null);
+      setSelectedMerchant(null);
+      if (receipt.approved) setOpenReceipt(receipt);
+      else navigate('/detail', { state: receipt });
+      return;
+    }
+    if (item.kind === 'splitwise') {
+      const expense = splitwiseExpenses.find(e => e.id === item.id);
+      if (!expense) { toast.error("Couldn't find that expense — try refreshing."); return; }
+      setSelectedCategory(null);
+      setSelectedMerchant(null);
+      setOpenExpense(expense);
+      return;
+    }
+    if (item.kind === 'bank') {
+      const txn = transactions.find(t => t.id === item.id);
+      setSelectedCategory(null);
+      setSelectedMerchant(null);
+      if (txn) {
+        setOpenTxnMatchLabel(item.source === 'bank (Splitwise-matched)' ? 'Matched to a Splitwise expense' : 'Personal — not split');
+        setOpenTxn(txn);
+      } else {
+        navigate('/statements', { state: { openTxnId: item.id, accountSource: item.accountSource, date: item.date } });
+      }
+    }
+  };
 
   const loading = initialLoading || statsLoading;
 
@@ -263,7 +399,11 @@ export default function InsightsPage() {
                     {stats.topMerchants.map((m, i) => {
                       const pct = stats.topMerchants[0].amount ? (m.amount / stats.topMerchants[0].amount) * 100 : 0;
                       return (
-                        <div key={m.merchant} className={`px-4 py-3 ${i < stats.topMerchants.length - 1 ? 'border-b border-edge' : ''}`}>
+                        <button
+                          key={m.merchant}
+                          onClick={() => setSelectedMerchant(m.merchant)}
+                          className={`w-full text-left px-4 py-3 hover:bg-surface-alt transition-colors ${i < stats.topMerchants.length - 1 ? 'border-b border-edge' : ''}`}
+                        >
                           <div className="flex items-center justify-between mb-1.5 gap-2">
                             <span className="text-sm font-semibold text-ink truncate">{m.merchant}</span>
                             <span className="text-sm font-bold text-ink shrink-0">${m.amount.toFixed(2)}</span>
@@ -271,7 +411,7 @@ export default function InsightsPage() {
                           <div className="h-1.5 rounded-full bg-surface-alt overflow-hidden">
                             <div className="h-full rounded-full" style={{ width: `${pct}%`, background: INDIGO }} />
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -430,6 +570,47 @@ export default function InsightsPage() {
           total={stats.topCategories.find(c => c.category === selectedCategory)?.amount || 0}
           items={stats.itemizedTransactions.filter(t => (t.category || 'Other') === selectedCategory)}
           onClose={() => setSelectedCategory(null)}
+          onSelect={handleSelectItem}
+        />
+      )}
+
+      {selectedMerchant && stats && (
+        <CategoryDetail
+          category={selectedMerchant}
+          icon="🏪"
+          total={stats.topMerchants.find(m => m.merchant === selectedMerchant)?.amount || 0}
+          items={stats.itemizedTransactions.filter(t => t.description === selectedMerchant)}
+          onClose={() => setSelectedMerchant(null)}
+          onSelect={handleSelectItem}
+        />
+      )}
+
+      {openReceipt && (
+        <ReceiptDetail
+          receipt={openReceipt}
+          groupName={groupName(openReceipt.groupId)}
+          onEdit={() => navigate('/detail', { state: openReceipt })}
+          onClose={() => setOpenReceipt(null)}
+          onChangeCategory={handleChangeReceiptCategory}
+        />
+      )}
+
+      {openExpense && (
+        <SplitwiseExpenseDetail
+          expense={openExpense}
+          groupName={groupName(openExpense.group_id)}
+          onChangeCategory={handleChangeExpenseCategory}
+          onClose={() => setOpenExpense(null)}
+        />
+      )}
+
+      {openTxn && (
+        <BankTransactionDetail
+          txn={openTxn}
+          matchLabel={openTxnMatchLabel}
+          onChangeCategory={handleChangeTransactionCategory}
+          onOpenInStatements={openTxnInStatements}
+          onClose={() => setOpenTxn(null)}
         />
       )}
     </div>

@@ -1,22 +1,20 @@
 import React from 'react';
-import { getCategoryIcon, getCategoryChartColor, CHART_OTHER_COLOR } from '../utils/categoryDetector';
+import { getCategoryIcon, getCategoryChartColor } from '../utils/categoryDetector';
 
 // Thin surface-color gap between adjacent slices (percentage of the ring's
 // pathLength) — the "surface gap" spacer from the dataviz skill's mark
 // spec, so touching slices read as distinct without a border stroke.
 const GAP_PCT = 1.2;
 
-// Donut chart for "which category is eating the month" at a glance —
-// part-to-whole, not precise comparison (the clickable, dollar-labeled
-// "By category" list below already covers that job). Capped at 5
-// individually-colored slices + a folded "Other" wedge for the rest, per
-// the dataviz skill's anti-patterns guidance (pie/donut only reads at
-// ≤6 segments). categories: stats.topCategories, already sorted by
-// amount descending.
+// Donut chart for "which category is eating the month" — every category
+// gets its own slice and legend row, in the same descending-by-amount
+// order the caller already sorted `categories` in (stats.topCategories).
+// No top-N cap/fold: getCategoryChartColor's fixed 8-hue assignment (see
+// categoryDetector.js) already falls back to a shared neutral gray for any
+// category past its budget, so a long tail just reads as same-colored-but-
+// distinctly-labeled rather than needing a synthetic "Other" bucket.
 export default function CategoryDonut({ categories }) {
-  const top = categories.slice(0, 5);
-  const restTotal = categories.slice(5).reduce((s, c) => s + c.amount, 0);
-  const slices = restTotal > 0 ? [...top, { category: 'Other', amount: restTotal, isOther: true }] : top;
+  const slices = categories.filter(c => c.amount > 0);
   const total = slices.reduce((s, c) => s + c.amount, 0);
   if (total <= 0) return null;
 
@@ -28,14 +26,14 @@ export default function CategoryDonut({ categories }) {
   }, []);
 
   return (
-    <div className="flex items-center gap-5 px-4 py-4 border-b border-edge">
+    <div className="flex items-start gap-5 px-4 py-4 border-b border-edge">
       <svg viewBox="0 0 100 100" className="w-24 h-24 shrink-0 -rotate-90">
         {arcs.map(a => (
           <circle
             key={a.category}
             cx="50" cy="50" r="40"
             fill="none"
-            stroke={a.isOther ? CHART_OTHER_COLOR : getCategoryChartColor(a.category)}
+            stroke={getCategoryChartColor(a.category)}
             strokeWidth="16"
             pathLength="100"
             strokeDasharray={`${Math.max(a.pct - GAP_PCT, 0)} ${100 - Math.max(a.pct - GAP_PCT, 0)}`}
@@ -49,9 +47,9 @@ export default function CategoryDonut({ categories }) {
             <span className="flex items-center gap-1.5 min-w-0 text-muted">
               <span
                 className="w-2.5 h-2.5 rounded-full shrink-0"
-                style={{ background: a.isOther ? CHART_OTHER_COLOR : getCategoryChartColor(a.category) }}
+                style={{ background: getCategoryChartColor(a.category) }}
               />
-              <span className="truncate">{a.isOther ? '📦' : getCategoryIcon(a.category)} {a.category}</span>
+              <span className="truncate">{getCategoryIcon(a.category)} {a.category}</span>
             </span>
             <span className="font-bold text-ink shrink-0">{Math.round(a.pct)}%</span>
           </div>

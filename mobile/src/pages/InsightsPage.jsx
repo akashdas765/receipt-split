@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { TrendingUp, Loader2, AlertCircle, Send } from 'lucide-react';
 import { loadReceiptsForInsights, loadTransactions } from '../services/db';
 import { fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
@@ -9,9 +9,23 @@ import BottomNav from '../components/BottomNav';
 import MonthSlider from '../components/MonthSlider';
 import PageHeader from '../components/PageHeader';
 import CategoryDetail from '../components/CategoryDetail';
+import CategoryDonut from '../components/CategoryDonut';
 
 const INDIGO  = '#6366f1';
 const EMERALD = '#10b981';
+// Same pairing StatementsReports.jsx's "Split vs personal" chart uses —
+// validated colorblind-safe/contrast-safe as a pair via the dataviz
+// skill's validate_palette.js (light + dark), so reusing it here for the
+// same semantic (Splitwise share vs personal spend) rather than picking a
+// fresh, unvalidated pair.
+const ORANGE  = '#ea580c';
+
+// 'YYYY-MM' -> 'Jan'. Parsed as explicit y/m/1 (not `new Date(key + '-01')`)
+// so it's never off by a day/timezone — only the month name is used.
+function formatMonthLabel(key) {
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short' });
+}
 
 const SUGGESTIONS = [
   'Where am I spending the most?',
@@ -94,6 +108,30 @@ export default function InsightsPage() {
     })();
     return () => { cancelled = true; };
   }, [initialLoading, currentMonth, myId, myFullName, receipts, transactions]);
+
+  // Monthly trend chart — built straight from `receipts` (loaded once, full
+  // history, unlike `stats` which is re-scoped to a single month) rather
+  // than stats.monthly. stats.monthly is computed from data computeStats
+  // never actually receives more than one month of (InsightsPage always
+  // passes a single month's receipts/transactions/splitwiseExpenses into
+  // it), so in practice it can only ever resolve to one bucket — not a
+  // usable trend. Receipts are the one dataset already loaded un-scoped, so
+  // this uses their own grandTotal/total (same amount the "By category"
+  // section already sums), across every receipt regardless of approval
+  // status, mirroring that section's scope.
+  const monthlyTrend = useMemo(() => {
+    const byMonth = {};
+    for (const r of receipts) {
+      const key = (r.date || r.scanned_at || '').slice(0, 7); // YYYY-MM
+      if (!key) continue;
+      byMonth[key] = (byMonth[key] || 0) + (r.grandTotal ?? r.total ?? 0);
+    }
+    return Object.entries(byMonth)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(-6)
+      .map(([month, amount]) => ({ month, amount }));
+  }, [receipts]);
+  const currentMonthKey = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}`;
 
   // The chat's context is tied to whichever month's stats it was sent —
   // switching months mid-conversation would otherwise leave earlier answers
@@ -183,6 +221,40 @@ export default function InsightsPage() {
                 </div>
               </div>
 
+              {/* Monthly trend — receipts by month, last 6 months (see
+                  monthlyTrend above for why this reads from `receipts`
+                  rather than stats.monthly). Current month full EMERALD,
+                  earlier months a lighter wash of the same hue — an
+                  emphasis treatment (this month is the point, history is
+                  context) rather than a second color, since it's still one
+                  series. */}
+              {monthlyTrend.length > 1 && (
+                <div className="anim-fade-up">
+                  <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">Monthly trend</p>
+                  <div className="bg-surface rounded-2xl border border-edge shadow-sm p-4">
+                    <div className="flex items-end gap-3 h-28">
+                      {monthlyTrend.map(m => {
+                        const max = Math.max(...monthlyTrend.map(x => x.amount), 1);
+                        const pct = Math.max((m.amount / max) * 100, 3);
+                        const isCurrent = m.month === currentMonthKey;
+                        return (
+                          <div key={m.month} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end">
+                            <span className={`text-[10px] font-bold ${isCurrent ? 'text-ink' : 'text-subtle'}`}>
+                              ${m.amount >= 1000 ? `${(m.amount / 1000).toFixed(1)}k` : m.amount.toFixed(0)}
+                            </span>
+                            <div
+                              className="w-full rounded-t-[4px]"
+                              style={{ height: `${pct}%`, background: EMERALD, opacity: isCurrent ? 1 : 0.35 }}
+                            />
+                            <span className={`text-[10px] ${isCurrent ? 'text-ink font-bold' : 'text-subtle'}`}>{formatMonthLabel(m.month)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Top merchants */}
               {stats.topMerchants.length > 0 && (
                 <div className="anim-fade-up">
@@ -211,6 +283,7 @@ export default function InsightsPage() {
                 <div className="anim-fade-up">
                   <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">By category</p>
                   <div className="bg-surface rounded-2xl border border-edge shadow-sm overflow-hidden">
+                    <CategoryDonut categories={stats.topCategories} />
                     {stats.topCategories.map((c, i) => {
                       const pct = stats.topCategories[0].amount ? (c.amount / stats.topCategories[0].amount) * 100 : 0;
                       return (
@@ -227,6 +300,49 @@ export default function InsightsPage() {
                             <div className="h-full rounded-full" style={{ width: `${pct}%`, background: EMERALD }} />
                           </div>
                         </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Split vs personal — only when bank data exists to split
+                  against (see hasBankData); bankPersonalTotal/
+                  splitwiseShareTotal come from the same matched pass
+                  totalSpent is built from (services/insights.js), so they
+                  always sum to the "Total spend" figure above rather than
+                  being a separate, possibly-disagreeing computation. Two
+                  series (categorical), so both get a legend swatch and a
+                  direct label — see the ORANGE/INDIGO comment above for
+                  why this exact pair. */}
+              {stats.hasBankData && (stats.bankPersonalTotal + stats.splitwiseShareTotal) > 0 && (
+                <div className="anim-fade-up">
+                  <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">Split vs personal</p>
+                  <div className="bg-surface rounded-2xl border border-edge shadow-sm p-4 space-y-3.5">
+                    {[
+                      { name: 'Splitwise share', value: stats.splitwiseShareTotal, color: INDIGO },
+                      { name: 'Personal',        value: stats.bankPersonalTotal,   color: ORANGE },
+                    ].map(({ name, value, color }) => {
+                      const total = stats.bankPersonalTotal + stats.splitwiseShareTotal;
+                      const max   = Math.max(stats.bankPersonalTotal, stats.splitwiseShareTotal, 1);
+                      const pct   = (value / max) * 100;
+                      const pctOfTotal = total > 0 ? Math.round((value / total) * 100) : 0;
+                      return (
+                        <div key={name}>
+                          <div className="flex items-center justify-between text-xs mb-1.5">
+                            <span className="flex items-center gap-1.5 text-muted">
+                              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
+                              {name}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-subtle">{pctOfTotal}%</span>
+                              <span className="font-bold text-ink">${value.toFixed(2)}</span>
+                            </div>
+                          </div>
+                          <div className="h-2 bg-surface-alt rounded-full overflow-hidden">
+                            <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: color }} />
+                          </div>
+                        </div>
                       );
                     })}
                   </div>

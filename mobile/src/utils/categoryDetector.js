@@ -104,6 +104,32 @@ export function getCategoryIcon(cat) {
 
 export const ALL_CATEGORIES = Object.keys(CATEGORIES);
 
+// Colorblind-safe categorical palette for a chart that shows several
+// categories side by side (e.g. Insights' category donut) — distinct from
+// getCategoryColor above, which picks each category's color independently
+// to match its own icon/vibe and isn't guaranteed distinguishable as a
+// set (checked via the dataviz skill's validate_palette.js: several pairs,
+// e.g. Travel's violet #8b5cf6 vs Transportation's blue #3b82f6, fall
+// below the normal-vision floor when shown together — an unreadable pair
+// even for full-color vision, not just a colorblind edge case). These 8
+// hues are the skill's own reference categorical theme, pre-validated
+// adjacent-pair-safe in both light and dark (see references/palette.md).
+// Fixed order, never cycled — only the first 8 of ALL_CATEGORIES (by their
+// declared order above) get an individually validated slot; any category
+// past that, or past a chart's own display cap, falls back to the same
+// neutral gray as CHART_OTHER_COLOR rather than reusing or generating a
+// hue for it.
+const CHART_HUES = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
+export const CHART_OTHER_COLOR = '#94a3b8';
+const categoryChartColors = {};
+ALL_CATEGORIES.filter(c => c !== 'Other').forEach((cat, i) => {
+  if (i < CHART_HUES.length) categoryChartColors[cat] = CHART_HUES[i];
+});
+
+export function getCategoryChartColor(cat) {
+  return categoryChartColors[cat] || CHART_OTHER_COLOR;
+}
+
 // Receipt line items use a small closed set of categories (see groq.js's
 // PARSE_SYSTEM prompt: food/drink/alcohol/tip/fee/other) — a different,
 // narrower vocabulary than the bank-transaction categories above. This maps

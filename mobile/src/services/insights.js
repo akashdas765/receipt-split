@@ -73,7 +73,22 @@ export function computeStats({ receipts, myId, myFullName = '', transactions = [
   // want: full Splitwise history folded in even before any statement's
   // been imported, not gated behind having bank data at all.
   const matched      = matchTransactions(bankExpenseTxns, splitwiseExpenses);
-  const matchSummary = computeSummary(matched); // ignores isSplitOnly rows by design
+  const matchSummary = computeSummary(matched); // ignores isSplitOnly rows by design — fine for savings (below), not for total spend (see bankPersonalTotal/splitwiseShareTotal)
+
+  // Split vs personal, for the Insights "Split vs personal" chart — computed
+  // from the SAME `matched` array totalSpent below is built from (not a
+  // separate re-derivation from splitwiseExpenses, e.g. mySplitwiseShare),
+  // so the two bars are guaranteed to sum to totalSpent by construction
+  // rather than by two independent computations happening to agree. Unlike
+  // matchSummary above, this does NOT skip isSplitOnly rows — a Splitwise
+  // expense that never hit a bank transaction is still real spend for
+  // "total spend" purposes, same reasoning HomePage's actualSpend uses
+  // splitwiseSpendTotal for.
+  let bankPersonalTotal = 0, splitwiseShareTotal = 0;
+  matched.forEach(t => {
+    if (t.isSplitwised) splitwiseShareTotal += (t.effectiveAmount || 0);
+    else bankPersonalTotal += (t.effectiveAmount || 0);
+  });
 
   // Full Splitwise share — not just receipts posted through this app,
   // which is strictly narrower (misses expenses added any other way).
@@ -95,8 +110,14 @@ export function computeStats({ receipts, myId, myFullName = '', transactions = [
   // receipt amount is the best available figure). Once bank data exists,
   // pending receipts are assumed to already show up there as unmatched
   // personal spend, so they're left out to avoid double-counting.
+  //
+  // bankPersonalTotal + splitwiseShareTotal, not matchSummary.totalEffective
+  // — that field skips isSplitOnly rows by design (see above), which would
+  // silently drop any Splitwise expense that never hit a bank transaction
+  // (e.g. paid in cash) the moment ANY bank transaction existed this month,
+  // even one unrelated to it.
   const totalSpent = hasBankData
-    ? matchSummary.totalEffective
+    ? bankPersonalTotal + splitwiseShareTotal
     : mySplitwiseShare + pendingTotal;
 
   // Merchant/category breakdowns. `matched` already covers every Splitwise
@@ -188,10 +209,11 @@ export function computeStats({ receipts, myId, myFullName = '', transactions = [
   const MAX_ITEMIZED = 300; // defensive cap — data is already month-scoped by callers
   const itemized = itemizedTransactions.slice(0, MAX_ITEMIZED);
 
-  // Monthly mirrors totalSpent's logic so the two numbers stay consistent.
+  // Monthly mirrors totalSpent's logic so the two numbers stay consistent —
+  // includes isSplitOnly rows now too, same fix as totalSpent above.
   const byMonth = {};
   const monthlySource = hasBankData
-    ? matched.filter(t => !t.isSplitOnly).map(t => ({ date: t.date, amount: t.effectiveAmount }))
+    ? matched.map(t => ({ date: t.date, amount: t.effectiveAmount }))
     : [
         ...matched.map(t => ({ date: t.date, amount: t.effectiveAmount })), // all isSplitOnly here
         ...pendingReceipts.map(r => ({ date: r.date || r.scanned_at?.slice(0, 10), amount: receiptAmt(r) })),
@@ -212,6 +234,8 @@ export function computeStats({ receipts, myId, myFullName = '', transactions = [
     transactionCount: transactions.length,
     hasBankData,
     totalSpent,
+    bankPersonalTotal,
+    splitwiseShareTotal,
     savingsViaSplits: matchSummary.totalSavings,
     mySplitwiseShare,
     mySplitwiseShareCount,

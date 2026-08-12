@@ -14,8 +14,12 @@ const SORTS = [
 // transaction to show as the row's headline value — effectiveAmount for
 // "Actual spend", savings for "Amount saved", amount for "Payments made".
 // Defaults to highest-amount-first (what's actually driving the total),
-// with a toggle to switch to date order instead.
-export default function StatBreakdown({ title, subtitle, transactions, getAmount, total, onClose }) {
+// with a toggle to switch to date order instead. onSelect is optional —
+// omit it to keep rows static (matches CategoryDetail's own onSelect
+// convention on Insights, same "tap a line item to go find it" behavior
+// here: StatementsPage wires it to switch to the Transactions tab and
+// expand/scroll to that row via TransactionsList's initialExpandedId).
+export default function StatBreakdown({ title, subtitle, transactions, getAmount, total, onClose, onSelect }) {
   const [sortBy, setSortBy] = useState('amount');
   const sorted = [...transactions].sort((a, b) =>
     sortBy === 'date'
@@ -61,13 +65,18 @@ export default function StatBreakdown({ title, subtitle, transactions, getAmount
             <p className="text-center text-sm text-subtle py-8">Nothing here</p>
           ) : (
             sorted.map(t => (
-              <div key={t.id} className="flex items-center gap-3 bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
+              <button
+                key={t.id}
+                onClick={() => onSelect?.(t)}
+                disabled={!onSelect}
+                className="w-full flex items-center gap-3 bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm text-left disabled:cursor-default hover:enabled:border-indigo-100 transition-colors"
+              >
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-ink truncate">{t.description || 'Unknown'}</p>
                   <p className="text-xs text-subtle mt-0.5">{formatShortDate(t.date)} · {t.sourceName || t.source}</p>
                 </div>
                 <p className="text-sm font-bold text-ink shrink-0">{formatCurrency(getAmount(t))}</p>
-              </div>
+              </button>
             ))
           )}
         </div>

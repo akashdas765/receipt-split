@@ -77,6 +77,22 @@ export const CATEGORIES = {
     keywords: ['salon','haircut','spa','massage','beauty','barber','nail',
       'skincare','ulta','sephora','bath & body'],
   },
+  // Inserted right before 'Other' (not in the middle of the existing
+  // list) — getCategoryChartColor below assigns chart hues by this
+  // object's declared order, so adding a new category earlier would shift
+  // every later category's color. Appending here keeps every existing
+  // category's chart color stable.
+  'Loan Payments': {
+    color: '#92400e',
+    icon: '🏦',
+    // 'remitly'/'rmtly'/'crobo' are how this actually shows up on real bank
+    // statements (a loan-servicing payment processor's name, not the
+    // lender's own) — listed first since they're the primary real-world
+    // signal; the rest are generic fallbacks for other lenders/services.
+    keywords: ['remitly','rmtly','crobo','loan payment','student loan','auto loan',
+      'car loan','sallie mae','navient','nelnet','great lakes','loan servicing',
+      'installment loan','personal loan','loan pymt'],
+  },
   'Other': {
     color: '#94a3b8',
     icon: '📦',
@@ -188,30 +204,56 @@ export function getCategoryIcon(cat) {
 
 export const ALL_CATEGORIES = Object.keys(CATEGORIES);
 
-// Colorblind-safe categorical palette for a chart that shows several
-// categories side by side (e.g. Insights' category donut) — distinct from
-// getCategoryColor above, which picks each category's color independently
-// to match its own icon/vibe and isn't guaranteed distinguishable as a
-// set (checked via the dataviz skill's validate_palette.js: several pairs,
-// e.g. Travel's violet #8b5cf6 vs Transportation's blue #3b82f6, fall
-// below the normal-vision floor when shown together — an unreadable pair
-// even for full-color vision, not just a colorblind edge case). These 8
-// hues are the skill's own reference categorical theme, pre-validated
-// adjacent-pair-safe in both light and dark (see references/palette.md).
-// Fixed order, never cycled — only the first 8 of ALL_CATEGORIES (by their
-// declared order above) get an individually validated slot; any category
-// past that, or past a chart's own display cap, falls back to the same
-// neutral gray as CHART_OTHER_COLOR rather than reusing or generating a
-// hue for it.
-const CHART_HUES = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
-export const CHART_OTHER_COLOR = '#94a3b8';
+// Categorical palette for a chart that shows several categories side by
+// side (e.g. Insights' category donut) — distinct from getCategoryColor
+// above, which picks each category's color independently to match its own
+// icon/vibe and isn't guaranteed distinguishable as a set. Every category
+// (including 'Other') gets its own unique, stable hue — no shared "ran out
+// of colors" fallback gray past a fixed budget. This is a real, disclosed
+// tradeoff: the dataviz skill's own reference categorical theme only
+// validates 8 hues as fully colorblind-safe (references/palette.md); past
+// that, no fixed ordering can clear every pairwise check (confirmed by
+// running validate_palette.js against several candidate 13-hue sets while
+// building this — every one failed at least one adjacent pair, most
+// clustering in the blue-violet-magenta band where protan/deutan
+// discrimination is weakest). This set was chosen as the best of several
+// tested: hues walk a 300° arc skipping the 60°-wide yellow-green band
+// (weakest region for BOTH colorblind and normal vision, not just CVD),
+// fixed saturation/lightness so no slot reads as flatly gray. One
+// remaining known-close adjacent pair (Travel/Shopping) — acceptable since
+// "adjacent" in the fixed declaration order below rarely matches which
+// two categories actually land next to each other in a given month's
+// amount-sorted donut.
+//
+// Fixed order, matching ALL_CATEGORIES' declared order (including
+// 'Other') — never reassigned/reordered, so a category's color stays
+// stable as the category mix changes month to month. A category added
+// later should be appended here in the same relative position (end of the
+// list, before or after 'Other' consistently) so it doesn't shift every
+// later category's slot.
+const CHART_HUES = [
+  '#26c5aa', // Food & Dining
+  '#26aac5', // Groceries
+  '#2675c5', // Transportation
+  '#2640c5', // Travel
+  '#4026c5', // Shopping
+  '#7526c5', // Entertainment
+  '#aa26c5', // Bills & Utilities
+  '#c526aa', // Healthcare
+  '#c52675', // Rent & Housing
+  '#c52640', // Education
+  '#c54026', // Personal Care
+  '#c57526', // Loan Payments
+  '#c5aa26', // Other
+];
+const FALLBACK_CHART_COLOR = '#94a3b8'; // only reached for a category name outside ALL_CATEGORIES entirely
 const categoryChartColors = {};
-ALL_CATEGORIES.filter(c => c !== 'Other').forEach((cat, i) => {
-  if (i < CHART_HUES.length) categoryChartColors[cat] = CHART_HUES[i];
+ALL_CATEGORIES.forEach((cat, i) => {
+  categoryChartColors[cat] = CHART_HUES[i] || FALLBACK_CHART_COLOR;
 });
 
 export function getCategoryChartColor(cat) {
-  return categoryChartColors[cat] || CHART_OTHER_COLOR;
+  return categoryChartColors[cat] || FALLBACK_CHART_COLOR;
 }
 
 // Receipt line items use a small closed set of categories (see groq.js's

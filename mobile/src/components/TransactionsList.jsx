@@ -170,7 +170,7 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
 
 function CreditRow({ txn, onDelete }) {
   return (
-    <div className={`rounded-2xl border bg-surface p-3 flex items-center gap-3 ${txn.isIncome ? 'border-emerald-200' : 'border-emerald-100'}`}>
+    <div id={`txn-row-${txn.id}`} className={`rounded-2xl border bg-surface p-3 flex items-center gap-3 ${txn.isIncome ? 'border-emerald-200' : 'border-emerald-100'}`}>
       <span className="text-base shrink-0">{txn.isIncome ? '💵' : '💳'}</span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">

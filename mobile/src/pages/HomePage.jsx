@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Receipt, Settings as SettingsIcon, Trash2, CheckCheck, AlertTriangle, X, Users, AlertCircle, Landmark, CreditCard, Loader2 } from 'lucide-react';
-import { loadReceiptsForInsights, deleteReceipt, saveReceipt, loadManualAccounts, saveManualAccount, deleteManualAccount, loadTransactions } from '../services/db';
-import { fetchCurrentUser, fetchAllExpenses, fetchGroups, fetchNetBalance, fetchCategories, updateExpenseCategory } from '../services/splitwise';
+import { loadReceiptsForInsights, deleteReceipt, saveReceipt, loadManualAccounts, saveManualAccount, deleteManualAccount, loadTransactions, updateTransactionCategory } from '../services/db';
+import { fetchCurrentUser, fetchAllExpenses, fetchGroups, fetchNetBalance, fetchCategories, updateExpenseCategory, paidByName } from '../services/splitwise';
 import { fetchAccountBalances } from '../services/plaid';
 import { session } from '../services/session';
 import { accountLabel } from '../utils/accountLabel';
-import { getCategoryIcon, mapToSplitwiseCategory } from '../utils/categoryDetector';
-import { getMonthRange, formatCurrency } from '../utils/statementFormatters';
+import { getCategoryIcon, mapToSplitwiseCategory, mapFromSplitwiseCategory } from '../utils/categoryDetector';
+import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { matchTransactions } from '../utils/matcher';
 import { maybeShowPendingReminder } from '../services/pwa';
 import { useToast } from '../components/ToastProvider';
@@ -15,6 +15,7 @@ import BottomNav from '../components/BottomNav';
 import NetWorthDetail from '../components/NetWorthDetail';
 import SpendingDetail from '../components/SpendingDetail';
 import SplitwiseExpenseDetail from '../components/SplitwiseExpenseDetail';
+import BankTransactionDetail from '../components/BankTransactionDetail';
 import ReceiptDetail from '../components/ReceiptDetail';
 import MonthSlider from '../components/MonthSlider';
 
@@ -25,7 +26,7 @@ const SLATE  = '#64748b';
 
 // Same "Rent & Housing"/"Bills & Utilities" categories from
 // categoryDetector.js, combined into one bucket for the HomePage spending
-// card — "everything else" (Misc) is whatever's left after that, not a
+// card — "everything else" (Expenses) is whatever's left after that, not a
 // separate keyword list to keep in sync.
 const RENT_UTILITY_CATEGORIES = new Set(['Rent & Housing', 'Bills & Utilities']);
 
@@ -63,6 +64,7 @@ export default function HomePage() {
   const [confirmTarget, setConfirmTarget] = useState(null); // { id, merchant } | null
   const [openExpense,   setOpenExpense]   = useState(null); // Splitwise-only expense being viewed | null
   const [openReceipt,   setOpenReceipt]   = useState(null); // posted receipt being viewed | null
+  const [openTxn,       setOpenTxn]       = useState(null); // bank transaction being viewed (from the Spending sheet) | null
   const [deleting,      setDeleting]      = useState(false);
 
   // Surfaced instead of silently swallowed — if this fails, myId never
@@ -222,7 +224,7 @@ export default function HomePage() {
   // only the unmatched ones are new "Personal" rows here (real spend that
   // was never shared). Real debits only: no credits/pending/payments/
   // confirmed transfers — same "actual spend" definition StatementsPage
-  // uses, also reused below for the Spending card's Rent & Utilities/Misc
+  // uses, also reused below for the Spending card's Rent & Utilities/Expenses
   // breakdown.
   const monthlyBankExpenses = useMemo(() =>
     bankTxns.filter(t => !t.isCredit && !t.isPending && t.date && t.date.slice(0, 10) >= monthRange.start && t.date.slice(0, 10) <= monthRange.end),
@@ -290,11 +292,14 @@ export default function HomePage() {
   // filter that expense's share would be counted twice: once via the
   // matched bank transaction, once via splitwiseSpendTotal here). Reshaped
   // to the {description, date, effectiveAmount, originalAmount,
-  // sourceName} fields SpendingDetail's Section renders — shown there as
-  // its own section (kept out of the Rent & Utilities/Misc category split
-  // since it never moved through a bank account of yours, but still
-  // folded into actualSpend below — it's real money you owe/spent, just
-  // paid by someone else on your behalf).
+  // sourceName, category} fields SpendingDetail's CategorySection renders
+  // — shown there as its own section (kept out of the Rent & Utilities/
+  // Expenses category split since it never moved through a bank account
+  // of yours, but still folded into actualSpend below — it's real money
+  // you owe/spent, just paid by someone else on your behalf). category
+  // uses mapFromSplitwiseCategory to translate Splitwise's own category
+  // name (e.g. "Rent") onto this app's ALL_CATEGORIES (e.g. "Rent &
+  // Housing"), same taxonomy the other sections group by.
   const splitwiseSpendTxns = useMemo(() => splitwiseOnly
     .filter(e => !matchedSplitwiseExpenseIds.has(e.id))
     .map(e => ({
@@ -305,6 +310,7 @@ export default function HomePage() {
       originalAmount:  e.cost,
       isSplitwised:    true,
       sourceName:      groupName(e.group_id) || 'Splitwise',
+      category:        mapFromSplitwiseCategory(e.category),
     })), [splitwiseOnly, groups, matchedSplitwiseExpenseIds]);
   const splitwiseSpendTotal = useMemo(() => splitwiseSpendTxns.reduce((s, t) => s + (t.effectiveAmount || 0), 0), [splitwiseSpendTxns]);
 
@@ -429,15 +435,17 @@ export default function HomePage() {
   // category split so a receipt's spend lands in the right bucket the same
   // way a bank transaction's does (see unmatchedReceiptTxns above).
   const categorizedSpendTxns = useMemo(() => [...matchedSpendTxns, ...unmatchedReceiptTxns], [matchedSpendTxns, unmatchedReceiptTxns]);
-  const rentUtilTxns = useMemo(() => categorizedSpendTxns.filter(t => RENT_UTILITY_CATEGORIES.has(t.category)), [categorizedSpendTxns]);
-  const miscTxns     = useMemo(() => categorizedSpendTxns.filter(t => !RENT_UTILITY_CATEGORIES.has(t.category)), [categorizedSpendTxns]);
+  const loanTxns      = useMemo(() => categorizedSpendTxns.filter(t => t.category === 'Loan Payments'), [categorizedSpendTxns]);
+  const rentUtilTxns  = useMemo(() => categorizedSpendTxns.filter(t => RENT_UTILITY_CATEGORIES.has(t.category)), [categorizedSpendTxns]);
+  const miscTxns      = useMemo(() => categorizedSpendTxns.filter(t => !RENT_UTILITY_CATEGORIES.has(t.category) && t.category !== 'Loan Payments'), [categorizedSpendTxns]);
+  const loanTotal     = useMemo(() => loanTxns.reduce((s, t) => s + (t.effectiveAmount || 0), 0), [loanTxns]);
   const rentUtilTotal = useMemo(() => rentUtilTxns.reduce((s, t) => s + (t.effectiveAmount || 0), 0), [rentUtilTxns]);
   const miscTotal      = useMemo(() => miscTxns.reduce((s, t) => s + (t.effectiveAmount || 0), 0), [miscTxns]);
-  // Bank spend (Rent & Utilities + Misc) plus your share of Splitwise
-  // expenses someone else paid — both are real money you actually spent
-  // this month, just from different sources, so "Actual spend" counts
-  // both instead of only the bank-transaction half of it.
-  const actualSpend = rentUtilTotal + miscTotal + splitwiseSpendTotal;
+  // Bank spend (Loan Payments + Rent & Utilities + Expenses) plus your share of
+  // Splitwise expenses someone else paid — both are real money you
+  // actually spent this month, just from different sources, so "Actual
+  // spend" counts both instead of only the bank-transaction half of it.
+  const actualSpend = loanTotal + rentUtilTotal + miscTotal + splitwiseSpendTotal;
   const hasSpendingData = categorizedSpendTxns.length > 0 || splitwiseSpendTxns.length > 0;
 
   const handleCarouselScroll = e => {
@@ -494,7 +502,7 @@ export default function HomePage() {
   );
 
   // Spending — this month's real bank spend (same definition Statements
-  // uses for "Actual spend"), broken into Rent & Utilities vs Misc so the
+  // uses for "Actual spend"), broken into Rent & Utilities vs Expenses so the
   // split is visible without opening Statements. Tap for the transaction
   // list behind each bucket.
   const spendingCard = (
@@ -507,12 +515,18 @@ export default function HomePage() {
       <p className="text-[10px] text-subtle -mt-0.5">Actual spend</p>
 
       <div className="mt-3 pt-3 border-t border-indigo-100/60 space-y-1.5">
+        {loanTxns.length > 0 && (
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted">Loan Payments</span>
+            <span className="font-semibold text-ink">{formatCurrency(loanTotal)}</span>
+          </div>
+        )}
         <div className="flex items-center justify-between text-xs">
           <span className="text-muted">Rent & Utilities</span>
           <span className="font-semibold text-ink">{formatCurrency(rentUtilTotal)}</span>
         </div>
         <div className="flex items-center justify-between text-xs">
-          <span className="text-muted">Misc</span>
+          <span className="text-muted">Expenses</span>
           <span className="font-semibold text-ink">{formatCurrency(miscTotal)}</span>
         </div>
         {splitwiseSpendTxns.length > 0 && (
@@ -617,13 +631,75 @@ export default function HomePage() {
     }
   };
 
+  // Inline category change from BankTransactionDetail — updates bankTxns
+  // (matchedSpendTxns/categorizedSpendTxns are derived from it, so this
+  // cascades through to the Spending card without a separate refetch),
+  // same optimistic-then-revert shape as the other two category handlers.
+  const handleChangeTransactionCategory = async (txn, category) => {
+    setBankTxns(prev => prev.map(t => t.id === txn.id ? { ...t, category } : t));
+    setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, category } : prev);
+    try {
+      await updateTransactionCategory(txn.id, category);
+    } catch {
+      toast.error('Could not update category');
+      setBankTxns(prev => prev.map(t => t.id === txn.id ? { ...t, category: txn.category } : t));
+      setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, category: txn.category } : prev);
+    }
+  };
+
+  // A Spending-sheet row click (Loan Payments/Rent & Utilities/Expenses —
+  // see SpendingDetail's onSelect), routed to wherever that item is
+  // actually editable. Reshaped approved receipts (unmatchedReceiptTxns,
+  // tagged sourceName: 'Receipt' — see its own comment above) need the
+  // actual receipt looked up from `receipts` to open ReceiptDetail. A real
+  // bank transaction is re-looked-up from categorizedSpendTxns by id
+  // rather than trusting `t` directly — SpendingDetail's CategoryDetail
+  // drill-down reshapes amount/source for its own display (effectiveAmount
+  // -> amount), and passing that reshaped copy straight into
+  // BankTransactionDetail would show your effective share as if it were
+  // the transaction's actual raw amount, unlike everywhere else that sheet
+  // is opened from. Closes the Spending sheet first so sheets never stack.
+  const handleSelectSpendingItem = t => {
+    if (t.sourceName === 'Receipt') {
+      const receipt = receipts.find(r => r.id === t.id);
+      if (!receipt) { toast.error("Couldn't find that receipt — try refreshing."); return; }
+      setSpendingOpen(false);
+      if (receipt.approved) setOpenReceipt(receipt);
+      else navigate('/detail', { state: receipt });
+      return;
+    }
+    const original = categorizedSpendTxns.find(x => x.id === t.id) || t;
+    setSpendingOpen(false);
+    setOpenTxn(original);
+  };
+
+  // The Spending sheet's "Splitwise · paid by someone else" section is
+  // always splitwiseSpendTxns — a reshaped, slimmed-down view of a
+  // Splitwise-only expense (see its own comment above) — so this looks up
+  // the full expense object (splits, myPaidShare, etc.) SplitwiseExpenseDetail
+  // actually needs, same as handleSelectSpendingItem does for receipts.
+  const handleSelectSplitwiseItem = t => {
+    const expense = splitwiseExpenses.find(e => e.id === t.id);
+    if (!expense) { toast.error("Couldn't find that expense — try refreshing."); return; }
+    setSpendingOpen(false);
+    setOpenExpense(expense);
+  };
+
   const loading = loadingReceipts;
 
   // Row renderers for the combined timeline below — extracted so the single
   // date-sorted map can call the right one per kind without three separate
   // stacked .map() blocks (which was the actual bug: date order within each
   // list, but not across all three together).
-  const renderReceiptRow = r => (
+  const renderReceiptRow = r => {
+    // Paid-by only resolvable for a posted receipt, via the live Splitwise
+    // expense it created — the receipt doc itself never stored who paid
+    // (paidAmounts was sent to Splitwise at post time, not saved back).
+    const postedExpense = r.approved && r.splitwise_expense_id
+      ? splitwiseExpenses.find(e => e.id === r.splitwise_expense_id)
+      : null;
+    const payer = postedExpense ? paidByName(postedExpense.splits) : null;
+    return (
     <button
       key={r.id}
       onClick={() => r.approved ? setOpenReceipt(r) : navigate('/detail', { state: r })}
@@ -645,7 +721,7 @@ export default function HomePage() {
           </p>
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             <span className="text-xs text-subtle">
-              {r.date || r.scanned_at?.slice(0, 10)}
+              {formatShortDate(r.date || r.scanned_at)}
             </span>
             <span className="text-slate-200">·</span>
             <span className="text-xs font-semibold" style={{ color: r.approved ? EMERALD : '#f59e0b' }}>
@@ -663,6 +739,12 @@ export default function HomePage() {
               <>
                 <span className="text-slate-200">·</span>
                 <span className="text-xs text-subtle truncate">{groupName(r.groupId)}</span>
+              </>
+            )}
+            {payer && (
+              <>
+                <span className="text-slate-200">·</span>
+                <span className="text-xs text-subtle truncate">Paid By {payer}</span>
               </>
             )}
           </div>
@@ -688,12 +770,16 @@ export default function HomePage() {
         </div>
       </div>
     </button>
-  );
+    );
+  };
 
   // Splitwise expenses not added through this app — visually distinct
   // (teal, Users icon, "Splitwise" badge) so it's clear these weren't
   // scanned here.
-  const renderSplitwiseRow = e => (
+  const renderSplitwiseRow = e => {
+    const ourCategory = e.category ? mapFromSplitwiseCategory(e.category) : null;
+    const payer = paidByName(e.splits);
+    return (
     <button key={e.id} onClick={() => setOpenExpense(e)}
       className="w-full text-left bg-surface rounded-2xl p-4 border border-teal-100 shadow-sm hover:border-teal-200 card-lift anim-fade-up flex items-center gap-3">
       <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
@@ -703,19 +789,25 @@ export default function HomePage() {
       <div className="flex-1 min-w-0">
         <p className="font-bold text-ink text-sm truncate">{e.description || 'Splitwise expense'}</p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-          <span className="text-xs text-subtle">{e.date}</span>
+          <span className="text-xs text-subtle">{formatShortDate(e.date)}</span>
           <span className="text-slate-200">·</span>
           <span className="text-xs font-semibold" style={{ color: TEAL }}>Splitwise</span>
+          {ourCategory && (
+            <>
+              <span className="text-slate-200">·</span>
+              <span className="text-xs text-subtle">{getCategoryIcon(ourCategory)} {ourCategory}</span>
+            </>
+          )}
           {groupName(e.group_id) && (
             <>
               <span className="text-slate-200">·</span>
               <span className="text-xs text-subtle truncate">{groupName(e.group_id)}</span>
             </>
           )}
-          {e.addedBy && (
+          {payer && (
             <>
               <span className="text-slate-200">·</span>
-              <span className="text-xs text-subtle truncate">Added By {e.addedBy}</span>
+              <span className="text-xs text-subtle truncate">Paid By {payer}</span>
             </>
           )}
         </div>
@@ -727,12 +819,15 @@ export default function HomePage() {
         )}
       </div>
     </button>
-  );
+    );
+  };
 
   // Splitwise expenses logged in a non-USD currency — shown so they're not
   // silently missing, but never folded into the $ totals above (mixing
   // currencies would misreport them, e.g. a ₹3600 expense is not $3600).
-  const renderForeignRow = e => (
+  const renderForeignRow = e => {
+    const payer = paidByName(e.splits);
+    return (
     <button key={e.id} onClick={() => setOpenExpense(e)}
       className="w-full text-left bg-surface rounded-2xl p-4 border border-amber-100 shadow-sm hover:border-amber-200 card-lift anim-fade-up flex items-center gap-3">
       <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
@@ -742,7 +837,7 @@ export default function HomePage() {
       <div className="flex-1 min-w-0">
         <p className="font-bold text-ink text-sm truncate">{e.description || 'Splitwise expense'}</p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-          <span className="text-xs text-subtle">{e.date}</span>
+          <span className="text-xs text-subtle">{formatShortDate(e.date)}</span>
           <span className="text-slate-200">·</span>
           <span className="text-xs font-semibold text-amber-500">Splitwise · {e.currency_code}</span>
           {groupName(e.group_id) && (
@@ -751,10 +846,10 @@ export default function HomePage() {
               <span className="text-xs text-subtle truncate">{groupName(e.group_id)}</span>
             </>
           )}
-          {e.addedBy && (
+          {payer && (
             <>
               <span className="text-slate-200">·</span>
-              <span className="text-xs text-subtle truncate">Added By {e.addedBy}</span>
+              <span className="text-xs text-subtle truncate">Paid By {payer}</span>
             </>
           )}
         </div>
@@ -767,7 +862,8 @@ export default function HomePage() {
         <p className="text-[10px] text-amber-500">not in totals</p>
       </div>
     </button>
-  );
+    );
+  };
 
   // Personal bank spend from Statements — real debits that never matched a
   // Splitwise expense (100% yours, nothing to split). No dedicated detail
@@ -783,7 +879,7 @@ export default function HomePage() {
       <div className="flex-1 min-w-0">
         <p className="font-bold text-ink text-sm truncate">{t.description || 'Unknown'}</p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-          <span className="text-xs text-subtle">{t.date}</span>
+          <span className="text-xs text-subtle">{formatShortDate(t.date)}</span>
           <span className="text-slate-200">·</span>
           <span className="text-xs font-semibold" style={{ color: SLATE }}>Personal</span>
           <span className="text-slate-200">·</span>
@@ -1015,12 +1111,16 @@ export default function HomePage() {
         <SpendingDetail
           total={actualSpend}
           subtitle={monthRange.label}
+          loanTxns={loanTxns}
+          loanTotal={loanTotal}
           rentUtilTxns={rentUtilTxns}
           rentUtilTotal={rentUtilTotal}
           miscTxns={miscTxns}
           miscTotal={miscTotal}
           splitwiseTxns={splitwiseSpendTxns}
           splitwiseTotal={splitwiseSpendTotal}
+          onSelect={handleSelectSpendingItem}
+          onSelectSplitwise={handleSelectSplitwiseItem}
           onClose={() => setSpendingOpen(false)}
         />
       )}
@@ -1034,10 +1134,27 @@ export default function HomePage() {
         />
       )}
 
+      {openTxn && (
+        <BankTransactionDetail
+          txn={openTxn}
+          matchLabel={
+            openTxn.isTransfer ? 'Transfer between your accounts'
+              : openTxn.isPayment ? 'Payment — not a personal purchase'
+              : openTxn.isSplitwised ? 'Matched to a Splitwise expense'
+              : 'Personal — not split'
+          }
+          onChangeCategory={handleChangeTransactionCategory}
+          actionLabel="Open in Statements"
+          onAction={() => navigate('/statements', { state: { openTxnId: openTxn.id, accountSource: openTxn.source, date: openTxn.date } })}
+          onClose={() => setOpenTxn(null)}
+        />
+      )}
+
       {openReceipt && (
         <ReceiptDetail
           receipt={openReceipt}
           groupName={groupName(openReceipt.groupId)}
+          paidBy={paidByName(splitwiseExpenses.find(e => e.id === openReceipt.splitwise_expense_id)?.splits)}
           onEdit={() => navigate('/detail', { state: openReceipt })}
           onClose={() => setOpenReceipt(null)}
           onChangeCategory={handleChangeReceiptCategory}

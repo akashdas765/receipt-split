@@ -609,7 +609,8 @@ export default function InsightsPage() {
           txn={openTxn}
           matchLabel={openTxnMatchLabel}
           onChangeCategory={handleChangeTransactionCategory}
-          onOpenInStatements={openTxnInStatements}
+          actionLabel="Open in Statements"
+          onAction={openTxnInStatements}
           onClose={() => setOpenTxn(null)}
         />
       )}

@@ -25,6 +25,7 @@ import BottomNav from '../components/BottomNav';
 import MonthSlider from '../components/MonthSlider';
 import PageHeader from '../components/PageHeader';
 import StatBreakdown from '../components/StatBreakdown';
+import BankTransactionDetail from '../components/BankTransactionDetail';
 
 const INDIGO = '#6366f1';
 
@@ -91,6 +92,7 @@ export default function StatementsPage() {
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [syncingAll, setSyncingAll] = useState(false);
   const [statBreakdown, setStatBreakdown] = useState(null); // { title, transactions, getAmount, total } | null — see StatBreakdown.jsx
+  const [openTxn, setOpenTxn] = useState(null); // transaction card opened from a StatBreakdown row | null — see BankTransactionDetail.jsx
 
   // Which loaded statement/account to scope the page to — a 'group:bank' /
   // 'group:credit' / 'group:other' scope, or a specific `source` id. Each
@@ -716,6 +718,31 @@ export default function StatementsPage() {
       setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category: txn.category } : t));
     }
   };
+
+  // A StatBreakdown row click — opens the same BankTransactionDetail card
+  // InsightsPage uses (view + inline category edit), not an immediate jump
+  // into TransactionsList, so a transaction looks and behaves the same
+  // wherever it's opened from. "Edit full details" inside that card (see
+  // openTxnFullEdit below) is the actual jump-to-row escape hatch, for
+  // link/unlink/delete — actions this card doesn't attempt to replicate.
+  const handleStatBreakdownSelect = txn => {
+    setStatBreakdown(null);
+    setOpenTxn(txn);
+  };
+
+  // BankTransactionDetail's "more" action here (unlike InsightsPage's,
+  // which navigates cross-page): every list feeding a StatBreakdown sheet
+  // is already scoped to the current accountFilter/month, so there's
+  // nothing to re-target — just close this card, switch to the
+  // Transactions tab, and let TransactionsList's initialExpandedId
+  // (pendingOpenTxnId) expand and scroll to the row.
+  const openTxnFullEdit = () => {
+    if (!openTxn) return;
+    setOpenTxn(null);
+    setTab(1);
+    setPendingOpenTxnId(openTxn.id);
+  };
+
   // expenses: one or more picked in SplitwisePickerModal — a single card
   // charge sometimes needs linking to more than one Splitwise expense (see
   // matcher.js's forcedLinkIds/resolveForcedLinks for how these are read
@@ -1230,6 +1257,23 @@ export default function StatementsPage() {
         <StatBreakdown
           {...statBreakdown}
           onClose={() => setStatBreakdown(null)}
+          onSelect={handleStatBreakdownSelect}
+        />
+      )}
+
+      {openTxn && (
+        <BankTransactionDetail
+          txn={openTxn}
+          matchLabel={
+            openTxn.isTransfer ? 'Transfer between your accounts'
+              : openTxn.isPayment ? 'Payment — not a personal purchase'
+              : openTxn.isSplitwised ? 'Matched to a Splitwise expense'
+              : 'Personal — not split'
+          }
+          onChangeCategory={handleChangeCategory}
+          actionLabel="Edit full details"
+          onAction={openTxnFullEdit}
+          onClose={() => setOpenTxn(null)}
         />
       )}
 

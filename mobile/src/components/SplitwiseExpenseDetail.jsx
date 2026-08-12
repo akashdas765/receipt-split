@@ -2,6 +2,8 @@ import React from 'react';
 import { X, Users, Calendar, Tag } from 'lucide-react';
 import { memberColor } from '../utils/memberColor';
 import { ALL_CATEGORIES, getCategoryIcon, mapFromSplitwiseCategory } from '../utils/categoryDetector';
+import { formatShortDate } from '../utils/statementFormatters';
+import { paidByName } from '../services/splitwise';
 
 // Detail sheet for a Splitwise expense not created through this app
 // (HomePage's "splitwiseOnly"/"foreignCurrencyOnly" cards) — shows exactly
@@ -19,6 +21,11 @@ import { ALL_CATEGORIES, getCategoryIcon, mapFromSplitwiseCategory } from '../ut
 // here.
 export default function SplitwiseExpenseDetail({ expense, groupName, onChangeCategory, onClose }) {
   const splits = (expense.splits || []).filter(s => (s.paidShare || 0) > 0 || (s.owedShare || 0) > 0);
+  // Who actually paid — distinct from expense.addedBy (who logged the
+  // expense in Splitwise, not necessarily who paid for it). Both shown
+  // here; the compact row on HomePage only has room for one, and shows
+  // Paid by since that's the more actionable fact at a glance.
+  const paidBy = paidByName(expense.splits);
   const fmt = (n) => {
     try {
       return new Intl.NumberFormat('en-US', { style: 'currency', currency: expense.currency_code || 'USD' }).format(n);
@@ -46,7 +53,7 @@ export default function SplitwiseExpenseDetail({ expense, groupName, onChangeCat
 
         <div className="overflow-y-auto px-4 py-4 space-y-4">
           <div className="bg-surface rounded-xl border border-edge divide-y divide-slate-50 px-3">
-            <Row icon={<Calendar size={13} />} label="Date" value={expense.date} />
+            <Row icon={<Calendar size={13} />} label="Date" value={formatShortDate(expense.date)} />
             {groupName && <Row icon={<Users size={13} />} label="Group" value={groupName} />}
             <div className="flex items-center justify-between py-2.5 gap-3">
               <span className="flex items-center gap-1.5 text-sm text-muted shrink-0"><Tag size={13} />Category</span>
@@ -60,6 +67,7 @@ export default function SplitwiseExpenseDetail({ expense, groupName, onChangeCat
                 ))}
               </select>
             </div>
+            {paidBy && <Row label="Paid by" value={paidBy} />}
             {expense.addedBy && <Row label="Added by" value={expense.addedBy} />}
           </div>
 

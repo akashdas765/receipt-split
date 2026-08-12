@@ -3,13 +3,14 @@ import { X, CheckCircle2, Pencil } from 'lucide-react';
 import { memberColor } from '../utils/memberColor';
 import { normalizeItems, lineAmount, flattenShares } from '../utils/receiptItems';
 import { getCategoryIcon, getCategoryColor, ALL_CATEGORIES } from '../utils/categoryDetector';
+import { formatShortDate } from '../utils/statementFormatters';
 
 // View-only detail sheet for an already-posted receipt, opened from
 // HomePage. Shows the same total/split-breakdown/items summary
 // DetailPage's edit form works from, but read-only — "Edit" hands off to
 // that full form (navigate('/detail', {state: receipt})) instead of
 // switching modes in place, so there's exactly one editing surface.
-export default function ReceiptDetail({ receipt, groupName, onEdit, onClose, onChangeCategory }) {
+export default function ReceiptDetail({ receipt, groupName, paidBy, onEdit, onClose, onChangeCategory }) {
   const items              = normalizeItems(receipt.items);
   const viewMembers        = receipt.members || [];
   const personTotals       = receipt.personTotals || {};
@@ -59,8 +60,9 @@ export default function ReceiptDetail({ receipt, groupName, onEdit, onClose, onC
 
         <div className="overflow-y-auto px-4 py-4 space-y-5">
           <div className="flex items-center gap-2 text-xs text-subtle">
-            <span>{receipt.date}</span>
+            <span>{formatShortDate(receipt.date)}</span>
             {groupName && <><span className="text-slate-200">·</span><span>{groupName}</span></>}
+            {paidBy && <><span className="text-slate-200">·</span><span>Paid by {paidBy}</span></>}
             <span className="ml-auto text-xs font-bold text-emerald-500 bg-emerald-50 px-2.5 py-1 rounded-full flex items-center gap-1">
               <CheckCircle2 size={11} /> Posted to Splitwise
             </span>

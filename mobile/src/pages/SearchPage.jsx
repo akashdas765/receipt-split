@@ -157,7 +157,7 @@ export default function SearchPage() {
                     <div className="flex-1 min-w-0">
                       <p className="font-bold text-ink text-sm truncate">{r.merchant || 'Unknown merchant'}</p>
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-xs text-subtle">{r.date || r.scanned_at?.slice(0, 10)}</span>
+                        <span className="text-xs text-subtle">{formatShortDate(r.date || r.scanned_at)}</span>
                         <span className="text-slate-200">·</span>
                         <span className="text-xs font-semibold" style={{ color: r.approved ? EMERALD : '#f59e0b' }}>
                           {r.approved ? 'Posted' : 'Pending'}
@@ -187,7 +187,7 @@ export default function SearchPage() {
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-ink text-sm truncate">{e.description || 'Splitwise expense'}</p>
                     <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                      <span className="text-xs text-subtle">{e.date}</span>
+                      <span className="text-xs text-subtle">{formatShortDate(e.date)}</span>
                       <span className="text-slate-200">·</span>
                       <span className="text-xs font-semibold" style={{ color: TEAL }}>Splitwise</span>
                       {e.addedBy && (
@@ -216,7 +216,7 @@ export default function SearchPage() {
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-ink text-sm truncate">{e.description || 'Splitwise expense'}</p>
                     <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                      <span className="text-xs text-subtle">{e.date}</span>
+                      <span className="text-xs text-subtle">{formatShortDate(e.date)}</span>
                       <span className="text-slate-200">·</span>
                       <span className="text-xs font-semibold text-amber-500">Splitwise · {e.currency_code}</span>
                       {e.addedBy && (

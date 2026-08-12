@@ -174,6 +174,16 @@ export async function fetchAllExpenses(myId, { datedAfter, datedBefore, groupId 
   return { expenses, otherCurrencyExpenses, paymentsReceived };
 }
 
+// Who actually paid an expense — distinct from an expense's own addedBy
+// field (who logged it in Splitwise, not necessarily who paid for it).
+// Takes the `splits` array every expense above already carries (paidShare
+// > 0 per payer, joined for the rare split-payment case). Shared between
+// HomePage's compact rows and ReceiptDetail/SplitwiseExpenseDetail's
+// fuller view so the two never derive it differently.
+export function paidByName(splits) {
+  return (splits || []).filter(s => (s.paidShare || 0) > 0).map(s => s.name).join(', ') || null;
+}
+
 // Splitwise's own category tree (top-level categories, most with
 // subcategories — the actual assignable leaf is a subcategory for most
 // top-levels, but a few like "General"/"Uncategorized" have none and are

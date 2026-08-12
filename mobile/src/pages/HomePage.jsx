@@ -866,11 +866,13 @@ export default function HomePage() {
   };
 
   // Personal bank spend from Statements — real debits that never matched a
-  // Splitwise expense (100% yours, nothing to split). No dedicated detail
-  // sheet for a single bank transaction outside Statements' own list, so
-  // tapping goes there instead of opening a modal.
+  // Splitwise expense (100% yours, nothing to split). Opens the same
+  // BankTransactionDetail card the Spending sheet uses (matchLabel at the
+  // render site below resolves to "Personal — not split" automatically
+  // from t.isSplitwised), with "Open in Statements" as its own escape
+  // hatch for anything beyond a category change.
   const renderPersonalRow = t => (
-    <button key={t.id} onClick={() => navigate('/statements')}
+    <button key={t.id} onClick={() => setOpenTxn(t)}
       className="w-full text-left bg-surface rounded-2xl p-4 border border-edge shadow-sm hover:border-slate-200 card-lift anim-fade-up flex items-center gap-3">
       <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
         style={{ background: 'linear-gradient(135deg, #64748b, #94a3b8)' }}>

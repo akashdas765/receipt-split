@@ -6,22 +6,31 @@
 // expense today (and can even show up as "unmatched" in the Splitwise
 // review list, since matcher.js has no way to know they're not spend).
 //
-// Two tiers, mirroring matcher.js's auto-match/suggest precedent:
+// Three tiers, mirroring matcher.js's auto-match/suggest precedent:
 //  - Tier 1 (findTransferPairs): both sides present in the loaded
 //    transactions, paired automatically by amount+date — same "greedy
 //    best-match + used set" shape as matcher.js. NOTE: pairing alone is
 //    NOT proof of a real transfer — two unrelated transactions on two
 //    different credit cards can coincidentally land on the same round
 //    amount within a few days of each other (seen in production: two $10
-//    charges on different cards falsely paired). So a pair is only ever a
+//    charges on different cards falsely paired). Plaid's own
+//    personal_finance_category (see isTransferCategory/hasPlaidCategory
+//    below) closes most of that gap when both sides are Plaid-sourced —
+//    Plaid tagging neither side as a transfer rules the pair out entirely
+//    before amount/date ever get a say — but a pair is still only ever a
 //    *candidate* — detectTransfers marks it confirmed=false until the user
-//    explicitly confirms it, exactly like Tier 2.
+//    explicitly confirms it, exactly like Tiers 2 and 3.
 //  - Tier 2 (matchAccountNameHint / matchOwnNameHint): only one side
 //    present (or not yet paired), detected from the description text
 //    alone. Surfaced for confirmation rather than silently applied.
-// Both tiers require the same thing in the end: nothing is presented as a
-// confirmed fact ("Transferred from X to Y") until the user says so. Until
-// then it's shown hedged ("Possible transfer…") with Confirm/Dismiss.
+//  - Tier 3 (isTransferCategory in detectTransfers' hint loop): lowest
+//    priority — Plaid flagged this transaction as transfer-shaped but
+//    neither Tier 1 nor Tier 2 could explain it (e.g. the other account's
+//    statement isn't imported, or it's a real transfer to an account
+//    outside this app entirely, like a brokerage).
+// All three tiers require the same thing in the end: nothing is presented
+// as a confirmed fact ("Transferred from X to Y") until the user says so.
+// Until then it's shown hedged ("Possible transfer…") with Confirm/Dismiss.
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -51,6 +60,20 @@ function daysDiff(d1, d2) {
 
 function dateScoreOf(dDiff) {
   return Math.max(0, 1 - dDiff / MAX_DATE_DIFF_DAYS);
+}
+
+// Plaid's own intent classification (see plaid.js's syncTransactions) —
+// 'TRANSFER_IN'/'TRANSFER_OUT' when Plaid itself thinks a transaction is
+// money moving between accounts, as opposed to a purchase. Only present on
+// Plaid-sourced transactions; CSV/PDF imports and pre-this-feature Plaid
+// syncs simply don't have plaidCategory set, so hasPlaidCategory lets
+// callers fall back to the amount/date-only heuristic for those instead of
+// treating "no category" as "not a transfer."
+function isTransferCategory(t) {
+  return t.plaidCategory === 'TRANSFER_IN' || t.plaidCategory === 'TRANSFER_OUT';
+}
+function hasPlaidCategory(t) {
+  return t.plaidCategory != null;
 }
 
 function amountScoreOf(a, b) {
@@ -84,7 +107,16 @@ function jaccard(tokensA, tokensB) {
 // never a real transfer leg (paying a card off is already handled
 // separately by the Payments tab / isCreditConfirmation). Without this
 // gate, two unrelated charges on two different cards can coincidentally
-// land on the same round amount within a few days and get paired.
+// land on the same round amount within a few days and get paired — the
+// exact false positive seen in production (two $10 charges on different
+// cards). Plaid's personal_finance_category closes most of that gap: when
+// BOTH sides are Plaid-sourced (hasPlaidCategory), Plaid has already told
+// us whether each one is transfer-shaped, so two ordinary purchases never
+// even become a candidate pair regardless of how well amount/date line up
+// — no reason to trust a coincidence when Plaid itself says neither side
+// is a transfer. Transactions without category data (CSV/PDF imports, or
+// Plaid syncs from before this field was captured) skip that gate and are
+// scored on amount/date/description alone, same as before this existed.
 export function findTransferPairs(transactions) {
   const candidates = transactions.filter(t => !t.isPending && !t.overrideDismissedTransferHint && t.accountType === 'bank');
   const debits  = candidates.filter(t => !t.isCredit);
@@ -97,13 +129,22 @@ export function findTransferPairs(transactions) {
     let best = null, bestScore = 0;
     for (const credit of credits) {
       if (used.has(credit.id) || credit.source === debit.source) continue;
+      if (hasPlaidCategory(debit) && hasPlaidCategory(credit) && !(isTransferCategory(debit) && isTransferCategory(credit))) continue;
       const dDiff = daysDiff(debit.date, credit.date);
       if (dDiff > MAX_DATE_DIFF_DAYS) continue;
       const amountScore = amountScoreOf(debit.amount, credit.amount);
       if (amountScore === 0) continue;
       const dateScore = dateScoreOf(dDiff);
       const descScore = jaccard(tokenize(debit.description), tokenize(credit.description));
-      const total = dateScore * 0.35 + amountScore * 0.55 + descScore * 0.10;
+      // Corroboration bonus, not the deciding factor — 1 when Plaid tags
+      // both sides as transfers, 0.5 when only one side has category data
+      // to go on (the other's a CSV row), 0 otherwise. Reweighted from the
+      // pre-Plaid-category formula (0.35/0.55/0.10) rather than just
+      // added on top, so an uncorroborated pair still needs the same
+      // amount/date strength as before to auto-pair.
+      const plaidScore = (isTransferCategory(debit) && isTransferCategory(credit)) ? 1
+        : (isTransferCategory(debit) || isTransferCategory(credit)) ? 0.5 : 0;
+      const total = dateScore * 0.30 + amountScore * 0.45 + descScore * 0.05 + plaidScore * 0.20;
       if (total > bestScore) { bestScore = total; best = credit; }
     }
     if (best && bestScore >= AUTO_PAIR_THRESHOLD) {
@@ -194,8 +235,8 @@ export function detectTransfers(transactions, { myAccountNames = [], myFullName 
       });
       continue;
     }
+    const confirmed = !!txn.overrideConfirmedTransfer;
     if ((txn.isCredit || txn.isPayment) && matchOwnNameHint(txn.description, myFullName)) {
-      const confirmed = !!txn.overrideConfirmedTransfer;
       hints.push({
         txn,
         direction: txn.isCredit ? 'in' : 'out',
@@ -203,6 +244,22 @@ export function detectTransfers(transactions, { myAccountNames = [], myFullName 
         label: txn.isCredit
           ? (confirmed ? `Transferred into ${label} from another of your accounts` : `Possible transfer into ${label} from another of your accounts`)
           : (confirmed ? `Transferred out of ${label} to another of your accounts` : `Possible transfer out of ${label} to another of your accounts`),
+        confirmed,
+      });
+    } else if (isTransferCategory(txn)) {
+      // Plaid flagged this one as transfer-shaped, but findTransferPairs
+      // couldn't find a matching counterpart (other account's statement
+      // not imported yet, amount/date drifted past the match window, or
+      // it's a real transfer to an account outside this app, e.g. a
+      // brokerage). Lowest-priority tier — only surfaced when neither the
+      // account-name nor own-name text heuristic already explained it.
+      hints.push({
+        txn,
+        direction: txn.isCredit ? 'in' : 'out',
+        matchedBy: 'plaid-category',
+        label: txn.isCredit
+          ? (confirmed ? `Transferred into ${label} from another account` : `Possible transfer into ${label} — Plaid flagged this as a transfer`)
+          : (confirmed ? `Transferred out of ${label} to another account` : `Possible transfer out of ${label} — Plaid flagged this as a transfer`),
         confirmed,
       });
     }

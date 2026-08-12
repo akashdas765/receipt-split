@@ -175,6 +175,17 @@ export async function syncTransactions(accessToken, cursor) {
         // posted one before the old pending doc is deleted. Omitted (not
         // set to undefined/null) when absent, same reasoning as postedDate.
         ...(t.pending_transaction_id ? { pendingTransactionId: `plaid-${t.pending_transaction_id}` } : {}),
+        // Plaid's own high-level intent classification — 'TRANSFER_IN' /
+        // 'TRANSFER_OUT' when Plaid itself thinks this is money moving
+        // between accounts, as opposed to a purchase. Only the primary
+        // tier is kept (not `detailed`, e.g. TRANSFER_OUT_SAVINGS) — the
+        // one thing transferMatcher.js needs is "is this transfer-shaped
+        // at all," not which kind. See transferMatcher.js's
+        // isTransferCategory for how this corroborates the existing
+        // amount/date pairing instead of replacing it — CSV/PDF-imported
+        // transactions never have this field, so they fall back to the
+        // amount/date-only heuristic exactly as before.
+        ...(t.personal_finance_category?.primary ? { plaidCategory: t.personal_finance_category.primary } : {}),
         // One Plaid Item (one login) can cover several cards/accounts —
         // this is what lets PlaidConnect.jsx split a sync's results back
         // out per account instead of lumping every card into one group.

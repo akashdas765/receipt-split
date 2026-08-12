@@ -98,6 +98,90 @@ export function getCategoryColor(cat) {
   return CATEGORIES[cat]?.color ?? CATEGORIES.Other.color;
 }
 
+// Maps this app's own ALL_CATEGORIES onto Splitwise's own category tree —
+// used by SplitwiseExpenseDetail's category editor so it shows the same
+// short, consistent list bank transactions use (see the second dropdown
+// vs. the first in the screenshot this replaced) instead of Splitwise's
+// much longer native taxonomy, while still writing back a category_id
+// Splitwise's update_expense actually accepts (it needs one of ITS OWN
+// ids, not an arbitrary string). Candidate names are matched against
+// whatever fetchCategories() actually returns at call time — not
+// hardcoded ids, which could differ or change — case-insensitive, first
+// exact match wins, loose substring match as a second pass. Falls back to
+// Splitwise's own 'General' (Uncategorized) bucket if nothing matches at
+// all, rather than failing to save.
+//
+// IMPORTANT: no candidate name may appear under more than one of our
+// categories. mapFromSplitwiseCategory (the reverse direction) picks
+// whichever of our categories lists a name first — a name shared by two
+// entries makes the second one permanently unreachable from the dropdown:
+// selecting it saves fine, but reading it back always resolves to the
+// first, so the dropdown appears to silently revert right after saving.
+// ('Clothing' under both Shopping and Personal Care was exactly this bug —
+// picking Personal Care always snapped back to Shopping.)
+const SPLITWISE_CATEGORY_CANDIDATES = {
+  'Food & Dining':     ['Dining out'],
+  'Groceries':         ['Groceries'],
+  'Transportation':    ['Gas & fuel', 'Car', 'Parking', 'Taxi', 'Bicycle', 'Bus/train'],
+  'Travel':            ['Hotel', 'Plane', 'Vacation'],
+  'Shopping':          ['Electronics', 'Household supplies'],
+  'Entertainment':     ['Movies', 'Games', 'Music', 'Sports'],
+  'Bills & Utilities': ['Electricity', 'Heat/gas', 'TV/Phone/Internet', 'Water', 'Cleaning', 'Trash'],
+  'Healthcare':        ['Medical expenses'],
+  'Rent & Housing':    ['Rent', 'Mortgage'],
+  'Education':         ['Education'],
+  'Personal Care':     ['Clothing'],
+  'Other':             ['General'],
+};
+if (import.meta.env.DEV) {
+  const seen = new Map();
+  for (const [ours, names] of Object.entries(SPLITWISE_CATEGORY_CANDIDATES)) {
+    for (const name of names) {
+      const key = name.toLowerCase();
+      if (seen.has(key)) {
+        console.error(`SPLITWISE_CATEGORY_CANDIDATES: "${name}" is listed under both "${seen.get(key)}" and "${ours}" — the second is unreachable from the dropdown. See the comment above this table.`);
+      }
+      seen.set(key, ours);
+    }
+  }
+}
+
+function flattenSplitwiseCategories(splitwiseCategories) {
+  const flat = [];
+  (splitwiseCategories || []).forEach(c => {
+    if (c.subcategories?.length) flat.push(...c.subcategories);
+    else flat.push(c);
+  });
+  return flat;
+}
+
+// ourCategory (one of ALL_CATEGORIES) -> { id, name } from the live
+// Splitwise category list, or null if truly nothing matched (caller
+// should bail out rather than save a garbage id).
+export function mapToSplitwiseCategory(ourCategory, splitwiseCategories) {
+  const flat = flattenSplitwiseCategories(splitwiseCategories);
+  const candidates = SPLITWISE_CATEGORY_CANDIDATES[ourCategory] || [];
+  for (const name of candidates) {
+    const match = flat.find(c => c.name?.toLowerCase() === name.toLowerCase());
+    if (match) return match;
+  }
+  const loose = flat.find(c => candidates.some(name => c.name?.toLowerCase().includes(name.toLowerCase())));
+  if (loose) return loose;
+  return flat.find(c => c.name?.toLowerCase() === 'general') || null;
+}
+
+// Reverse direction — which of ALL_CATEGORIES a Splitwise expense's
+// current category name best corresponds to, so the dropdown opens on the
+// right selection instead of always defaulting to 'Other'.
+export function mapFromSplitwiseCategory(splitwiseCategoryName) {
+  if (!splitwiseCategoryName) return 'Other';
+  const lower = splitwiseCategoryName.toLowerCase();
+  for (const [ours, candidates] of Object.entries(SPLITWISE_CATEGORY_CANDIDATES)) {
+    if (candidates.some(name => name.toLowerCase() === lower)) return ours;
+  }
+  return 'Other';
+}
+
 export function getCategoryIcon(cat) {
   return CATEGORIES[cat]?.icon ?? '📦';
 }

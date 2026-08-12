@@ -1,4 +1,4 @@
-import { detectCategory } from './categoryDetector';
+import { detectCategory, mapFromSplitwiseCategory } from './categoryDetector';
 import { parseDate } from './statementFormatters';
 
 // Smart matching engine: pairs bank transactions with Splitwise expenses so
@@ -304,7 +304,23 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
         originalAmount:  exp.cost,
         effectiveAmount: exp.myOwedShare,
         savings:         exp.cost - exp.myOwedShare,
-        category:        detectCategory(exp.description) || exp.category,
+        // Splitwise's own category (mapped onto this app's ALL_CATEGORIES —
+        // see categoryDetector.js's mapFromSplitwiseCategory) wins whenever
+        // it resolves to something specific — it's what the user (or group)
+        // actually set, e.g. via SplitwiseExpenseDetail's category editor.
+        // detectCategory(exp.description) is only a fallback guess for an
+        // expense still sitting in Splitwise's generic Uncategorized
+        // bucket, where the description might hint at something detectable
+        // ("Walmart") that Splitwise's own category doesn't capture. This
+        // was previously `detectCategory(exp.description) || exp.category`
+        // — backwards, and dead code besides: detectCategory always
+        // returns a truthy string (defaults to 'Other'), so exp.category
+        // could never actually be reached, meaning a category change made
+        // on the expense itself was silently ignored here.
+        category:        (() => {
+          const mapped = mapFromSplitwiseCategory(exp.category);
+          return mapped !== 'Other' ? mapped : detectCategory(exp.description);
+        })(),
         groupId:         exp.group_id,
         source:          'splitwise',
       });

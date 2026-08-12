@@ -6,7 +6,7 @@ import { fetchCurrentUser, fetchAllExpenses, fetchGroups, fetchNetBalance, fetch
 import { fetchAccountBalances } from '../services/plaid';
 import { session } from '../services/session';
 import { accountLabel } from '../utils/accountLabel';
-import { getCategoryIcon } from '../utils/categoryDetector';
+import { getCategoryIcon, mapToSplitwiseCategory } from '../utils/categoryDetector';
 import { getMonthRange, formatCurrency } from '../utils/statementFormatters';
 import { matchTransactions } from '../utils/matcher';
 import { maybeShowPendingReminder } from '../services/pwa';
@@ -589,22 +589,27 @@ export default function HomePage() {
 
   // Category on a Splitwise-original expense — unlike receipts (our own
   // Firestore doc), this writes through to Splitwise itself since we don't
-  // own the expense. Same optimistic-then-revert shape: the leaf name is
-  // looked up client-side from swCategories just for the immediate label,
-  // the real name comes back from updateExpenseCategory's response.
-  const handleChangeExpenseCategory = async (expense, categoryId) => {
+  // own the expense. SplitwiseExpenseDetail's dropdown now shows this
+  // app's own ALL_CATEGORIES list instead of Splitwise's native tree (see
+  // its own comment), so `ourCategory` here is one of those names, not a
+  // Splitwise category_id — mapToSplitwiseCategory resolves it to a real
+  // Splitwise category before saving. Same optimistic-then-revert shape:
+  // shows `ourCategory` immediately, the real Splitwise name comes back
+  // from updateExpenseCategory's response and overwrites it (may differ
+  // slightly, e.g. "Rent" vs. "Rent & Housing" — mapFromSplitwiseCategory
+  // in the dropdown's own value maps it right back for display there).
+  const handleChangeExpenseCategory = async (expense, ourCategory) => {
+    const swCat = mapToSplitwiseCategory(ourCategory, swCategories);
+    if (!swCat) { toast.error('Could not find a matching Splitwise category yet — try again in a moment.'); return; }
     const previous = { category: expense.category, categoryId: expense.categoryId };
-    const optimisticName = swCategories
-      .flatMap(c => c.subcategories.length > 0 ? c.subcategories : [c])
-      .find(c => String(c.id) === String(categoryId))?.name || expense.category;
     const apply = patch => {
       setSplitwiseExpenses(prev => prev.map(e => e.id === expense.id ? { ...e, ...patch } : e));
       setOtherCurrencyExpenses(prev => prev.map(e => e.id === expense.id ? { ...e, ...patch } : e));
       setOpenExpense(prev => prev && prev.id === expense.id ? { ...prev, ...patch } : prev);
     };
-    apply({ category: optimisticName, categoryId });
+    apply({ category: ourCategory, categoryId: swCat.id });
     try {
-      const { category, categoryId: confirmedId } = await updateExpenseCategory(expense.id, categoryId);
+      const { category, categoryId: confirmedId } = await updateExpenseCategory(expense.id, swCat.id);
       apply({ category, categoryId: confirmedId });
     } catch {
       toast.error('Could not update category on Splitwise');
@@ -1024,7 +1029,6 @@ export default function HomePage() {
         <SplitwiseExpenseDetail
           expense={openExpense}
           groupName={groupName(openExpense.group_id)}
-          categories={swCategories}
           onChangeCategory={handleChangeExpenseCategory}
           onClose={() => setOpenExpense(null)}
         />

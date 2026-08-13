@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Receipt, Settings as SettingsIcon, Trash2, CheckCheck, AlertTriangle, X, Users, AlertCircle, Landmark, CreditCard, Loader2 } from 'lucide-react';
+import { Receipt, Settings as SettingsIcon, Trash2, CheckCheck, AlertTriangle, X, Users, AlertCircle, Landmark, CreditCard, Loader2, ArrowLeftRight } from 'lucide-react';
 import { loadReceiptsForInsights, deleteReceipt, saveReceipt, loadManualAccounts, saveManualAccount, deleteManualAccount, loadTransactions, updateTransactionCategory } from '../services/db';
 import { fetchCurrentUser, fetchAllExpenses, fetchGroups, fetchNetBalance, fetchCategories, updateExpenseCategory, paidByName } from '../services/splitwise';
 import { fetchAccountBalances } from '../services/plaid';
@@ -9,6 +9,7 @@ import { accountLabel } from '../utils/accountLabel';
 import { getCategoryIcon, mapToSplitwiseCategory, mapFromSplitwiseCategory } from '../utils/categoryDetector';
 import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { matchTransactions } from '../utils/matcher';
+import { detectTransfers } from '../utils/transferMatcher';
 import { maybeShowPendingReminder } from '../services/pwa';
 import { useToast } from '../components/ToastProvider';
 import BottomNav from '../components/BottomNav';
@@ -50,6 +51,9 @@ export default function HomePage() {
   // Full Splitwise history — re-fetched per selected month, so it covers
   // expenses added any way (not just receipts posted through this app).
   const [myId,             setMyId]             = useState(null);
+  // Own full name — used by transferMatcher.js's own-name hint (e.g. a
+  // Zelle payment "from Akash Das" is really a self-transfer, not income).
+  const [myFullName,       setMyFullName]        = useState('');
   const [groups,            setGroups]           = useState([]);
   const [splitwiseExpenses, setSplitwiseExpenses] = useState([]);
   // Splitwise expenses logged in a currency other than USD (e.g. a trip
@@ -98,7 +102,7 @@ export default function HomePage() {
     loadReceiptsForInsights().then(list => { setReceipts(list); setLoadingReceipts(false); });
     fetchGroups().then(setGroups).catch(() => toast.error('Could not load your Splitwise groups'));
     fetchCurrentUser()
-      .then(u => setMyId(u.id))
+      .then(u => { setMyId(u.id); setMyFullName([u.name, u.lastName].filter(Boolean).join(' ')); })
       .catch(err => {
         // Without myId the Splitwise-fetch effect below never runs (it's
         // gated on myId being set), so loadingSw would otherwise stay true
@@ -218,6 +222,49 @@ export default function HomePage() {
     maybeShowPendingReminder(pendingMonthlyReceipts.length, pendingTotal);
   }, [loadingReceipts, pendingMonthlyReceipts.length, pendingTotal]);
 
+  // Transfers between the user's own accounts — same detection
+  // StatementsPage runs, so a transaction that's an obvious transfer
+  // (e.g. "Withdrawal to 360 Checking") shows a hint here too instead of
+  // silently reading as ordinary personal spend with no explanation. See
+  // StatementsPage's own comment on this exact pattern: detected transfers
+  // stay fully visible and counted in "Actual spend" until CONFIRMED (not
+  // just detected) in Statements' Transfers tab — an unconfirmed candidate
+  // could be a false positive (two unrelated charges that coincidentally
+  // matched), so removing it from spend before the user gets a chance to
+  // dismiss it would be worse than the alternative. Scanned across ALL
+  // bankTxns (not month-scoped) widened ±3 days past the visible month —
+  // same reasoning as transferScanTxns there — so a pair straddling a
+  // month boundary is still found.
+  const myAccountNames = useMemo(() => session.getAllMyAccountNames(), [bankTxns]);
+  const transferScanTxns = useMemo(() => {
+    const pad = (dateStr, days) => {
+      const d = new Date(`${dateStr}T00:00:00`);
+      d.setDate(d.getDate() + days);
+      return d.toISOString().slice(0, 10);
+    };
+    const start = pad(monthRange.start, -3);
+    const end   = pad(monthRange.end, 3);
+    return bankTxns
+      .filter(t => t.date && t.date.slice(0, 10) >= start && t.date.slice(0, 10) <= end)
+      .map(t => ({ ...t, accountType: session.getAccountType(t.source) }));
+  }, [bankTxns, monthRange]);
+  const { pairs: transferPairs, hints: transferHints } = useMemo(
+    () => detectTransfers(transferScanTxns, { myAccountNames, myFullName }),
+    [transferScanTxns, myAccountNames, myFullName]
+  );
+  const transferLabelById = useMemo(() => {
+    const map = new Map();
+    transferPairs.forEach(p => {
+      const from = p.debit.sourceName || p.debit.source;
+      const to   = p.credit.sourceName || p.credit.source;
+      const label = p.confirmed ? `Transferred from ${from} to ${to}` : `Possible transfer: ${from} → ${to}`;
+      map.set(p.debit.id, label);
+      map.set(p.credit.id, label);
+    });
+    transferHints.forEach(h => map.set(h.txn.id, h.label));
+    return map;
+  }, [transferPairs, transferHints]);
+
   // Bank transactions from Statements, scoped to this month and matched
   // against Splitwise — a matched one is already represented in the
   // timeline via its Splitwise expense (splitwiseOnly/a posted receipt), so
@@ -227,8 +274,10 @@ export default function HomePage() {
   // uses, also reused below for the Spending card's Rent & Utilities/Expenses
   // breakdown.
   const monthlyBankExpenses = useMemo(() =>
-    bankTxns.filter(t => !t.isCredit && !t.isPending && t.date && t.date.slice(0, 10) >= monthRange.start && t.date.slice(0, 10) <= monthRange.end),
-    [bankTxns, monthRange]
+    bankTxns
+      .filter(t => !t.isCredit && !t.isPending && t.date && t.date.slice(0, 10) >= monthRange.start && t.date.slice(0, 10) <= monthRange.end)
+      .map(t => ({ ...t, isTransfer: transferLabelById.has(t.id), transferHintLabel: transferLabelById.get(t.id) })),
+    [bankTxns, monthRange, transferLabelById]
   );
   const realBankExpenseTxns = useMemo(() =>
     monthlyBankExpenses.filter(t => !t.isPayment && !t.overrideConfirmedTransfer),
@@ -870,20 +919,29 @@ export default function HomePage() {
   // BankTransactionDetail card the Spending sheet uses (matchLabel at the
   // render site below resolves to "Personal — not split" automatically
   // from t.isSplitwised), with "Open in Statements" as its own escape
-  // hatch for anything beyond a category change.
+  // hatch for anything beyond a category change. isTransfer (see
+  // transferLabelById above) gets its own indigo treatment — same "Possible
+  // transfer" hint Statements shows, so an obvious transfer like
+  // "Withdrawal to 360 Checking" doesn't just silently read as ordinary
+  // personal spend with no explanation, even though it still counts
+  // toward Actual spend until confirmed in Statements' Transfers tab.
   const renderPersonalRow = t => (
     <button key={t.id} onClick={() => setOpenTxn(t)}
-      className="w-full text-left bg-surface rounded-2xl p-4 border border-edge shadow-sm hover:border-slate-200 card-lift anim-fade-up flex items-center gap-3">
+      className={`w-full text-left bg-surface rounded-2xl p-4 border shadow-sm card-lift anim-fade-up flex items-center gap-3 ${t.isTransfer ? 'border-indigo-100 hover:border-indigo-200' : 'border-edge hover:border-slate-200'}`}>
       <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
-        style={{ background: 'linear-gradient(135deg, #64748b, #94a3b8)' }}>
-        <Landmark size={18} color="#fff" />
+        style={{ background: t.isTransfer ? 'linear-gradient(135deg, #6366f1, #8b5cf6)' : 'linear-gradient(135deg, #64748b, #94a3b8)' }}>
+        {t.isTransfer ? <ArrowLeftRight size={18} color="#fff" /> : <Landmark size={18} color="#fff" />}
       </div>
       <div className="flex-1 min-w-0">
         <p className="font-bold text-ink text-sm truncate">{t.description || 'Unknown'}</p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
           <span className="text-xs text-subtle">{formatShortDate(t.date)}</span>
           <span className="text-slate-200">·</span>
-          <span className="text-xs font-semibold" style={{ color: SLATE }}>Personal</span>
+          {t.isTransfer ? (
+            <span className="text-xs font-semibold" style={{ color: INDIGO }}>Possible transfer</span>
+          ) : (
+            <span className="text-xs font-semibold" style={{ color: SLATE }}>Personal</span>
+          )}
           <span className="text-slate-200">·</span>
           <span className="text-xs text-subtle truncate">{t.sourceName || t.source}</span>
           {t.category && (
@@ -1140,7 +1198,7 @@ export default function HomePage() {
         <BankTransactionDetail
           txn={openTxn}
           matchLabel={
-            openTxn.isTransfer ? 'Transfer between your accounts'
+            openTxn.isTransfer ? (openTxn.transferHintLabel || 'Possible transfer between your accounts')
               : openTxn.isPayment ? 'Payment — not a personal purchase'
               : openTxn.isSplitwised ? 'Matched to a Splitwise expense'
               : 'Personal — not split'

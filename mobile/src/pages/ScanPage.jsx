@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, ImagePlus, Sparkles, X, AlertCircle, Loader2, FileText, Plus } from 'lucide-react';
 import { parseReceiptImage } from '../services/groq';
-import { saveReceipt } from '../services/db';
+import { saveReceipt, logNotification } from '../services/db';
 import { loadPdfjs } from '../utils/pdfjsLoader';
 import PageHeader from '../components/PageHeader';
 
@@ -221,6 +221,13 @@ export default function ScanPage() {
       };
 
       await saveReceipt(receipt);
+      // Fire-and-forget — a notification-log failure must never block the
+      // actual scan flow the user is waiting on.
+      logNotification({
+        type: 'receipt_parsed',
+        text: `Receipt from ${receipt.merchant || 'Unknown merchant'} was parsed successfully`,
+        receiptId: receipt.id,
+      }).catch(() => {});
       // usedFallback is a one-time UI notice, not real receipt data — kept
       // out of the object that gets persisted to Firestore.
       navigate('/detail', { state: { ...receipt, usedFallback } });

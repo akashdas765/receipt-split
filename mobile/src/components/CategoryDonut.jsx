@@ -26,32 +26,36 @@ export default function CategoryDonut({ categories }) {
   }, []);
 
   return (
-    <div className="flex items-start gap-5 px-4 py-4 border-b border-edge">
-      <svg viewBox="0 0 100 100" className="w-24 h-24 shrink-0 -rotate-90">
+    <div className="flex flex-col items-center gap-4 px-4 py-4 border-b border-edge">
+      <div className="relative w-32 h-32 shrink-0">
+        <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
+          {arcs.map(a => (
+            <circle
+              key={a.category}
+              cx="50" cy="50" r="40"
+              fill="none"
+              stroke={getCategoryChartColor(a.category)}
+              strokeWidth="16"
+              pathLength="100"
+              strokeDasharray={`${Math.max(a.pct - GAP_PCT, 0)} ${100 - Math.max(a.pct - GAP_PCT, 0)}`}
+              strokeDashoffset={-a.offset}
+            />
+          ))}
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-[10px] text-subtle">This month</span>
+          <span className="text-base font-extrabold text-ink">${total.toFixed(2)}</span>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 w-full">
         {arcs.map(a => (
-          <circle
-            key={a.category}
-            cx="50" cy="50" r="40"
-            fill="none"
-            stroke={getCategoryChartColor(a.category)}
-            strokeWidth="16"
-            pathLength="100"
-            strokeDasharray={`${Math.max(a.pct - GAP_PCT, 0)} ${100 - Math.max(a.pct - GAP_PCT, 0)}`}
-            strokeDashoffset={-a.offset}
-          />
-        ))}
-      </svg>
-      <div className="flex-1 min-w-0 space-y-1.5">
-        {arcs.map(a => (
-          <div key={a.category} className="flex items-center justify-between gap-2 text-xs">
-            <span className="flex items-center gap-1.5 min-w-0 text-muted">
-              <span
-                className="w-2.5 h-2.5 rounded-full shrink-0"
-                style={{ background: getCategoryChartColor(a.category) }}
-              />
-              <span className="truncate">{getCategoryIcon(a.category)} {a.category}</span>
-            </span>
-            <span className="font-bold text-ink shrink-0">{Math.round(a.pct)}%</span>
+          <div key={a.category} className="flex items-center gap-1.5 min-w-0 text-xs">
+            <span
+              className="w-2.5 h-2.5 rounded-full shrink-0"
+              style={{ background: getCategoryChartColor(a.category) }}
+            />
+            <span className="truncate text-muted">{getCategoryIcon(a.category)} {a.category}</span>
+            <span className="font-bold text-ink shrink-0 ml-auto">{Math.round(a.pct)}%</span>
           </div>
         ))}
       </div>

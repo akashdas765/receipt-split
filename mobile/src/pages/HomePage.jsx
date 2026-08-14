@@ -1,13 +1,14 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Receipt, Settings as SettingsIcon, Trash2, CheckCheck, AlertTriangle, X, Users, AlertCircle, Landmark, CreditCard, Loader2, ArrowLeftRight } from 'lucide-react';
-import { loadReceiptsForInsights, deleteReceipt, saveReceipt, loadManualAccounts, saveManualAccount, deleteManualAccount, loadTransactions, updateTransactionCategory, setTransactionOverride } from '../services/db';
+import { Receipt, Settings as SettingsIcon, Trash2, CheckCheck, AlertTriangle, X, Users, AlertCircle, Landmark, CreditCard, Loader2, ArrowLeftRight, Bell } from 'lucide-react';
+import { loadReceiptsForInsights, deleteReceipt, saveReceipt, loadManualAccounts, saveManualAccount, deleteManualAccount, loadTransactions, updateTransactionCategory, setTransactionOverride, saveNetWorthSnapshot, loadNetWorthHistory, loadNotifications, markNotificationRead } from '../services/db';
 import { fetchCurrentUser, fetchAllExpenses, fetchGroups, fetchNetBalance, fetchCategories, updateExpenseCategory, paidByName } from '../services/splitwise';
 import { fetchAccountBalances } from '../services/plaid';
 import { session } from '../services/session';
 import { accountLabel } from '../utils/accountLabel';
+import { memberColor } from '../utils/memberColor';
 import { getCategoryIcon, mapToSplitwiseCategory, mapFromSplitwiseCategory, TRANSFER_CATEGORY } from '../utils/categoryDetector';
-import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
+import { getMonthRange, formatCurrency, formatShortDate, weekRangeLabel } from '../utils/statementFormatters';
 import { matchTransactions } from '../utils/matcher';
 import { detectTransfers } from '../utils/transferMatcher';
 import { maybeShowPendingReminder } from '../services/pwa';
@@ -18,6 +19,7 @@ import SpendingDetail from '../components/SpendingDetail';
 import SplitwiseExpenseDetail from '../components/SplitwiseExpenseDetail';
 import BankTransactionDetail from '../components/BankTransactionDetail';
 import ReceiptDetail from '../components/ReceiptDetail';
+import NotificationCenter from '../components/NotificationCenter';
 import MonthSlider from '../components/MonthSlider';
 
 const INDIGO = '#6366f1';
@@ -37,6 +39,11 @@ function formatWithCurrency(amount, currencyCode) {
   } catch {
     return `${currencyCode} ${amount.toFixed(2)}`;
   }
+}
+
+function timeOfDayGreeting() {
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 }
 
 export default function HomePage() {
@@ -89,6 +96,9 @@ export default function HomePage() {
   const [loadingNet,      setLoadingNet]      = useState(true);
   const [manualAccounts,  setManualAccounts]  = useState([]);
   const [netWorthOpen,    setNetWorthOpen]    = useState(false);
+  const [netWorthHistory, setNetWorthHistory] = useState([]); // [{date, netWorth}], oldest first
+  const [notifications,   setNotifications]   = useState([]);
+  const [notifCenterOpen, setNotifCenterOpen] = useState(false);
 
   // Bank transactions powering the Spending card below — same data
   // Statements loads via loadTransactions(), filtered client-side to this
@@ -112,6 +122,8 @@ export default function HomePage() {
       });
     fetchNetBalance().then(setSplitwiseNet).catch(() => {}).finally(() => setLoadingNet(false));
     loadManualAccounts().then(setManualAccounts).catch(() => toast.error('Could not load your manual accounts'));
+    loadNetWorthHistory().then(setNetWorthHistory).catch(() => {});
+    loadNotifications().then(setNotifications).catch(() => {});
     loadTransactions().then(setBankTxns).catch(() => {});
     fetchCategories().then(setSwCategories).catch(() => {});
   }, []);
@@ -391,6 +403,13 @@ export default function HomePage() {
   // works correctly across both since a "YYYY-MM-DD" date sorts
   // identically to the date-only prefix of an ISO datetime string.
   const [txnFilter, setTxnFilter] = useState('all'); // 'all' | 'receipt' | 'splitwise' | 'personal'
+  // Collapsed to just the most recent week by default — a full month can
+  // run 40+ transactions (see the weekly-total header work above), and most
+  // visits only care about "what's new," not the whole month at once. Resets
+  // whenever the visible month changes so switching months doesn't stay
+  // stuck expanded (or collapsed) from whatever was last looked at.
+  const [timelineExpanded, setTimelineExpanded] = useState(false);
+  useEffect(() => { setTimelineExpanded(false); }, [currentMonth]);
   const combinedTimeline = useMemo(() => {
     const items = [
       ...monthlyReceipts.map(r => ({ kind: 'receipt', item: r, sortKey: r.date || r.scanned_at || '' })),
@@ -413,6 +432,39 @@ export default function HomePage() {
     if (txnFilter === 'personal')  return combinedTimeline.filter(t => t.kind === 'personal');
     return combinedTimeline;
   }, [combinedTimeline, txnFilter]);
+  // Same "your share" figure each row already displays, extracted once so
+  // a week's rows can be summed into a header total — null for foreign-
+  // currency expenses (never folded into a $ total, same policy as the top
+  // "Your share" card and the row's own "not in totals" label) and 0 for a
+  // transfer (never spend, see personalSpendTxns above).
+  const shareAmount = useCallback((kind, item) => {
+    if (kind === 'receipt') {
+      return item.approved && myId && item.personTotals?.[myId] != null
+        ? item.personTotals[myId]
+        : (item.grandTotal ?? item.total ?? 0);
+    }
+    if (kind === 'splitwise') return item.myOwedShare || 0;
+    if (kind === 'personal')  return item.isTransfer ? 0 : (item.effectiveAmount || 0);
+    return null; // foreign
+  }, [myId]);
+  // Breaks the flat (already date-descending) list into weekly sections —
+  // walks it once, starting a new group whenever the week range changes,
+  // so groups come out newest-week-first for free without a second sort.
+  const weeklyTimeline = useMemo(() => {
+    const groups = [];
+    for (const entry of filteredTimeline) {
+      const label = weekRangeLabel(entry.sortKey);
+      let last  = groups[groups.length - 1];
+      if (!last || last.label !== label) {
+        last = { label, entries: [], total: 0 };
+        groups.push(last);
+      }
+      last.entries.push(entry);
+      const amt = shareAmount(entry.kind, entry.item);
+      if (amt != null) last.total += amt;
+    }
+    return groups;
+  }, [filteredTimeline, shareAmount]);
 
   // Non-receipt Splitwise expenses represented via a matched bank
   // transaction — reusing matcher.js's own resolved (live-or-snapshot)
@@ -503,6 +555,36 @@ export default function HomePage() {
   const netWorth = bankTotal - creditDebtTotal + splitwiseNet + manualAssetTotal - manualLiabilityTotal;
   const hasNetWorthData = hasPlaidAccounts || manualAccounts.length > 0;
 
+  // Records today's computed net worth once balances/Splitwise net have
+  // actually settled (not the 0 they start at while loading) — see
+  // saveNetWorthSnapshot's own comment for why this, not netWorth itself,
+  // is what's persisted. savedSnapshotRef guards against re-saving on every
+  // render once loading flips false (netWorth itself still fluctuates a
+  // little as manual accounts/etc. load in) — one write per page visit is
+  // plenty for a daily-granularity history.
+  const savedSnapshotRef = useRef(false);
+  useEffect(() => {
+    if (savedSnapshotRef.current || !hasNetWorthData || loadingBalances || loadingNet) return;
+    savedSnapshotRef.current = true;
+    saveNetWorthSnapshot(netWorth).catch(() => {});
+  }, [hasNetWorthData, loadingBalances, loadingNet, netWorth]);
+
+  // "+X% this month" trend for the net-worth card — real month-over-month
+  // change against the oldest snapshot on file, not a guess. Needs at least
+  // ~20 days of history before showing anything; a 2-day-old baseline would
+  // read as a misleadingly large swing. Grows more accurate as snapshots
+  // accumulate day to day — there's no way to backfill history that was
+  // never recorded.
+  const netWorthTrendPct = useMemo(() => {
+    if (!netWorthHistory.length || !hasNetWorthData) return null;
+    const oldest = netWorthHistory[0];
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 20);
+    if (oldest.date > cutoff.toISOString().slice(0, 10)) return null;
+    if (!oldest.netWorth) return null;
+    return ((netWorth - oldest.netWorth) / Math.abs(oldest.netWorth)) * 100;
+  }, [netWorthHistory, netWorth, hasNetWorthData]);
+
   // Bank transactions (transfers excluded — see personalSpendTxns above;
   // a transfer can only ever land here as an unmatched personal row, never
   // Splitwise-matched, since matcher.js already refuses to score an
@@ -541,10 +623,15 @@ export default function HomePage() {
       className="w-full text-left rounded-2xl p-4 border border-emerald-100 anim-fade-up card-lift card-networth"
     >
       <div className="flex items-center justify-between gap-3 mb-1">
-        <p className="text-xs font-bold text-subtle uppercase tracking-wide">Net worth</p>
+        <p className="text-xs font-bold text-emerald-600 uppercase tracking-wide">Net worth</p>
         {(loadingBalances || loadingNet) && <Loader2 size={12} className="animate-spin text-subtle" />}
       </div>
       <p className="text-2xl font-extrabold text-ink">{formatWithCurrency(netWorth, 'USD')}</p>
+      {netWorthTrendPct != null && (
+        <p className={`text-xs font-bold mt-0.5 ${netWorthTrendPct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+          {netWorthTrendPct >= 0 ? '+' : ''}{netWorthTrendPct.toFixed(1)}% this month
+        </p>
+      )}
 
       <div className="mt-3 pt-3 border-t border-emerald-100/60 space-y-1.5">
         {hasPlaidAccounts && (
@@ -588,7 +675,14 @@ export default function HomePage() {
       onClick={() => setSpendingOpen(true)}
       className="w-full text-left rounded-2xl p-4 border border-indigo-100 anim-fade-up card-lift card-month-total"
     >
-      <p className="text-xs font-bold text-subtle uppercase tracking-wide">Spending — {monthRange.label}</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-bold text-subtle uppercase tracking-wide">Spending — {monthRange.label}</p>
+        {monthlyReceipts.length > 0 && (
+          <span className="text-[10px] font-bold text-indigo-600 bg-surface px-2 py-0.5 rounded-full shrink-0">
+            {monthlyReceipts.length} receipt{monthlyReceipts.length !== 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
       <p className="text-2xl font-extrabold text-ink mt-1">{formatCurrency(actualSpend)}</p>
       <p className="text-[10px] text-subtle -mt-0.5">Actual spend</p>
 
@@ -773,6 +867,33 @@ export default function HomePage() {
     setOpenExpense(expense);
   };
 
+  const unreadNotifCount = notifications.filter(n => !n.read).length;
+
+  // A tapped notification marks itself read either way; where it also
+  // navigates depends on what it's actually about — a receipt notification
+  // opens that receipt (if it's still in the loaded 200, same window
+  // loadReceiptsForInsights already covers) the same way tapping the
+  // receipt's own row does, a bank-link notification jumps to Statements
+  // (navigateTo, set at the PlaidConnect call site), anything else just
+  // marks read in place with no further action.
+  const handleSelectNotification = n => {
+    setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+    if (!n.read) markNotificationRead(n.id).catch(() => {});
+    if (n.receiptId) {
+      const receipt = receipts.find(r => r.id === n.receiptId);
+      if (receipt) {
+        setNotifCenterOpen(false);
+        if (receipt.approved) setOpenReceipt(receipt);
+        else navigate('/detail', { state: receipt });
+        return;
+      }
+    }
+    if (n.navigateTo) {
+      setNotifCenterOpen(false);
+      navigate(n.navigateTo);
+    }
+  };
+
   const loading = loadingReceipts;
 
   // Row renderers for the combined timeline below — extracted so the single
@@ -787,6 +908,15 @@ export default function HomePage() {
       ? splitwiseExpenses.find(e => e.id === r.splitwise_expense_id)
       : null;
     const payer = postedExpense ? paidByName(postedExpense.splits) : null;
+    // Small overlapping avatar stack (like the mockup's "who's in this
+    // receipt") — only once a receipt is posted and actually split among
+    // more than one person; personTotals is the source of truth for who's
+    // in it (item.split_members can list someone at $0 after a manual
+    // reassignment, personTotals only has people who actually owe/paid).
+    const groupMembers = groups.find(g => g.id === r.groupId)?.members || [];
+    const splitMemberIds = r.approved && r.personTotals
+      ? Object.keys(r.personTotals).filter(id => r.personTotals[id] > 0)
+      : [];
     return (
     <button
       key={r.id}
@@ -839,6 +969,25 @@ export default function HomePage() {
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
+          {splitMemberIds.length > 1 && (
+            <div className="flex">
+              {splitMemberIds.slice(0, 3).map(id => {
+                const m = groupMembers.find(x => String(x.id) === String(id));
+                return (
+                  <div key={id}
+                    className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold border-2 border-surface -ml-1.5 first:ml-0"
+                    style={{ background: memberColor(id, groupMembers) }}>
+                    {m?.name?.[0]?.toUpperCase() || '?'}
+                  </div>
+                );
+              })}
+              {splitMemberIds.length > 3 && (
+                <div className="w-5 h-5 rounded-full flex items-center justify-center bg-surface-alt text-muted text-[8px] font-bold border-2 border-surface -ml-1.5">
+                  +{splitMemberIds.length - 3}
+                </div>
+              )}
+            </div>
+          )}
           <div className="text-right">
             {r.approved && myId && r.personTotals?.[myId] != null ? (
               <>
@@ -1028,22 +1177,37 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Header */}
+      {/* Header — personalized greeting on Home specifically (mirrors the
+          brand-name header every other page's PageHeader shows) rather than
+          the logo mark, since this is the one screen where "who's this for"
+          is more useful at a glance than "what app is this". */}
       <header className="sticky top-0 z-20 glass">
         <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg flex items-center justify-center logo-glow">
-              <Receipt size={15} color="#fff" />
-            </div>
-            <span className="font-extrabold text-gradient text-base tracking-tight">Truespend</span>
+          <div>
+            <p className="text-xs text-subtle leading-tight">{timeOfDayGreeting()}</p>
+            <p className="font-extrabold text-ink text-base tracking-tight leading-tight">
+              {myFullName?.split(' ')[0] || 'Truespend'}
+            </p>
           </div>
-          <button
-            onClick={() => navigate('/settings')}
-            className="p-2 rounded-lg text-muted hover:bg-surface-alt transition-colors"
-            title="Settings"
-          >
-            <SettingsIcon size={18} />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setNotifCenterOpen(true)}
+              className="relative p-2 rounded-lg text-muted hover:bg-surface-alt transition-colors"
+              title="Notifications"
+            >
+              <Bell size={18} />
+              {unreadNotifCount > 0 && (
+                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 border-2 border-surface" />
+              )}
+            </button>
+            <button
+              onClick={() => navigate('/settings')}
+              className="p-2 rounded-lg text-muted hover:bg-surface-alt transition-colors"
+              title="Settings"
+            >
+              <SettingsIcon size={18} />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -1167,12 +1331,34 @@ export default function HomePage() {
                 {filteredTimeline.length === 0 ? (
                   <div className="text-center py-10 text-sm text-subtle">Nothing matches this filter</div>
                 ) : (
-                <div className="flex flex-col gap-3 stagger">
-                  {filteredTimeline.map(({ kind, item }) =>
-                    kind === 'receipt'   ? renderReceiptRow(item) :
-                    kind === 'splitwise' ? renderSplitwiseRow(item) :
-                    kind === 'personal'  ? renderPersonalRow(item) :
-                    renderForeignRow(item)
+                <div className="flex flex-col gap-4 stagger">
+                  {(timelineExpanded ? weeklyTimeline : weeklyTimeline.slice(0, 1)).map(group => (
+                    <div key={group.label}>
+                      <div className="flex items-center justify-between mb-2 px-0.5">
+                        <p className="text-[10px] font-bold text-subtle uppercase tracking-wide">
+                          {group.label} · {group.entries.length} transaction{group.entries.length !== 1 ? 's' : ''}
+                        </p>
+                        <p className="text-xs font-bold text-muted">{formatCurrency(group.total)}</p>
+                      </div>
+                      <div className="flex flex-col gap-3">
+                        {group.entries.map(({ kind, item }) =>
+                          kind === 'receipt'   ? renderReceiptRow(item) :
+                          kind === 'splitwise' ? renderSplitwiseRow(item) :
+                          kind === 'personal'  ? renderPersonalRow(item) :
+                          renderForeignRow(item)
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  {!timelineExpanded && weeklyTimeline.length > 1 && (
+                    <button
+                      onClick={() => setTimelineExpanded(true)}
+                      className="text-center text-xs font-bold py-2.5 rounded-xl border border-edge bg-surface hover:bg-surface-alt transition-colors"
+                      style={{ color: INDIGO }}
+                    >
+                      See all {filteredTimeline.length} transactions
+                    </button>
                   )}
 
                   {loadingSw && (
@@ -1257,6 +1443,14 @@ export default function HomePage() {
           onEdit={() => navigate('/detail', { state: openReceipt })}
           onClose={() => setOpenReceipt(null)}
           onChangeCategory={handleChangeReceiptCategory}
+        />
+      )}
+
+      {notifCenterOpen && (
+        <NotificationCenter
+          notifications={notifications}
+          onSelect={handleSelectNotification}
+          onClose={() => setNotifCenterOpen(false)}
         />
       )}
 

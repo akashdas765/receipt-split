@@ -277,6 +277,76 @@ export async function deleteManualAccount(id) {
   await deleteDoc(doc(manualAccountsCol(), id));
 }
 
+// ── Net worth snapshots (trend on HomePage's net-worth card) ───────────────
+// Net worth itself is never stored as the source of truth — HomePage always
+// recomputes it live from Plaid/Splitwise/manual accounts, since a stale
+// number there would be actively misleading (see its own comment). This is
+// a separate running history of that computed number, one doc per day
+// (merge:true upsert — loading the same day twice just overwrites it with
+// the latest computation), purely so a "+X% this month" trend has a real
+// past value to compare against instead of a made-up one. Starts empty for
+// every user; the trend only appears once enough days have accumulated.
+function netWorthSnapshotsCol() {
+  return collection(db, 'users', session.getUserId(), 'netWorthSnapshots');
+}
+
+export async function saveNetWorthSnapshot(netWorth) {
+  const date = new Date().toISOString().slice(0, 10);
+  await setDoc(doc(netWorthSnapshotsCol(), date), { date, netWorth }, { merge: true });
+}
+
+// Last ~45 days, oldest first — enough slack to still find something ~30
+// days back for a month-over-month comparison even if some days were
+// skipped (app not opened that day).
+export async function loadNetWorthHistory() {
+  try {
+    const q    = query(netWorthSnapshotsCol(), orderBy('date', 'desc'), limit(45));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => d.data()).reverse();
+  } catch {
+    return [];
+  }
+}
+
+// ── Notifications (bell icon on HomePage) ───────────────────────────────────
+// A real, persisted log of things that actually happened — written at the
+// moment each event occurs (see the logNotification call sites: ScanPage
+// after a receipt is parsed, ApprovePage after a receipt posts to
+// Splitwise, PlaidConnect after a brand-new bank/card is linked), never
+// synthesized from existing data after the fact. read tracks whether the
+// user has opened it; the header badge is just the unread count.
+function notificationsCol() {
+  return collection(db, 'users', session.getUserId(), 'notifications');
+}
+
+// receiptId/navigateTo are optional — whatever a NotificationCenter tap
+// should do (open a receipt, jump to a page). Omitted entirely rather than
+// set to undefined, since Firestore rejects undefined field values outright
+// (same reasoning as services/plaid.js's postedDate).
+export async function logNotification({ type, text, receiptId, navigateTo }) {
+  const ref = doc(notificationsCol());
+  await setDoc(ref, {
+    type, text, read: false, createdAt: new Date().toISOString(),
+    ...(receiptId  !== undefined ? { receiptId }  : {}),
+    ...(navigateTo !== undefined ? { navigateTo } : {}),
+  });
+}
+
+// Most recent 50 — a running feed for the bell icon, not a full audit log.
+export async function loadNotifications() {
+  try {
+    const q    = query(notificationsCol(), orderBy('createdAt', 'desc'), limit(50));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch {
+    return [];
+  }
+}
+
+export async function markNotificationRead(id) {
+  await setDoc(doc(notificationsCol(), id), { read: true }, { merge: true });
+}
+
 // ── Splitwise key rotation (see components/SettingsPage.jsx) ───────────────
 // signup() writes the key once and never again — this is the only update
 // path. Every Splitwise call reads the key from the session singleton (see

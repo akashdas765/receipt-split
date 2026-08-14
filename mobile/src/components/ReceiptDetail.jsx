@@ -2,13 +2,15 @@ import React from 'react';
 import { X, CheckCircle2, Pencil } from 'lucide-react';
 import { memberColor } from '../utils/memberColor';
 import { normalizeItems, lineAmount, flattenShares } from '../utils/receiptItems';
+import { getCategoryIcon, getCategoryColor, ALL_CATEGORIES } from '../utils/categoryDetector';
+import { formatShortDate } from '../utils/statementFormatters';
 
 // View-only detail sheet for an already-posted receipt, opened from
 // HomePage. Shows the same total/split-breakdown/items summary
 // DetailPage's edit form works from, but read-only — "Edit" hands off to
 // that full form (navigate('/detail', {state: receipt})) instead of
 // switching modes in place, so there's exactly one editing surface.
-export default function ReceiptDetail({ receipt, groupName, onEdit, onClose }) {
+export default function ReceiptDetail({ receipt, groupName, paidBy, onEdit, onClose, onChangeCategory }) {
   const items              = normalizeItems(receipt.items);
   const viewMembers        = receipt.members || [];
   const personTotals       = receipt.personTotals || {};
@@ -19,15 +21,29 @@ export default function ReceiptDetail({ receipt, groupName, onEdit, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40 anim-fade-in" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-t-3xl max-h-[85vh] flex flex-col anim-sheet-up">
+      <div className="bg-surface rounded-t-3xl max-h-[85vh] flex flex-col anim-sheet-up">
         <div className="flex justify-center pt-3 pb-1">
-          <div className="w-10 h-1 rounded-full bg-slate-200" />
+          <div className="w-10 h-1 rounded-full bg-surface-alt" />
         </div>
 
-        <div className="px-4 py-3 border-b border-slate-100 flex items-start justify-between gap-3">
+        <div className="px-4 py-3 border-b border-edge flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="font-extrabold text-slate-800 text-sm truncate">{receipt.merchant || 'Receipt'}</p>
-            <p className="text-xl font-extrabold text-slate-800 mt-0.5">${total.toFixed(2)}</p>
+            <p className="font-extrabold text-ink text-sm truncate">{receipt.merchant || 'Receipt'}</p>
+            <p className="text-xl font-extrabold text-ink mt-0.5">${total.toFixed(2)}</p>
+            <span
+              className="inline-flex items-center gap-1 text-[11px] font-bold pl-2 pr-1 py-0.5 rounded-full mt-1.5"
+              style={{ background: getCategoryColor(receipt.category) + '1a', color: getCategoryColor(receipt.category) }}
+            >
+              {getCategoryIcon(receipt.category)}
+              <select
+                value={receipt.category || 'Other'}
+                onChange={e => onChangeCategory(receipt, e.target.value)}
+                className="bg-transparent outline-none font-bold"
+                style={{ color: getCategoryColor(receipt.category) }}
+              >
+                {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
@@ -36,16 +52,17 @@ export default function ReceiptDetail({ receipt, groupName, onEdit, onClose }) {
             >
               <Pencil size={13} /> Edit
             </button>
-            <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600">
+            <button onClick={onClose} className="p-1.5 rounded-lg text-subtle hover:text-muted">
               <X size={18} />
             </button>
           </div>
         </div>
 
         <div className="overflow-y-auto px-4 py-4 space-y-5">
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <span>{receipt.date}</span>
+          <div className="flex items-center gap-2 text-xs text-subtle">
+            <span>{formatShortDate(receipt.date)}</span>
             {groupName && <><span className="text-slate-200">·</span><span>{groupName}</span></>}
+            {paidBy && <><span className="text-slate-200">·</span><span>Paid by {paidBy}</span></>}
             <span className="ml-auto text-xs font-bold text-emerald-500 bg-emerald-50 px-2.5 py-1 rounded-full flex items-center gap-1">
               <CheckCircle2 size={11} /> Posted to Splitwise
             </span>
@@ -53,17 +70,17 @@ export default function ReceiptDetail({ receipt, groupName, onEdit, onClose }) {
 
           {membersWithAmounts.length > 0 && (
             <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1.5">Split breakdown</p>
+              <p className="text-[10px] font-bold text-subtle uppercase tracking-wide mb-1.5">Split breakdown</p>
               <div className="flex flex-col gap-2">
                 {membersWithAmounts.map(m => {
                   const color = memberColor(m.id, viewMembers);
                   return (
-                    <div key={m.id} className="bg-white rounded-xl px-4 py-3 flex items-center gap-3 border border-slate-100 shadow-sm">
+                    <div key={m.id} className="bg-surface rounded-xl px-4 py-3 flex items-center gap-3 border border-edge shadow-sm">
                       <div className="w-9 h-9 rounded-full flex items-center justify-center text-white font-extrabold text-sm shrink-0"
                         style={{ background: color }}>
                         {m.name?.[0]?.toUpperCase()}
                       </div>
-                      <span className="flex-1 font-semibold text-sm text-slate-700">{m.name}</span>
+                      <span className="flex-1 font-semibold text-sm text-ink">{m.name}</span>
                       <span className="font-extrabold text-base" style={{ color }}>${m.amount.toFixed(2)}</span>
                     </div>
                   );
@@ -73,18 +90,18 @@ export default function ReceiptDetail({ receipt, groupName, onEdit, onClose }) {
           )}
 
           <div>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1.5">Items</p>
+            <p className="text-[10px] font-bold text-subtle uppercase tracking-wide mb-1.5">Items</p>
             <div className="flex flex-col gap-2">
               {items.map(item => {
                 const shares      = flattenShares(item);
                 const assignedIds = Object.keys(shares).filter(id => shares[id] > 0);
                 return (
-                  <div key={item.id} className="bg-white rounded-xl p-3.5 border border-slate-100 shadow-sm">
+                  <div key={item.id} className="bg-surface rounded-xl p-3.5 border border-edge shadow-sm">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="font-semibold text-sm text-slate-800 truncate">{item.description}</p>
-                      <p className="font-bold text-sm text-slate-800 shrink-0">${lineAmount(item).toFixed(2)}</p>
+                      <p className="font-semibold text-sm text-ink truncate">{item.description}</p>
+                      <p className="font-bold text-sm text-ink shrink-0">${lineAmount(item).toFixed(2)}</p>
                     </div>
-                    <p className="text-xs text-slate-400 mt-0.5">
+                    <p className="text-xs text-subtle mt-0.5">
                       {item.quantity} × ${(parseFloat(item.unit_price) || 0).toFixed(2)}
                     </p>
                     {assignedIds.length > 0 && (

@@ -213,16 +213,16 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
   }, [active]);
 
   return (
-    <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-3">
+    <div className="bg-surface rounded-2xl p-4 border border-edge shadow-sm space-y-3">
       <div className="flex items-center gap-2.5">
         <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center shrink-0">
           <Landmark size={16} style={{ color: INDIGO }} />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-bold text-slate-800">
+          <p className="text-sm font-bold text-ink">
             {connections.length ? 'Connected banks' : 'Connect your bank'}
           </p>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-subtle">
             {connections.length ? 'Auto-import via Plaid' : 'Auto-import via Plaid — no manual CSV/PDF needed'}
           </p>
         </div>
@@ -243,7 +243,7 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
               key={c.itemId}
               onClick={() => setActiveItemId(c.itemId)}
               className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-colors btn-press ${
-                activeItemId === c.itemId ? 'text-white' : 'bg-white text-slate-500 border border-slate-200 hover:border-indigo-200'
+                activeItemId === c.itemId ? 'text-white' : 'bg-surface text-muted border border-edge hover:border-indigo-200'
               }`}
               style={activeItemId === c.itemId ? { background: INDIGO } : {}}
             >
@@ -253,7 +253,7 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
           <button
             onClick={startConnect}
             disabled={connecting}
-            className="shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold border-2 border-dashed border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 transition-colors btn-press disabled:opacity-60"
+            className="shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold border-2 border-dashed border-edge text-subtle hover:border-indigo-300 hover:text-indigo-500 transition-colors btn-press disabled:opacity-60"
           >
             {connecting ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Add
           </button>
@@ -276,18 +276,18 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
                       if (e.key === 'Enter') e.currentTarget.blur();
                       if (e.key === 'Escape') setEditingAccountId(null);
                     }}
-                    className="text-[11px] font-semibold text-slate-700 bg-white border-2 rounded-full px-2 py-1 outline-none w-32"
+                    className="text-[11px] font-semibold text-ink bg-surface border-2 rounded-full px-2 py-1 outline-none w-32"
                     style={{ borderColor: INDIGO }}
                   />
                 ) : (
                   <span
                     key={a.id}
-                    className="flex items-center gap-0.5 text-[11px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 rounded-full pl-1 pr-2 py-1"
+                    className="flex items-center gap-0.5 text-[11px] font-semibold text-muted bg-surface-alt border border-edge rounded-full pl-1 pr-2 py-1"
                   >
                     <button
                       onClick={() => saveAccountType(a, a.accountType === 'bank' ? 'credit' : 'bank')}
                       title={a.accountType === 'bank' ? 'Bank account — tap to mark as credit card' : 'Credit card — tap to mark as bank account'}
-                      className="flex items-center justify-center w-5 h-5 rounded-full hover:bg-slate-200 hover:text-indigo-500 transition-colors shrink-0"
+                      className="flex items-center justify-center w-5 h-5 rounded-full hover:bg-surface-alt hover:text-indigo-500 transition-colors shrink-0"
                     >
                       {a.accountType === 'bank' ? <Landmark size={10} /> : <CreditCard size={10} />}
                     </button>
@@ -303,7 +303,7 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
               ))}
             </div>
           )}
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-subtle">
             {lastSyncedMap[active.itemId] ? `Last synced ${lastSyncedMap[active.itemId].toLocaleTimeString()}` : 'Tap Sync to pull transactions'}
           </p>
           {errors[active.itemId] && (
@@ -329,18 +329,21 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
               <Unlink size={15} />
             </button>
           </div>
-          {/* Manual fallback — StatementsPage.jsx auto-detects and fixes
-              legacy-format transactions (pre-per-account-split) on load, so
-              this shouldn't normally be needed, but stays as a way to force
-              a full re-sync regardless of account count (a single-account
-              connection can carry the legacy format just as easily as a
-              multi-account one — no reason to gate this on account count). */}
+          {/* Originally just a manual fallback for legacy-format transactions
+              (pre-per-account-split) — StatementsPage.jsx auto-fixes those on
+              load, so this shouldn't normally be needed for that anymore.
+              Kept (and now labeled for its more common real use) because a
+              full re-sync — cursor reset to null, re-pulls the whole history
+              — also undoes an accidentally deleted transaction: ids are
+              stable and addTransactions writes with merge:true, so Plaid
+              handing the same transaction back just recreates the Firestore
+              doc rather than duplicating it. */}
           <button
             onClick={() => doSync(active, { full: true })}
             disabled={syncingId === active.itemId}
             className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold text-indigo-500 hover:bg-indigo-50 transition-colors btn-press disabled:opacity-60"
           >
-            {fullSyncId === active.itemId ? <><Loader2 size={12} className="animate-spin" /> Re-tagging past transactions by card…</> : 'Re-split older transactions by card'}
+            {fullSyncId === active.itemId ? <><Loader2 size={12} className="animate-spin" /> Restoring full history…</> : 'Restore full history (undo a deleted transaction)'}
           </button>
         </div>
       ) : (

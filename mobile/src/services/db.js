@@ -4,7 +4,8 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { session } from './session';
-import { isPaymentTransaction, isCreditConfirmation } from '../utils/paymentDetector';
+import { fetchCurrentUser } from './splitwise';
+import { isPaymentTransaction, isCreditConfirmation, isIncomeTransaction } from '../utils/paymentDetector';
 
 function receiptsCol() {
   return collection(db, 'users', session.getUserId(), 'receipts');
@@ -75,6 +76,22 @@ export async function setTransactionOverride(id, overrideFields) {
   await setDoc(doc(transactionsCol(), id), overrideFields, { merge: true });
 }
 
+// Manual category correction from TransactionsList — separate from
+// setTransactionOverride's Splitwise-match fields since category isn't a
+// match-override, just a direct field update (same merge:true pattern).
+export async function updateTransactionCategory(id, category) {
+  await setDoc(doc(transactionsCol(), id), { category }, { merge: true });
+}
+
+// Single-doc lookup by id — used by plaidSync.js to find a pending
+// transaction's doc (by its stable id) when the posted transaction that
+// supersedes it arrives, so any Splitwise match already set on the pending
+// row can be carried forward before that row is deleted.
+export async function getTransaction(id) {
+  const snap = await getDoc(doc(transactionsCol(), id));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
 export async function deleteTransaction(id) {
   await deleteDoc(doc(transactionsCol(), id));
 }
@@ -88,20 +105,31 @@ export async function deleteTransactionsBySource(source) {
   await batch.commit();
 }
 
-// One-time fix for transactions saved before their description was
-// checked against the payment patterns (e.g. "Payment Thank You" entries
-// synced before Plaid credits were even kept — see services/plaid.js) —
-// isPayment is stamped once per doc at write time, not recomputed live, so
+// One-time fix for transactions saved before their description was checked
+// against the payment/income patterns (e.g. "Payment Thank You" entries
+// synced before Plaid credits were even kept, or income patterns added
+// after a paycheck was already synced — see services/plaid.js) — isPayment/
+// isIncome are stamped once per doc at write time, not recomputed live, so
 // already-stored rows stay misclassified until something corrects them.
 // `transactions` is the caller's already-loaded full list (avoids a second
 // fetch); returns [{id, fields}] for whichever rows were actually updated.
-export async function reclassifyPayments(transactions) {
+export async function reclassifyTransactions(transactions) {
   const toFix = transactions
-    .filter(t => !t.isPayment && isPaymentTransaction(t.description))
-    .map(t => ({
-      id:     t.id,
-      fields: { isPayment: true, ...(isCreditConfirmation(t.description) ? { isCredit: true } : {}) },
-    }));
+    .map(t => {
+      const fields = {};
+      if (!t.isPayment && isPaymentTransaction(t.description)) {
+        fields.isPayment = true;
+        if (isCreditConfirmation(t.description)) fields.isCredit = true;
+      }
+      // Income patterns only make sense on a credit — a debit whose
+      // description happens to match (unlikely, but not impossible) isn't
+      // money coming in just because the wording matches.
+      if (!t.isIncome && t.isCredit && isIncomeTransaction(t.description)) {
+        fields.isIncome = true;
+      }
+      return { id: t.id, fields };
+    })
+    .filter(({ fields }) => Object.keys(fields).length > 0);
   if (!toFix.length) return [];
   const batch = writeBatch(db);
   toFix.forEach(({ id, fields }) => batch.update(doc(transactionsCol(), id), fields));
@@ -247,4 +275,23 @@ export async function saveManualAccount({ id, name, balance, type }) {
 
 export async function deleteManualAccount(id) {
   await deleteDoc(doc(manualAccountsCol(), id));
+}
+
+// ── Splitwise key rotation (see components/SettingsPage.jsx) ───────────────
+// signup() writes the key once and never again — this is the only update
+// path. Every Splitwise call reads the key from the session singleton (see
+// services/splitwise.js's swFetch), not a parameter, so validating a
+// candidate key means temporarily swapping it into session, probing with
+// fetchCurrentUser, and rolling back on failure — that way a bad paste
+// never gets written to Firestore or left live in session.
+export async function updateSplitwiseKey(key) {
+  const previous = session.getKey();
+  session.setKey(key);
+  try {
+    await fetchCurrentUser();
+  } catch {
+    session.setKey(previous);
+    throw new Error('Could not verify this Splitwise API key — check that it was copied correctly.');
+  }
+  await setDoc(doc(db, 'users', session.getUserId()), { splitwise_api_key: key }, { merge: true });
 }

@@ -1,14 +1,18 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { AlertCircle, CreditCard, Landmark, HelpCircle, Wallet, Upload, X } from 'lucide-react';
-import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride, reclassifyPayments, savePlaidConnection, TXN_MAX } from '../services/db';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { AlertCircle, CreditCard, Landmark, HelpCircle, Wallet, Upload, X, RefreshCw, Loader2 } from 'lucide-react';
+import { loadTransactions, addTransactions, deleteTransaction, deleteTransactionsBySource, setTransactionOverride, updateTransactionCategory, reclassifyTransactions, savePlaidConnection, TXN_MAX } from '../services/db';
 import { fetchGroups, fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
 import { syncPlaidConnection } from '../services/plaidSync';
+import { categorizeTransactions } from '../services/categorize';
 import { fetchAccounts, defaultAccountType } from '../services/plaid';
 import { matchTransactions, computeSummary } from '../utils/matcher';
 import { detectTransfers } from '../utils/transferMatcher';
 import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
-import { isPaymentTransaction, isCreditConfirmation } from '../utils/paymentDetector';
+import { isPaymentTransaction, isIncomeTransaction, isCreditConfirmation } from '../utils/paymentDetector';
+import { TRANSFER_CATEGORY } from '../utils/categoryDetector';
 import { session } from '../services/session';
+import { useToast } from '../components/ToastProvider';
 import StatementUpload from '../components/StatementUpload';
 import PlaidConnect from '../components/PlaidConnect';
 import ManualEntryForm from '../components/ManualEntryForm';
@@ -21,6 +25,8 @@ import TransfersList from '../components/TransfersList';
 import BottomNav from '../components/BottomNav';
 import MonthSlider from '../components/MonthSlider';
 import PageHeader from '../components/PageHeader';
+import StatBreakdown from '../components/StatBreakdown';
+import BankTransactionDetail from '../components/BankTransactionDetail';
 
 const INDIGO = '#6366f1';
 
@@ -57,6 +63,15 @@ function matchesAccountFilter(source, filter) {
 const TABS = ['Manual', 'Transactions', 'Reports', 'Payments', 'Transfers'];
 
 export default function StatementsPage() {
+  const toast = useToast();
+  const location = useLocation();
+  const navigate = useNavigate();
+  // Deep-link target from InsightsPage's category drill-down (a bank
+  // transaction row there navigates here with { openTxnId, accountSource,
+  // date } in location.state) — kept in its own state (not read from
+  // location.state directly) so it survives the state-clearing navigate()
+  // below and keeps working across re-renders/tab switches.
+  const [pendingOpenTxnId, setPendingOpenTxnId] = useState(location.state?.openTxnId || null);
 
   const [transactions, setTransactions] = useState([]);
   const [loadingTxns,  setLoadingTxns]  = useState(true);
@@ -76,6 +91,9 @@ export default function StatementsPage() {
   const [addNewTarget, setAddNewTarget] = useState(null); // txn getting a brand-new Splitwise expense, or null
   const [uploadOpen, setUploadOpen] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
+  const [syncingAll, setSyncingAll] = useState(false);
+  const [statBreakdown, setStatBreakdown] = useState(null); // { title, transactions, getAmount, total } | null — see StatBreakdown.jsx
+  const [openTxn, setOpenTxn] = useState(null); // transaction card opened from a StatBreakdown row | null — see BankTransactionDetail.jsx
 
   // Which loaded statement/account to scope the page to — a 'group:bank' /
   // 'group:credit' / 'group:other' scope, or a specific `source` id. Each
@@ -90,9 +108,34 @@ export default function StatementsPage() {
   const autoFixingRef = useRef(new Set());
   // Same concurrency guard, for the account-type backfill effect below.
   const accountTypeFixingRef = useRef(new Set());
+  // Same concurrency guard, for the payment/income reclassification effect
+  // below — prevents a re-render mid-fix from firing a second concurrent
+  // batch write for the same set of stale rows.
+  const reclassifyingRef = useRef(false);
 
   const groupName = id => groups.find(g => g.id === id)?.name;
   const monthRange = useMemo(() => getMonthRange(currentMonth), [currentMonth]);
+
+  // Applies an incoming deep-link once: switches to the Transactions tab,
+  // scopes to the right account/card, and jumps to the transaction's own
+  // month so it's actually in the currently-loaded range (Statements and
+  // Insights track month independently). Clears location.state right after
+  // (navigate replace) so a later back/forward or refresh on this route
+  // doesn't keep re-applying it — pendingOpenTxnId itself is separate local
+  // state, so TransactionsList still gets it to expand/scroll to.
+  useEffect(() => {
+    const st = location.state;
+    if (!st?.openTxnId) return;
+    setTab(1);
+    if (st.accountSource) setAccountFilter(st.accountSource);
+    if (st.date) {
+      const [y, m] = st.date.split('-').map(Number);
+      if (y && m) setCurrentMonth(new Date(y, m - 1, 1));
+    }
+    setPendingOpenTxnId(st.openTxnId);
+    navigate(location.pathname, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   // ── Initial load: transactions + groups + current Splitwise user ─────────
   useEffect(() => {
@@ -103,7 +146,7 @@ export default function StatementsPage() {
       setLoadingTxns(false);
     })();
 
-    fetchGroups().then(setGroups).catch(() => {});
+    fetchGroups().then(setGroups).catch(() => toast.error('Could not load your Splitwise groups'));
     fetchCurrentUser()
       .then(u => { setMyId(u.id); setMyFullName([u.name, u.lastName].filter(Boolean).join(' ')); })
       .catch(() => {});
@@ -188,7 +231,7 @@ export default function StatementsPage() {
   // rows made the Transactions tab disagree with what a real bank
   // statement shows (a transfer that's genuinely there just... wasn't).
   // Labeled wherever it appears instead (see bankExpenseTxns/
-  // monthlyPaymentTxns below); matcher.js separately skips scoring
+  // paymentsMade/paymentsReceived below); matcher.js separately skips scoring
   // isTransfer rows against Splitwise, same as it already does for
   // isBankAccount rows. Both sides of a pair get the identical label so
   // it reads the same regardless of which account you're viewing it from.
@@ -218,56 +261,107 @@ export default function StatementsPage() {
     [transferPairsThisMonth, transferHintsThisMonth]
   );
 
+  // Every settled DEBIT this month, period — this (and matched, which wraps
+  // it) is the ledger the "All" filter in the Transactions tab draws from,
+  // so it can't drop rows just because they're a bill payment/transfer
+  // (isPayment). Those still need to stay OUT of spend totals and
+  // Splitwise auto-matching (matcher.js's Section 3 skip now checks
+  // isPayment too) — but "not spend" and "not shown" are different things,
+  // and only the former is actually true for a real transaction that
+  // genuinely happened on this account. Credits are excluded here (not via
+  // the old isPayment flag, which happened to also be true for every
+  // credit — see plaid.js — but directly via isCredit) since they're
+  // already the paymentsReceived/creditTxns list's job to show.
   const bankExpenseTxns   = useMemo(() =>
     monthlyTransactions
-      .filter(t => !t.isPayment && !t.isPending)
+      .filter(t => !t.isCredit && !t.isPending)
       .map(t => ({
         ...t,
         isBankAccount: session.isBankAccountSource(t.source),
-        isTransfer: transferLabelById.has(t.id),
+        // overrideConfirmedTransfer alone (no detection backing it) is
+        // included here too — detectTransfers/findTransferPairs have no
+        // idea a transaction was manually marked as a transfer from
+        // TransactionsList's own row (see onConfirmTransfer below), since
+        // that override isn't a signal they look at, only a totals-
+        // exclusion flag. Without this, a manually-confirmed transfer that
+        // auto-detection never found would keep showing amber/unmatched
+        // styling even after being confirmed.
+        isTransfer: transferLabelById.has(t.id) || !!t.overrideConfirmedTransfer,
         transferHintLabel: transferLabelById.get(t.id),
       })),
     [monthlyTransactions, transferLabelById]
   );
-  // A card "Payment Thank You"-style credit is your OWN money paying down
-  // your own balance — not new credit, same idea as a transfer not being
-  // real income. isCreditConfirmation's pattern match is reliable enough to
-  // surface as a suggestion, but (same lesson as the transfer false-
-  // positive) never confident enough to silently change a total on its own
-  // — so it's a candidate needing one tap to confirm, same shape as
-  // transfers. Bank accounts don't get this treatment — scoped via
-  // "not bank" rather than "=== 'credit'" since plenty of real card
-  // accounts never get an explicit accountType (unclassified/'other'
-  // sources are still cards, same convention accountSummary uses below
-  // for its bank-vs-card split).
-  const monthlyPaymentTxns = useMemo(() =>
+  // Payments tab: simple sign-based split, not pattern matching — every
+  // settled transaction this month is either money received (a credit) or
+  // money paid out (a debit), full stop. Replaces the old isCreditConfirmation
+  // guesswork (which tried to tell a card "payment thank you" apart from a
+  // plain merchant refund and needed its own confirm/dismiss step to do it).
+  // Transfers never count as either — excluded the moment they're DETECTED
+  // (transferLabelById.has), not only once confirmed (overrideConfirmedTransfer
+  // still checked too, for a manual mark that detection itself never found —
+  // see the Transfers category/Confirm-transfer button). A detected candidate
+  // stays visible and confirmable/dismissable in the Transfers tab; this just
+  // keeps it out of the totals in the meantime, same reasoning HomePage's
+  // personalSpendTxns uses. Pending is excluded since the amount isn't final yet.
+  const paymentsReceived = useMemo(() =>
     monthlyTransactions
-      .filter(t => t.isPayment)
-      .map(t => {
-        const isPaymentCandidate = t.isCredit && isCreditConfirmation(t.description) && session.getAccountType(t.source) !== 'bank';
-        return {
-          ...t,
-          isTransfer: transferLabelById.has(t.id),
-          transferHintLabel: transferLabelById.get(t.id),
-          isPaymentCandidate,
-          paymentConfirmed: isPaymentCandidate && !!t.overrideConfirmedPayment,
-          paymentNeedsConfirm: isPaymentCandidate && !t.overrideConfirmedPayment && !t.overrideDismissedPaymentHint,
-        };
-      }),
+      .filter(t => t.isCredit && !t.isPending && !t.overrideConfirmedTransfer && !transferLabelById.has(t.id))
+      .map(t => ({ ...t, isTransfer: transferLabelById.has(t.id), transferHintLabel: transferLabelById.get(t.id) })),
     [monthlyTransactions, transferLabelById]
   );
-  const unconfirmedPaymentCt = useMemo(() => monthlyPaymentTxns.filter(t => t.paymentNeedsConfirm).length, [monthlyPaymentTxns]);
-  const pendingTxns = useMemo(() => monthlyTransactions.filter(t => t.isPending && !t.isPayment), [monthlyTransactions]);
+  // In cards mode (viewing a single credit card or "All Cards"), "money
+  // paid out" isn't the interesting question — a card's own purchases
+  // already show up elsewhere (Actual spend). What you actually paid
+  // TOWARD the card shows up as a CREDIT on its statement ("Payment Thank
+  // You-Mobile"), so isCardsView switches paymentsMade to count those
+  // instead of the plain sign-based debit split bank accounts use.
+  const isCardsView = accountFilter.startsWith('group:')
+    ? accountFilter !== 'group:bank'
+    : session.getAccountType(accountFilter) !== 'bank';
+  const paymentsMade = useMemo(() =>
+    monthlyTransactions
+      .filter(t => isCardsView
+        ? (t.isCredit && !t.isPending && isCreditConfirmation(t.description))
+        : (!t.isCredit && !t.isPending && !t.overrideConfirmedTransfer && !transferLabelById.has(t.id)))
+      .map(t => ({ ...t, isTransfer: transferLabelById.has(t.id), transferHintLabel: transferLabelById.get(t.id) })),
+    [monthlyTransactions, transferLabelById, isCardsView]
+  );
+  // "Actual Credit" — money that came in but wasn't already accounted for
+  // elsewhere: paymentsReceived already excludes confirmed transfers, this
+  // additionally drops card-payment credits (a credit card's own "payment
+  // thank you" bill-payoff credit — isCreditConfirmation, not t.isPayment,
+  // since the latter is stamped true on EVERY credit at ingestion, see
+  // plaid.js/csvParser.js) and isIncome rows (paychecks — those already get
+  // their own Income card below, so counting them here too would double
+  // them up). What's left is refunds, cashback, reimbursements — "extra"
+  // money in, not salary and not paying yourself back.
+  const actualCreditTxns  = useMemo(() => paymentsReceived.filter(t => !isCreditConfirmation(t.description) && !t.isIncome), [paymentsReceived]);
+  const actualCreditTotal = useMemo(() => actualCreditTxns.reduce((s, t) => s + (t.amount || 0), 0), [actualCreditTxns]);
+  // Same isCredit-not-isPayment reasoning as bankExpenseTxns above — a
+  // pending bill payment/transfer debit still belongs in the ledger.
+  // Pending credits are left out here (unchanged from before): they'd need
+  // DebitRow to render with credit sign/styling, which it doesn't do today
+  // — a separate gap from the one being fixed here.
+  const pendingTxns = useMemo(() => monthlyTransactions.filter(t => t.isPending && !t.isCredit), [monthlyTransactions]);
 
   // Spend/expense TOTALS still exclude transfers (a transfer was never
   // spend, however visible it stays in the actual transaction list) — used
-  // by the stat bar below instead of bankExpenseTxns directly.
-  const realExpenseTxns = useMemo(() => bankExpenseTxns.filter(t => !t.isTransfer), [bankExpenseTxns]);
+  // by the stat bar below instead of bankExpenseTxns directly. Excludes on
+  // DETECTION (t.isTransfer, which bankExpenseTxns already tags as
+  // transferLabelById.has || overrideConfirmedTransfer — see its own
+  // comment), not just once confirmed — same "exclude the moment it looks
+  // like a transfer" policy HomePage's personalSpendTxns uses, applied here
+  // too now (a detected candidate stays visible/confirmable in the Transfers
+  // tab; this just keeps it out of the total in the meantime). Also excludes
+  // isPayment (bill payments/account transfers) — bankExpenseTxns now
+  // includes those for ledger completeness (see its own comment), but paying
+  // your own card bill or moving money to savings still isn't spend.
+  const realExpenseTxns = useMemo(() => bankExpenseTxns.filter(t => !t.isPayment && !t.isTransfer), [bankExpenseTxns]);
 
   // Account-aware Debit/Credit/Net summary — deliberately computed from the
   // RAW month(+account)-scoped transaction list, not bankExpenseTxns/
-  // monthlyPaymentTxns (which exclude confirmed transfers for Splitwise-
-  // matching purposes). A real bank statement counts a transfer-out as a
+  // paymentsMade/paymentsReceived (which exclude confirmed transfers for
+  // Splitwise-matching purposes). A real bank statement counts a transfer-out as a
   // debit and a transfer-in as a credit, so this reads isCredit straight
   // off monthlyTransactions instead, which already carries transfers with
   // their correct direction. Pending excluded (amount isn't final yet).
@@ -289,41 +383,46 @@ export default function StatementsPage() {
     // transactions get summed into debit/credit.
     const computeFor = (txns, scopePredicate) => {
       const settled = txns.filter(t => !t.isPending);
-      // Confirmed transfers are excluded from BOTH debit and credit — money
-      // moving out to another of your own accounts was never really a
-      // debit (nothing left your net worth), and money moving in from one
-      // was never really a credit, same reason a confirmed card payment
-      // isn't real credit. overrideConfirmedTransfer is stamped directly on
-      // the transaction doc once confirmed (either side of a pair, or a
-      // hint), so checking it here needs no cross-reference back to
-      // transferPairsThisMonth/transferHintsThisMonth. Unconfirmed
-      // candidates stay counted until the user actually confirms one, same
-      // "don't change a total before confirmation" policy used everywhere
-      // else in this file.
-      const debit  = settled.filter(t => !t.isCredit && !t.overrideConfirmedTransfer).reduce((s, t) => s + (t.amount || 0), 0);
-      // Confirmed "payment thank you"-style credits are excluded here — your
-      // own money paying down your own card isn't real credit, same reason
-      // a confirmed transfer isn't real income (see transferAmt below).
-      // Unconfirmed candidates stay counted until the user actually
-      // confirms one, same "don't change a total before confirmation"
-      // policy used for transfers.
-      const credit = settled.filter(t => t.isCredit && !t.overrideConfirmedPayment && !t.overrideConfirmedTransfer).reduce((s, t) => s + (t.amount || 0), 0);
+      // Transfers are excluded from BOTH debit and credit the moment
+      // they're DETECTED — money moving out to another of your own accounts
+      // was never really a debit (nothing left your net worth), and money
+      // moving in from one was never really a credit, same reason a
+      // confirmed card payment isn't real credit. Checked via
+      // transferLabelById (detected) OR overrideConfirmedTransfer (manually
+      // marked, e.g. via the Transfers category, when detection itself
+      // missed it) — same "exclude on detection" policy realExpenseTxns/
+      // paymentsMade/paymentsReceived use above. A detected candidate stays
+      // confirmable/dismissable in the Transfers tab; this just keeps it out
+      // of the debit/credit totals in the meantime (see transferPairAmt/
+      // transferHintAmt below, which count it into the Transfers line
+      // instead so the account still reconciles).
+      const isXfer = t => transferLabelById.has(t.id) || !!t.overrideConfirmedTransfer;
+      const debitTxns  = settled.filter(t => !t.isCredit && !isXfer(t));
+      // This is a ledger view (mirrors the real card/bank statement for
+      // this account), so every credit counts here — including card
+      // payments — unlike the Statements stat bar's "Actual Credit" card,
+      // which deliberately excludes those to answer a different question
+      // ("how much real money came in this month"). Transfers excluded same
+      // as debitTxns above.
+      const creditTxns = settled.filter(t => t.isCredit && !isXfer(t));
+      const debit  = debitTxns.reduce((s, t) => s + (t.amount || 0), 0);
+      const credit = creditTxns.reduce((s, t) => s + (t.amount || 0), 0);
       const inScope = scopePredicate;
+      // Every detected pair/hint counts here now (not just confirmed ones)
+      // to match debitTxns/creditTxns excluding them on detection — keeps
+      // this account summary internally consistent (debit + credit +
+      // transfers should track the full settled total either way).
       const transferPairAmt = transferPairsThisMonth
-        .filter(p => p.confirmed && (inScope(p.debit.source) || inScope(p.credit.source)))
+        .filter(p => inScope(p.debit.source) || inScope(p.credit.source))
         .reduce((s, p) => s + p.debit.amount, 0);
       const transferHintAmt = transferHintsThisMonth
-        .filter(h => h.confirmed && inScope(h.txn.source))
+        .filter(h => inScope(h.txn.source))
         .reduce((s, h) => s + h.txn.amount, 0);
-      // "Payments made" (cards only) — the narrow isCreditConfirmation
-      // pattern ("payment thank you", "autopay", ...) specifically means a
-      // bill payment reduced the balance, as opposed to a merchant refund
-      // (also a credit, but not a payment) — isPayment alone can't tell
-      // these apart since every credit is already tagged isPayment.
-      const payments = settled
-        .filter(t => t.isCredit && isCreditConfirmation(t.description))
-        .reduce((s, t) => s + (t.amount || 0), 0);
-      return { debit, credit, net: credit - debit, transfers: transferPairAmt + transferHintAmt, payments };
+      // debitTxns/creditTxns exposed alongside the sums so the Debit/Credit
+      // boxes in TransactionsList's SummaryCard can drill down into exactly
+      // what makes up each number (see StatBreakdown.jsx) — not just for
+      // display, the actual filtered list the total was computed from.
+      return { debit, credit, debitTxns, creditTxns, net: credit - debit, transfers: transferPairAmt + transferHintAmt };
     };
 
     if (!accountFilter.startsWith('group:')) {
@@ -341,15 +440,55 @@ export default function StatementsPage() {
       title: groupKey === 'bank' ? 'All Bank Accounts' : groupKey === 'credit' ? 'All Cards' : 'Uncategorized',
       ...computeFor(monthlyTransactions, s => matchesAccountFilter(s, accountFilter)),
     };
-  }, [monthlyTransactions, accountFilter, transferPairsThisMonth, transferHintsThisMonth, statements]);
+  }, [monthlyTransactions, accountFilter, transferPairsThisMonth, transferHintsThisMonth, statements, transferLabelById]);
 
   // matched includes isTransfer rows (matcher.js just never scores them —
   // see its Section 3 skip) so they still render in the Transactions tab;
-  // computeSummary excludes them explicitly since "My actual spend" must
-  // not count a transfer as spend even though the row itself stays visible.
+  // computeSummary excludes them on DETECTION (same reasoning as
+  // realExpenseTxns above) — plus isPayment rows, same as realExpenseTxns.
   const matched = useMemo(() => matchTransactions(bankExpenseTxns, swExpenses), [bankExpenseTxns, swExpenses]);
   const matchedBankOnly = useMemo(() => matched.filter(t => !t.isSplitOnly), [matched]);
-  const summary = useMemo(() => computeSummary(matched.filter(t => !t.isTransfer)), [matched]);
+  // Run the same matcher over pending transactions, kept separate from
+  // `matched` (and everything derived from it — stat-bar totals,
+  // accountSummary — all deliberately still exclude pending, see
+  // accountSummary's comment above) so this only adds link/unlink capability
+  // and match display to the Pending rows themselves, without pending
+  // amounts leaking into any settled-only total. Needs the same
+  // isBankAccount/isTransfer enrichment bankExpenseTxns gets — matcher.js
+  // reads both as input to skip transactions that were never matchable in
+  // the first place (a pending checking-account debit, a pending transfer
+  // between your own accounts), not just settled ones.
+  // matchTransactions also appends a synthetic isSplitOnly row for every
+  // unmatched Splitwise expense (see matcher.js) — matchedBankOnly already
+  // filters those out for the settled list above; this needs the same
+  // filter, or every Splitwise expense not matched within *this* call
+  // (a separate matchTransactions call, so it has no idea what the settled
+  // call already matched) shows up as a phantom "pending" row, and since
+  // those rows are sourced straight from swExpenses (no `source`, no
+  // account), they're identical no matter which account filter is active.
+  const matchedPending = useMemo(() => matchTransactions(
+    pendingTxns.map(t => ({
+      ...t,
+      isBankAccount: session.isBankAccountSource(t.source),
+      isTransfer: transferLabelById.has(t.id),
+      transferHintLabel: transferLabelById.get(t.id),
+    })),
+    swExpenses
+  ).filter(t => !t.isSplitOnly), [pendingTxns, swExpenses, transferLabelById]);
+  const summary = useMemo(() => computeSummary(matched.filter(t => !t.isPayment && !t.isTransfer)), [matched]);
+  // Net spend — Actual spend minus Actual Credit (both defined above). Not
+  // its own drill-down list (it's a difference of two totals, not a
+  // filtered transaction set) — the two cards it's built from are each
+  // already one tap away for the breakdown.
+  const netSpendTotal = summary.totalEffective - actualCreditTotal;
+  // Exact same filter computeSummary applies internally (it skips isSplitOnly
+  // rows itself, but doesn't exclude them from its input) — this is the
+  // drill-down list for "Actual spend"/"Amount saved via splits", kept in
+  // sync with summary by construction rather than recomputed separately.
+  const spendBreakdownTxns = useMemo(() =>
+    matched.filter(t => !t.isPayment && !t.isTransfer && !t.isSplitOnly),
+    [matched]
+  );
 
   const splitwiseOwed = useMemo(() => swExpenses.reduce((s, e) => s + (e.myOwedShare || 0), 0), [swExpenses]);
   const personalTotal = useMemo(() =>
@@ -369,29 +508,30 @@ export default function StatementsPage() {
     [transactions, monthRange]
   );
 
-  // For a card, "Payments" should mean actual bill payments only — a
-  // merchant refund lands in the same isPayment bucket (it's a credit, not
-  // spend) but isn't a payment, so it stays out of this dedicated list
-  // (it's still visible in the Transactions tab's credit view). Bank
-  // accounts keep every isPayment credit — "money received" is a broader,
-  // legitimately mixed bucket there (interest, Zelle receipts, refunds).
-  const paymentsToShow = accountSummary.type === 'card'
-    ? monthlyPaymentTxns.filter(t => t.isPaymentCandidate)
-    : monthlyPaymentTxns;
-
-  const paymentTotal = paymentsToShow.reduce((s, t) => s + (t.amount || 0), 0);
-  // Excludes transfers — the "needs your attention" badge shouldn't count
-  // rows that were never Splitwise-matchable to begin with (same reasoning
-  // as excluding them from realExpenseTxns above).
-  const unmatchedCt  = matchedBankOnly.filter(t => !t.isSplitwised && !t.isTransfer).length;
+  const paymentsMadeTotal     = paymentsMade.reduce((s, t) => s + (t.amount || 0), 0);
+  const paymentsReceivedTotal = paymentsReceived.reduce((s, t) => s + (t.amount || 0), 0);
+  // A subset of paymentsReceived, not a replacement — income transactions
+  // stay in paymentsReceived too (same "a transaction can belong to more
+  // than one view" pattern already used for regular purchases showing in
+  // both the Transactions and Payments tabs), so the ledger stays complete
+  // while this gives income its own distinct total and section.
+  const incomeTxns  = useMemo(() => paymentsReceived.filter(t => t.isIncome), [paymentsReceived]);
+  const incomeTotal = incomeTxns.reduce((s, t) => s + (t.amount || 0), 0);
+  // Excludes transfers and payments — the "needs your attention" badge
+  // shouldn't count rows that were never Splitwise-matchable to begin with
+  // (same reasoning as excluding them from realExpenseTxns above).
+  const unmatchedCt  = matchedBankOnly.filter(t => !t.isSplitwised && !t.isTransfer && !t.isPayment).length;
 
   // Transactions saved before their description was checked against the
-  // payment patterns (isPayment is stamped once at write time, not
-  // recomputed live) — surfaced so the user can fix them without a full
-  // re-sync/re-upload. Checked across ALL loaded transactions, not just
-  // this month, since a stale row could be from any past statement.
+  // payment/income patterns (isPayment/isIncome are stamped once at write
+  // time, not recomputed live) — surfaced so the user can fix them without
+  // a full re-sync/re-upload. Checked across ALL loaded transactions, not
+  // just this month, since a stale row could be from any past statement.
   const fixableCount = useMemo(() =>
-    transactions.filter(t => !t.isPayment && isPaymentTransaction(t.description)).length,
+    transactions.filter(t =>
+      (!t.isPayment && isPaymentTransaction(t.description)) ||
+      (t.isCredit && !t.isIncome && isIncomeTransaction(t.description))
+    ).length,
     [transactions]
   );
 
@@ -403,16 +543,55 @@ export default function StatementsPage() {
   // — this keeps local state consistent with that (no duplicate rows, and
   // any overrideSplitwiseId/etc. already applied locally survives).
   const handleAdd = useCallback(async (newTxns, sourceName) => {
-    await addTransactions(newTxns, sourceName);
+    // Manual entries already have a full category dropdown (see
+    // ManualEntryForm.jsx) — no AI call needed, and running one would just
+    // add latency to a single-row "Add transaction" click for no benefit.
+    // Everything else (Plaid/CSV/PDF) arrives with only a keyword-detected
+    // category, so refine those with an AI batch call before writing.
+    // Never blocks/fails the add itself — categorizeTransactions degrades
+    // to the existing keyword detection per-transaction if the call fails.
+    let txnsToAdd = newTxns;
+    if (sourceName !== 'Manual entry' && newTxns.length) {
+      const categories = await categorizeTransactions(newTxns.map(t => ({ id: t.id, description: t.description, amount: t.amount })));
+      txnsToAdd = newTxns.map(t => ({ ...t, category: categories.get(t.id) || t.category }));
+    }
+    await addTransactions(txnsToAdd, sourceName);
     const uploadedAt = new Date().toISOString();
     setTransactions(prev => {
       const byId = new Map(prev.map(t => [t.id, t]));
-      for (const t of newTxns) {
+      for (const t of txnsToAdd) {
         byId.set(t.id, { ...byId.get(t.id), ...t, sourceName, uploadedAt });
       }
       return Array.from(byId.values());
     });
   }, []);
+
+  // Header "Sync" button — runs every connected account's sync in one tap
+  // instead of opening the Add sheet and driving PlaidConnect's per-
+  // connection tabs one at a time. Always full:true (re-pulls each
+  // connection's whole history, re-tagging every transaction by card) rather
+  // than a plain incremental sync — full is already a superset of a plain
+  // sync's result (see plaidSync.js), so running both back to back would
+  // just re-fetch the same data twice for no benefit.
+  const handleSyncAll = async () => {
+    const connections = session.getPlaidConnections();
+    if (!connections.length || syncingAll) return;
+    setSyncingAll(true);
+    let failures = 0;
+    for (const conn of connections) {
+      try {
+        const { cursor } = await syncPlaidConnection(conn, { full: true, onAdd: handleAdd });
+        session.upsertPlaidConnection({ itemId: conn.itemId, cursor });
+        await savePlaidConnection({ itemId: conn.itemId, cursor });
+      } catch (err) {
+        failures++;
+        console.error(`Sync failed for Plaid connection ${conn.itemId}:`, err);
+      }
+    }
+    setSyncingAll(false);
+    if (failures) toast.error(`Synced with ${failures} account${failures !== 1 ? 's' : ''} failing — try again`);
+    else toast.success('Accounts synced');
+  };
 
   // Auto-fixes transactions still carrying the pre-per-account-split source
   // format (`plaid-${itemId}`, no accountId suffix — from before this app's
@@ -511,11 +690,27 @@ export default function StatementsPage() {
   }, []);
 
   const handleFixPaymentLabels = useCallback(async () => {
-    const fixed = await reclassifyPayments(transactions);
+    const fixed = await reclassifyTransactions(transactions);
     if (!fixed.length) return;
     const fixedMap = new Map(fixed.map(f => [f.id, f.fields]));
     setTransactions(prev => prev.map(t => fixedMap.has(t.id) ? { ...t, ...fixedMap.get(t.id) } : t));
   }, [transactions]);
+
+  // Runs the same fix automatically the moment stale rows are detected,
+  // rather than leaving it sitting behind the "Fix now" banner below (which
+  // stays as a visible fallback/indicator, same "silent auto-fix, banner
+  // only if something needs a closer look" split as the legacy-source
+  // effect above) — a transaction synced before isIncome/isPayment pattern
+  // coverage existed shouldn't require the user to go find a button on the
+  // one tab that happens to show it, when the numbers it affects (Actual
+  // spend, Income) are visible on every tab.
+  useEffect(() => {
+    if (loadingTxns || reclassifyingRef.current || fixableCount === 0) return;
+    reclassifyingRef.current = true;
+    handleFixPaymentLabels().catch(err => console.error('Auto-reclassify failed:', err)).finally(() => {
+      reclassifyingRef.current = false;
+    });
+  }, [loadingTxns, fixableCount, handleFixPaymentLabels]);
 
   const handleUnlink = txn => applyOverride(txn.id, {
     overrideForcedUnmatched: true,
@@ -527,6 +722,56 @@ export default function StatementsPage() {
     overrideSplitwiseId: null, overrideExpenseData: null,
     overrideSplitwiseIds: null, overrideExpenseDataList: null,
   });
+
+  // Picking the special "Transfers" category is a manual "mark as transfer"
+  // action, not a real category — it writes overrideConfirmedTransfer
+  // alongside category so the transaction gets the same totals-exclusion
+  // treatment as one auto-detected (see isTransfer/overrideConfirmedTransfer
+  // checks throughout this file). Moving AWAY from Transfers to a real
+  // category clears that flag again, since picking a real category is an
+  // explicit "this isn't a transfer" — unless the flag was independently
+  // set via the Transfers tab/Confirm-transfer button while the category
+  // was something else, in which case this never touched it in the first
+  // place (wasTransferCat only fires when the OLD category was Transfers).
+  const handleChangeCategory = async (txn, category) => {
+    const isTransferCat  = category === TRANSFER_CATEGORY;
+    const wasTransferCat = txn.category === TRANSFER_CATEGORY;
+    const overrideFields = isTransferCat ? { overrideConfirmedTransfer: true }
+      : wasTransferCat ? { overrideConfirmedTransfer: null } : null;
+    setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category, ...(overrideFields || {}) } : t));
+    try {
+      await updateTransactionCategory(txn.id, category);
+      if (overrideFields) await setTransactionOverride(txn.id, overrideFields);
+    } catch {
+      toast.error('Could not update category');
+      setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category: txn.category, overrideConfirmedTransfer: txn.overrideConfirmedTransfer } : t));
+    }
+  };
+
+  // A StatBreakdown row click — opens the same BankTransactionDetail card
+  // InsightsPage uses (view + inline category edit), not an immediate jump
+  // into TransactionsList, so a transaction looks and behaves the same
+  // wherever it's opened from. "Edit full details" inside that card (see
+  // openTxnFullEdit below) is the actual jump-to-row escape hatch, for
+  // link/unlink/delete — actions this card doesn't attempt to replicate.
+  const handleStatBreakdownSelect = txn => {
+    setStatBreakdown(null);
+    setOpenTxn(txn);
+  };
+
+  // BankTransactionDetail's "more" action here (unlike InsightsPage's,
+  // which navigates cross-page): every list feeding a StatBreakdown sheet
+  // is already scoped to the current accountFilter/month, so there's
+  // nothing to re-target — just close this card, switch to the
+  // Transactions tab, and let TransactionsList's initialExpandedId
+  // (pendingOpenTxnId) expand and scroll to the row.
+  const openTxnFullEdit = () => {
+    if (!openTxn) return;
+    setOpenTxn(null);
+    setTab(1);
+    setPendingOpenTxnId(openTxn.id);
+  };
+
   // expenses: one or more picked in SplitwisePickerModal — a single card
   // charge sometimes needs linking to more than one Splitwise expense (see
   // matcher.js's forcedLinkIds/resolveForcedLinks for how these are read
@@ -589,12 +834,6 @@ export default function StatementsPage() {
     applyOverride(pair.credit.id, { overrideDismissedTransferHint: true });
   };
 
-  // Confirming/dismissing a card "payment thank you"-style credit — see
-  // monthlyPaymentTxns above for why this needs the same confirm step as a
-  // transfer before accountSummary pulls it out of the card's credit total.
-  const handleConfirmPayment = txn => applyOverride(txn.id, { overrideConfirmedPayment: true });
-  const handleDismissPaymentHint = txn => applyOverride(txn.id, { overrideDismissedPaymentHint: true });
-
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
       <PageHeader title="Statements" showBack={false}>
@@ -602,9 +841,19 @@ export default function StatementsPage() {
           <button
             onClick={() => setAccountsOpen(true)}
             title="Accounts"
-            className="p-2 rounded-full text-slate-500 hover:bg-slate-100 transition-colors shrink-0"
+            className="p-2 rounded-full text-muted hover:bg-surface-alt transition-colors shrink-0"
           >
             <Wallet size={16} />
+          </button>
+        )}
+        {session.getPlaidConnections().length > 0 && (
+          <button
+            onClick={handleSyncAll}
+            disabled={syncingAll}
+            title="Sync all accounts"
+            className="p-2 rounded-full text-muted hover:bg-surface-alt transition-colors shrink-0 disabled:opacity-60"
+          >
+            {syncingAll ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
           </button>
         )}
         <button
@@ -641,31 +890,91 @@ export default function StatementsPage() {
 
           {/* Stat bar */}
           <div className="grid grid-cols-2 gap-2">
-            <div className="bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
-              <p className="font-bold text-slate-800">{realExpenseTxns.length}</p>
-              <p className="text-slate-400 text-xs">Expenses this month</p>
+            <button
+              onClick={() => setStatBreakdown({
+                title: 'Expenses this month', subtitle: monthRange.label,
+                transactions: realExpenseTxns, getAmount: t => t.amount,
+                total: realExpenseTxns.reduce((s, t) => s + (t.amount || 0), 0),
+              })}
+              className="text-left bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm card-lift"
+            >
+              <p className="font-bold text-ink">{realExpenseTxns.length}</p>
+              <p className="text-subtle text-xs">Expenses this month</p>
+            </button>
+            <button
+              onClick={() => setStatBreakdown({
+                title: 'Total transactions amount', subtitle: monthRange.label,
+                transactions: realExpenseTxns, getAmount: t => t.amount,
+                total: realExpenseTxns.reduce((s, t) => s + (t.amount || 0), 0),
+              })}
+              className="text-left bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm card-lift"
+            >
+              <p className="font-bold text-ink">{formatCurrency(realExpenseTxns.reduce((s, t) => s + (t.amount || 0), 0))}</p>
+              <p className="text-subtle text-xs">Total transactions amount</p>
+            </button>
+            <button
+              onClick={() => setStatBreakdown({
+                title: 'Actual spend', subtitle: monthRange.label,
+                transactions: spendBreakdownTxns, getAmount: t => t.effectiveAmount, total: summary.totalEffective,
+              })}
+              className="text-left rounded-xl px-3 py-2.5 border border-indigo-100 card-month-total card-lift"
+            >
+              <p className="font-extrabold text-lg" style={{ color: INDIGO }}>{formatCurrency(summary.totalEffective)}</p>
+              <p className="text-subtle text-xs">Actual spend</p>
+            </button>
+            <button
+              onClick={() => setStatBreakdown({
+                title: 'Actual Credit', subtitle: monthRange.label,
+                transactions: actualCreditTxns, getAmount: t => t.amount, total: actualCreditTotal,
+              })}
+              className="text-left rounded-xl px-3 py-2.5 border border-emerald-100 tint-emerald-card card-lift"
+            >
+              <p className="font-extrabold text-lg text-emerald-600">{formatCurrency(actualCreditTotal)}</p>
+              <p className="text-subtle text-xs">Actual Credit</p>
+            </button>
+            <button
+              onClick={() => setStatBreakdown({
+                title: 'Payments made', subtitle: monthRange.label,
+                transactions: paymentsMade, getAmount: t => t.amount, total: paymentsMadeTotal,
+              })}
+              className="text-left bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm card-lift"
+            >
+              <p className="font-bold text-muted">{paymentsMade.length}</p>
+              <p className="text-subtle text-xs">Payments made</p>
+            </button>
+            <button
+              onClick={() => setStatBreakdown({
+                title: 'Payments made', subtitle: monthRange.label,
+                transactions: paymentsMade, getAmount: t => t.amount, total: paymentsMadeTotal,
+              })}
+              className="text-left bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm card-lift"
+            >
+              <p className="font-bold text-muted">{formatCurrency(paymentsMadeTotal)}</p>
+              <p className="text-subtle text-xs">Payments total</p>
+            </button>
+            {/* Net spend + Income side by side — both are month-level
+                summary figures (one derived, one a straight total), so
+                pairing them into one row instead of each claiming a full
+                width row reads as "these two go together" rather than two
+                unrelated stat cards. */}
+            <div className={`rounded-xl px-3 py-2.5 border ${netSpendTotal >= 0 ? 'border-red-100' : 'border-emerald-100'}`}>
+              <p className={`font-extrabold text-lg ${netSpendTotal >= 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+                {formatCurrency(Math.abs(netSpendTotal))}
+              </p>
+              <p className="text-subtle text-xs">Net spend</p>
             </div>
-            <div className="bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
-              <p className="font-bold text-slate-800">{formatCurrency(realExpenseTxns.reduce((s, t) => s + (t.amount || 0), 0))}</p>
-              <p className="text-slate-400 text-xs">Gross total</p>
-            </div>
-            <div className="col-span-2 rounded-xl px-3 py-2.5 border border-indigo-100" style={{ background: '#eef1fb' }}>
-              <div className="flex items-baseline justify-between">
-                <p className="font-extrabold text-lg" style={{ color: INDIGO }}>{formatCurrency(summary.totalEffective)}</p>
-                {summary.totalSavings > 0.5 && (
-                  <p className="text-emerald-500 text-xs font-semibold">-{formatCurrency(summary.totalSavings)} saved via splits</p>
-                )}
-              </div>
-              <p className="text-slate-400 text-xs">My actual spend</p>
-            </div>
-            <div className="bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
-              <p className="font-bold text-slate-600">{paymentsToShow.length}</p>
-              <p className="text-slate-400 text-xs">Payments made</p>
-            </div>
-            <div className="bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
-              <p className="font-bold text-slate-600">{formatCurrency(paymentTotal)}</p>
-              <p className="text-slate-400 text-xs">Payments total</p>
-            </div>
+            {incomeTxns.length > 0 && (
+              <button
+                onClick={() => setStatBreakdown({
+                  title: 'Income', subtitle: monthRange.label,
+                  transactions: incomeTxns, getAmount: t => t.amount, total: incomeTotal,
+                })}
+                className="text-left rounded-xl px-3 py-2.5 border border-emerald-100 tint-emerald-card card-lift"
+              >
+                <p className="font-extrabold text-lg text-emerald-600">{formatCurrency(incomeTotal)}</p>
+                <p className="text-subtle text-xs">Income · {incomeTxns.length} deposit{incomeTxns.length !== 1 ? 's' : ''}</p>
+              </button>
+            )}
           </div>
 
           {/* Card filter — deliberately styled unlike the month slider above:
@@ -680,7 +989,7 @@ export default function StatementsPage() {
           {statements.length > 1 && (() => {
             const chipClass = id =>
               `shrink-0 px-3 py-1 rounded-full text-xs font-semibold border transition-colors btn-press whitespace-nowrap ${
-                accountFilter === id ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                accountFilter === id ? 'bg-slate-700 text-white border-slate-700' : 'bg-surface text-muted border-edge hover:border-edge'
               }`;
             const groups = [
               { key: 'bank',   label: 'Bank',   icon: Landmark,    items: statements.filter(s => session.getAccountType(s.id) === 'bank') },
@@ -691,7 +1000,7 @@ export default function StatementsPage() {
               <div className="space-y-1.5">
                 {groups.map(g => (
                   <div key={g.key} className="flex flex-wrap items-center gap-1.5">
-                    <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wide pr-0.5 w-14">
+                    <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-subtle uppercase tracking-wide pr-0.5 w-14">
                       <g.icon size={11} /> {g.label}
                     </span>
                     {g.items.length > 1 && (
@@ -711,12 +1020,12 @@ export default function StatementsPage() {
           })()}
 
           {/* Tabs */}
-          <div className="flex bg-white rounded-xl p-1 gap-1 border border-slate-100 shadow-sm">
+          <div className="flex bg-surface rounded-xl p-1 gap-1 border border-edge shadow-sm">
             {TABS.map((label, i) => (
               <button
                 key={i}
                 onClick={() => setTab(i)}
-                className={`flex-1 py-2 px-2 text-xs font-bold rounded-lg transition-colors relative whitespace-nowrap ${tab === i ? 'text-white' : 'text-slate-500 hover:text-slate-700'}`}
+                className={`flex-1 py-2 px-2 text-xs font-bold rounded-lg transition-colors relative whitespace-nowrap ${tab === i ? 'text-white' : 'text-muted hover:text-ink'}`}
                 style={tab === i ? { background: INDIGO } : {}}
               >
                 {label}
@@ -728,11 +1037,6 @@ export default function StatementsPage() {
                 {label === 'Transfers' && unconfirmedTransferCt > 0 && tab !== i && (
                   <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-500 text-white text-[10px] rounded-full flex items-center justify-center font-bold">
                     {unconfirmedTransferCt > 9 ? '9+' : unconfirmedTransferCt}
-                  </span>
-                )}
-                {label === 'Payments' && unconfirmedPaymentCt > 0 && tab !== i && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 text-white text-[10px] rounded-full flex items-center justify-center font-bold">
-                    {unconfirmedPaymentCt > 9 ? '9+' : unconfirmedPaymentCt}
                   </span>
                 )}
               </button>
@@ -757,7 +1061,7 @@ export default function StatementsPage() {
                     {fixableCount > 0 && (
                       <div className="flex items-center justify-between gap-3 bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2.5 mb-3">
                         <p className="text-xs text-indigo-600 font-medium">
-                          {fixableCount} transaction{fixableCount !== 1 ? 's' : ''} look{fixableCount === 1 ? 's' : ''} like a payment but {fixableCount === 1 ? "isn't" : "aren't"} labeled that way yet.
+                          {fixableCount} transaction{fixableCount !== 1 ? 's' : ''} look{fixableCount === 1 ? 's' : ''} like a payment or income deposit but {fixableCount === 1 ? "isn't" : "aren't"} labeled that way yet.
                         </p>
                         <button onClick={handleFixPaymentLabels} className="shrink-0 text-xs font-bold text-white px-3 py-1.5 rounded-full btn-gradient btn-press">
                           Fix now
@@ -766,8 +1070,8 @@ export default function StatementsPage() {
                     )}
                     <TransactionsList
                       matched={matchedBankOnly}
-                      creditTxns={monthlyPaymentTxns}
-                      pendingTxns={pendingTxns}
+                      creditTxns={paymentsReceived}
+                      pendingTxns={matchedPending}
                       accountSummary={accountSummary}
                       groupName={groupName}
                       monthRange={monthRange}
@@ -777,6 +1081,19 @@ export default function StatementsPage() {
                       onClearOverride={handleClearOverride}
                       onConfirmSuggestion={handleConfirmSuggestion}
                       onDelete={handleRemoveTxn}
+                      onChangeCategory={handleChangeCategory}
+                      onConfirmTransfer={handleConfirmTransfer}
+                      onDismissTransfer={handleDismissTransferHint}
+                      onClearTransfer={txn => applyOverride(txn.id, { overrideConfirmedTransfer: null })}
+                      initialExpandedId={pendingOpenTxnId}
+                      onDebitClick={() => setStatBreakdown({
+                        title: `${accountSummary.title} — Debit`, subtitle: monthRange.label,
+                        transactions: accountSummary.debitTxns, getAmount: t => t.amount, total: accountSummary.debit,
+                      })}
+                      onCreditClick={() => setStatBreakdown({
+                        title: `${accountSummary.title} — Credit`, subtitle: monthRange.label,
+                        transactions: accountSummary.creditTxns, getAmount: t => t.amount, total: accountSummary.credit,
+                      })}
                     />
                   </>
                 )
@@ -786,84 +1103,103 @@ export default function StatementsPage() {
               )}
               {tab === 3 && (
                 <div className="space-y-4">
+                  {/* Simple sign-based split: every credit this month is
+                      money received, every debit is money paid out —
+                      transfers excluded from both (see paymentsReceived/
+                      paymentsMade above). */}
+                  {incomeTxns.length > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs font-bold text-muted uppercase tracking-wide">
+                          Income — {monthRange.label}
+                        </p>
+                        <p className="text-xs font-bold text-emerald-500">+{formatCurrency(incomeTotal)}</p>
+                      </div>
+                      <div className="space-y-2">
+                        {incomeTxns.map(txn => (
+                          <div key={txn.id} className="flex items-center gap-3 bg-surface rounded-xl px-3 py-2.5 border border-emerald-100 shadow-sm">
+                            <span className="text-base">💵</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-ink truncate">{txn.description}</p>
+                              <p className="text-xs text-subtle">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
+                            </div>
+                            <p className="text-sm font-semibold text-emerald-500">+{formatCurrency(txn.amount)}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div>
-                    {/* "Card payment" only makes sense for a credit card
-                        (paying down what you owe) -- the same isPayment
-                        bucket also holds bank-account credits like interest
-                        paid or a Zelle/person-to-person receipt, which read
-                        as money coming IN, not a payment going out. Labeled
-                        per-account-type like accountSummary below — bank and
-                        credit are never mixed in one view, so every row in
-                        this list shares accountSummary.type. */}
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
-                      {accountSummary.type === 'bank' ? 'Money received' : 'Card payments'} — {monthRange.label}
-                    </p>
-                    {paymentsToShow.length === 0 ? (
-                      <div className="text-center py-6 text-sm text-slate-400 bg-white rounded-2xl border border-slate-100">Nothing this month</div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-bold text-muted uppercase tracking-wide">
+                        Payments received — {monthRange.label}
+                      </p>
+                      {paymentsReceived.length > 0 && (
+                        <p className="text-xs font-bold text-emerald-500">+{formatCurrency(paymentsReceivedTotal)}</p>
+                      )}
+                    </div>
+                    {paymentsReceived.length === 0 ? (
+                      <div className="text-center py-6 text-sm text-subtle bg-surface rounded-2xl border border-edge">Nothing this month</div>
                     ) : (
                       <div className="space-y-2">
-                        {paymentsToShow.map(txn => {
-                          const isBankTxn = accountSummary.type === 'bank';
-                          if (txn.paymentNeedsConfirm) {
-                            return (
-                              <div key={txn.id} className="rounded-xl border border-amber-100 bg-white p-3">
-                                <div className="flex items-center gap-3">
-                                  <span className="text-base shrink-0">💳</span>
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-sm text-slate-700 truncate">{txn.description}</p>
-                                    <p className="text-xs text-amber-500 mt-0.5">Possible bill payment · {formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
-                                  </div>
-                                  <p className="text-sm font-semibold text-slate-600 shrink-0">{formatCurrency(txn.amount)}</p>
-                                </div>
-                                <div className="flex gap-2 pt-2 mt-2 border-t border-slate-100">
-                                  <button
-                                    onClick={() => handleDismissPaymentHint(txn)}
-                                    className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-500 border border-slate-200 rounded-xl py-2 hover:bg-slate-50 transition-colors"
-                                  >
-                                    Not a payment
-                                  </button>
-                                  <button
-                                    onClick={() => handleConfirmPayment(txn)}
-                                    className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-white rounded-xl py-2 transition-colors"
-                                    style={{ background: INDIGO }}
-                                  >
-                                    Confirm payment
-                                  </button>
-                                </div>
+                        {paymentsReceived.map(txn => (
+                          <div key={txn.id} className="flex items-center gap-3 bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
+                            <span className="text-base">💰</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-sm text-ink truncate">{txn.transferHintLabel || txn.description}</p>
+                                {txn.isIncome && (
+                                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 rounded-full shrink-0">Income</span>
+                                )}
                               </div>
-                            );
-                          }
-                          return (
-                            <div key={txn.id} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
-                              <span className="text-base">{isBankTxn ? '💰' : '💳'}</span>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm text-slate-700 truncate">{txn.description}</p>
-                                <p className="text-xs text-slate-400">
-                                  {formatShortDate(txn.date)} · {txn.sourceName || txn.source}
-                                  {txn.paymentConfirmed && <span className="ml-1.5 font-semibold" style={{ color: INDIGO }}>· confirmed, excluded from credit</span>}
-                                </p>
-                              </div>
-                              <p className={`text-sm font-semibold ${isBankTxn ? 'text-emerald-500' : 'text-slate-600'}`}>
-                                {isBankTxn ? '+' : ''}{formatCurrency(txn.amount)}
-                              </p>
+                              <p className="text-xs text-subtle">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
                             </div>
-                          );
-                        })}
+                            <p className="text-sm font-semibold text-emerald-500">+{formatCurrency(txn.amount)}</p>
+                          </div>
+                        ))}
                       </div>
                     )}
-                    <p className="text-xs text-slate-400 mt-1.5">Not counted in expense totals.</p>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-bold text-muted uppercase tracking-wide">
+                        Payments made — {monthRange.label}
+                      </p>
+                      {paymentsMade.length > 0 && (
+                        <p className="text-xs font-bold text-muted">{formatCurrency(paymentsMadeTotal)}</p>
+                      )}
+                    </div>
+                    {paymentsMade.length === 0 ? (
+                      <div className="text-center py-6 text-sm text-subtle bg-surface rounded-2xl border border-edge">Nothing this month</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {paymentsMade.map(txn => (
+                          <div key={txn.id} className="flex items-center gap-3 bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
+                            <span className="text-base">💳</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-ink truncate">{txn.transferHintLabel || txn.description}</p>
+                              <p className="text-xs text-subtle">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
+                            </div>
+                            <p className="text-sm font-semibold text-muted">{formatCurrency(txn.amount)}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-xs text-subtle mt-1.5">Not counted in expense totals.</p>
                   </div>
 
                   {swPayments.length > 0 && (
                     <div>
-                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Splitwise payments received</p>
+                      <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">Splitwise payments received</p>
                       <div className="space-y-2">
                         {swPayments.map(p => (
-                          <div key={p.id} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
+                          <div key={p.id} className="flex items-center gap-3 bg-surface rounded-xl px-3 py-2.5 border border-edge shadow-sm">
                             <span className="text-base">🤝</span>
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm text-slate-700 truncate">{p.description}</p>
-                              <p className="text-xs text-slate-400">{formatShortDate(p.date)} · from {p.paidBy}</p>
+                              <p className="text-sm text-ink truncate">{p.description}</p>
+                              <p className="text-xs text-subtle">{formatShortDate(p.date)} · from {p.paidBy}</p>
                             </div>
                             <p className="text-sm font-semibold text-emerald-500">+{formatCurrency(p.amount)}</p>
                           </div>
@@ -916,13 +1252,13 @@ export default function StatementsPage() {
           className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40 anim-fade-in"
           onClick={e => e.target === e.currentTarget && setUploadOpen(false)}
         >
-          <div className="bg-white rounded-t-3xl max-h-[85vh] flex flex-col anim-sheet-up">
+          <div className="bg-surface rounded-t-3xl max-h-[85vh] flex flex-col anim-sheet-up">
             <div className="flex justify-center pt-3 pb-1">
-              <div className="w-10 h-1 rounded-full bg-slate-200" />
+              <div className="w-10 h-1 rounded-full bg-surface-alt" />
             </div>
-            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-              <p className="font-extrabold text-slate-800 text-sm">Add transactions</p>
-              <button onClick={() => setUploadOpen(false)} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600">
+            <div className="px-4 py-3 border-b border-edge flex items-center justify-between">
+              <p className="font-extrabold text-ink text-sm">Add transactions</p>
+              <button onClick={() => setUploadOpen(false)} className="p-1.5 rounded-lg text-subtle hover:text-muted">
                 <X size={18} />
               </button>
             </div>
@@ -946,6 +1282,30 @@ export default function StatementsPage() {
           monthRange={monthRange}
           onSelectAccount={sourceId => { setAccountFilter(sourceId); setTab(1); setAccountsOpen(false); }}
           onClose={() => setAccountsOpen(false)}
+        />
+      )}
+
+      {statBreakdown && (
+        <StatBreakdown
+          {...statBreakdown}
+          onClose={() => setStatBreakdown(null)}
+          onSelect={handleStatBreakdownSelect}
+        />
+      )}
+
+      {openTxn && (
+        <BankTransactionDetail
+          txn={openTxn}
+          matchLabel={
+            openTxn.isTransfer ? 'Transfer between your accounts'
+              : openTxn.isPayment ? 'Payment — not a personal purchase'
+              : openTxn.isSplitwised ? 'Matched to a Splitwise expense'
+              : 'Personal — not split'
+          }
+          onChangeCategory={handleChangeCategory}
+          actionLabel="Edit full details"
+          onAction={openTxnFullEdit}
+          onClose={() => setOpenTxn(null)}
         />
       )}
 

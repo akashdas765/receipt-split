@@ -1,6 +1,6 @@
 import { auth } from './firebase';
 import { detectCategory } from '../utils/categoryDetector';
-import { isPaymentTransaction } from '../utils/paymentDetector';
+import { isPaymentTransaction, isIncomeTransaction } from '../utils/paymentDetector';
 
 // Same auth-gated proxy pattern as groq.js/splitwise.js.
 const PROXY = '/.netlify/functions/plaid';
@@ -163,7 +163,29 @@ export async function syncTransactions(accessToken, cursor) {
         // transfers/payments from Splitwise matching and spend totals.
         isPayment:   isCredit || isPaymentTransaction(desc),
         isCredit,
+        // A paycheck/income deposit is a credit, so it'd otherwise land in
+        // the generic "money received" bucket alongside refunds/Zelle
+        // receipts — flagged separately so it can be classified and
+        // totaled as income in its own right (see paymentDetector.js).
+        isIncome:    isCredit && isIncomeTransaction(desc),
         isPending:   !!t.pending,
+        // Plaid sets this on the POSTED transaction to the transaction_id
+        // it had while pending — lets plaidSync.js carry a Splitwise match
+        // (or any other override) made on the pending row forward onto the
+        // posted one before the old pending doc is deleted. Omitted (not
+        // set to undefined/null) when absent, same reasoning as postedDate.
+        ...(t.pending_transaction_id ? { pendingTransactionId: `plaid-${t.pending_transaction_id}` } : {}),
+        // Plaid's own high-level intent classification — 'TRANSFER_IN' /
+        // 'TRANSFER_OUT' when Plaid itself thinks this is money moving
+        // between accounts, as opposed to a purchase. Only the primary
+        // tier is kept (not `detailed`, e.g. TRANSFER_OUT_SAVINGS) — the
+        // one thing transferMatcher.js needs is "is this transfer-shaped
+        // at all," not which kind. See transferMatcher.js's
+        // isTransferCategory for how this corroborates the existing
+        // amount/date pairing instead of replacing it — CSV/PDF-imported
+        // transactions never have this field, so they fall back to the
+        // amount/date-only heuristic exactly as before.
+        ...(t.personal_finance_category?.primary ? { plaidCategory: t.personal_finance_category.primary } : {}),
         // One Plaid Item (one login) can cover several cards/accounts —
         // this is what lets PlaidConnect.jsx split a sync's results back
         // out per account instead of lumping every card into one group.

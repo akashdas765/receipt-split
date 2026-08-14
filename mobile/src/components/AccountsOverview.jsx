@@ -40,20 +40,20 @@ export default function AccountsOverview({ statements, monthlyTransactions, mont
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40 anim-fade-in" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-t-3xl max-h-[85vh] flex flex-col anim-sheet-up">
+      <div className="bg-surface rounded-t-3xl max-h-[85vh] flex flex-col anim-sheet-up">
         <div className="flex justify-center pt-3 pb-1">
-          <div className="w-10 h-1 rounded-full bg-slate-200" />
+          <div className="w-10 h-1 rounded-full bg-surface-alt" />
         </div>
-        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-          <p className="font-extrabold text-slate-800 text-sm">Accounts</p>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600">
+        <div className="px-4 py-3 border-b border-edge flex items-center justify-between">
+          <p className="font-extrabold text-ink text-sm">Accounts</p>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-subtle hover:text-muted">
             <X size={18} />
           </button>
         </div>
 
         <div className="overflow-y-auto px-4 py-4 space-y-4">
           {rows.length === 0 ? (
-            <p className="text-center py-8 text-sm text-slate-400">No accounts connected or uploaded yet.</p>
+            <p className="text-center py-8 text-sm text-subtle">No accounts connected or uploaded yet.</p>
           ) : (
             <>
               {bank.length > 0 && (
@@ -88,10 +88,10 @@ export default function AccountsOverview({ statements, monthlyTransactions, mont
 function Section({ title, icon, children }) {
   return (
     <div>
-      <p className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1.5">
+      <p className="flex items-center gap-1.5 text-[10px] font-bold text-subtle uppercase tracking-wide mb-1.5">
         {icon} {title}
       </p>
-      <div className="bg-white rounded-xl border border-slate-100 divide-y divide-slate-50 px-3">
+      <div className="bg-surface rounded-xl border border-edge divide-y divide-slate-50 px-3">
         {children}
       </div>
     </div>
@@ -106,14 +106,14 @@ function AccountRow({ row, monthRange, onSelect, onClassify }) {
           <button
             onClick={() => onClassify(row.id, 'bank')}
             title="Mark as bank account"
-            className="p-1.5 rounded-lg text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-colors"
+            className="p-1.5 rounded-lg text-subtle hover:text-indigo-500 hover:bg-indigo-50 transition-colors"
           >
             <Landmark size={13} />
           </button>
           <button
             onClick={() => onClassify(row.id, 'credit')}
             title="Mark as credit card"
-            className="p-1.5 rounded-lg text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-colors"
+            className="p-1.5 rounded-lg text-subtle hover:text-indigo-500 hover:bg-indigo-50 transition-colors"
           >
             <CreditCard size={13} />
           </button>
@@ -121,14 +121,14 @@ function AccountRow({ row, monthRange, onSelect, onClassify }) {
       )}
       <button onClick={() => onSelect(row.id)} className="flex-1 flex items-center justify-between gap-2 text-left min-w-0">
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-slate-700 truncate">{row.name}</p>
-          <p className="text-[10px] text-slate-400">
+          <p className="text-sm font-semibold text-ink truncate">{row.name}</p>
+          <p className="text-[10px] text-subtle">
             {row.count} transaction{row.count !== 1 ? 's' : ''} · {monthRange.label}
           </p>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          <span className="text-sm font-bold text-slate-800">{formatCurrency(row.total)}</span>
-          <ChevronRight size={14} className="text-slate-300" />
+          <span className="text-sm font-bold text-ink">{formatCurrency(row.total)}</span>
+          <ChevronRight size={14} className="text-subtle" />
         </div>
       </button>
     </div>

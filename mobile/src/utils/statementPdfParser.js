@@ -1,6 +1,6 @@
 import { loadPdfjs } from './pdfjsLoader';
 import { detectCategory } from './categoryDetector';
-import { isPaymentTransaction } from './paymentDetector';
+import { isPaymentTransaction, isIncomeTransaction } from './paymentDetector';
 
 // Client-side bank/CC statement PDF parser — extracts the text layer and
 // regexes out transaction lines. Handles common US bank formats: Chase,
@@ -93,6 +93,7 @@ function parsePdfText(text) {
       // like an outgoing transfer — those are excluded from spend totals
       // via isPayment, but aren't genuinely money coming in.
       isCredit:    inPaymentSection,
+      isIncome:    inPaymentSection && isIncomeTransaction(desc),
       source:      'pdf',
     });
   }

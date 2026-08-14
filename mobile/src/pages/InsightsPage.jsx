@@ -1,15 +1,36 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { TrendingUp, Loader2, AlertCircle, Send } from 'lucide-react';
-import { loadReceiptsForInsights, loadTransactions } from '../services/db';
-import { fetchCurrentUser, fetchAllExpenses } from '../services/splitwise';
+import { loadReceiptsForInsights, loadTransactions, saveReceipt, updateTransactionCategory, setTransactionOverride } from '../services/db';
+import { fetchCurrentUser, fetchAllExpenses, fetchGroups, fetchCategories, updateExpenseCategory } from '../services/splitwise';
 import { computeStats, askInsightsChat } from '../services/insights';
 import { getMonthRange } from '../utils/statementFormatters';
+import { getCategoryIcon, mapToSplitwiseCategory, TRANSFER_CATEGORY } from '../utils/categoryDetector';
+import { useToast } from '../components/ToastProvider';
 import BottomNav from '../components/BottomNav';
 import MonthSlider from '../components/MonthSlider';
 import PageHeader from '../components/PageHeader';
+import CategoryDetail from '../components/CategoryDetail';
+import CategoryDonut from '../components/CategoryDonut';
+import ReceiptDetail from '../components/ReceiptDetail';
+import SplitwiseExpenseDetail from '../components/SplitwiseExpenseDetail';
+import BankTransactionDetail from '../components/BankTransactionDetail';
 
 const INDIGO  = '#6366f1';
 const EMERALD = '#10b981';
+// Same pairing StatementsReports.jsx's "Split vs personal" chart uses —
+// validated colorblind-safe/contrast-safe as a pair via the dataviz
+// skill's validate_palette.js (light + dark), so reusing it here for the
+// same semantic (Splitwise share vs personal spend) rather than picking a
+// fresh, unvalidated pair.
+const ORANGE  = '#ea580c';
+
+// 'YYYY-MM' -> 'Jan'. Parsed as explicit y/m/1 (not `new Date(key + '-01')`)
+// so it's never off by a day/timezone — only the month name is used.
+function formatMonthLabel(key) {
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short' });
+}
 
 const SUGGESTIONS = [
   'Where am I spending the most?',
@@ -18,6 +39,8 @@ const SUGGESTIONS = [
 ];
 
 export default function InsightsPage() {
+  const navigate = useNavigate();
+  const toast = useToast();
   // Full receipt/transaction history, loaded once — filtered to the
   // selected month client-side, same pattern HomePage uses.
   const [receipts,     setReceipts]     = useState([]);
@@ -28,11 +51,32 @@ export default function InsightsPage() {
   // account, same as StatementsPage's transfer detection.
   const [myFullName,   setMyFullName]   = useState('');
   const [initialLoading, setInitialLoading] = useState(true);
+  // Splitwise groups (for group-name display) and category tree (for
+  // editing a Splitwise-only expense's category) — same data HomePage
+  // fetches once at mount for the same reason.
+  const [groups,       setGroups]       = useState([]);
+  const [swCategories, setSwCategories] = useState([]);
 
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [statsLoading, setStatsLoading] = useState(true);
   const [error, setError] = useState('');
   const [stats, setStats] = useState(null);
+  // Kept alongside `stats` (not just passed into computeStats and
+  // discarded) so a category-detail row for a Splitwise-only expense can
+  // be looked up by id when clicked — see handleSelectItem below.
+  const [splitwiseExpenses, setSplitwiseExpenses] = useState([]);
+  const [openReceipt, setOpenReceipt] = useState(null); // posted receipt being viewed | null
+  const [openExpense, setOpenExpense] = useState(null); // Splitwise-only expense being viewed | null
+  const [openTxn,     setOpenTxn]     = useState(null); // bank transaction being viewed | null
+  // Whether openTxn is matched to a Splitwise expense — captured from the
+  // itemized item's own `source` label (already computed by
+  // computeStats/matchTransactions) at the moment it's opened, since the
+  // raw transaction doc itself doesn't carry match state (that's derived,
+  // not stored).
+  const [openTxnMatchLabel, setOpenTxnMatchLabel] = useState('');
+
+  const [selectedCategory, setSelectedCategory] = useState(null); // category name being drilled into | null
+  const [selectedMerchant, setSelectedMerchant] = useState(null); // merchant name being drilled into | null
 
   const [messages,   setMessages]   = useState([]); // [{ role, content }]
   const [input,      setInput]      = useState('');
@@ -58,7 +102,11 @@ export default function InsightsPage() {
         setInitialLoading(false);
       }
     })();
+    fetchGroups().then(setGroups).catch(() => {});
+    fetchCategories().then(setSwCategories).catch(() => {});
   }, []);
+
+  const groupName = id => groups.find(g => g.id === id)?.name;
 
   // Re-scopes Splitwise history to the selected month and recomputes stats
   // — mirrors HomePage/Statements' per-month fetch pattern.
@@ -69,11 +117,13 @@ export default function InsightsPage() {
       setStatsLoading(true);
       try {
         const { start, end } = getMonthRange(currentMonth);
-        let splitwiseExpenses = [];
+        let monthSwExpenses = [];
         if (myId) {
           const sw = await fetchAllExpenses(myId, { datedAfter: start, datedBefore: end }).catch(() => ({ expenses: [] }));
-          splitwiseExpenses = sw.expenses;
+          monthSwExpenses = sw.expenses;
         }
+        if (!cancelled) setSplitwiseExpenses(monthSwExpenses);
+        const splitwiseExpenses = monthSwExpenses;
         const monthlyReceipts = receipts.filter(r => {
           const d = (r.date || r.scanned_at || '').slice(0, 10);
           return d >= start && d <= end;
@@ -91,12 +141,149 @@ export default function InsightsPage() {
     return () => { cancelled = true; };
   }, [initialLoading, currentMonth, myId, myFullName, receipts, transactions]);
 
+  // Monthly trend chart — built straight from `receipts` (loaded once, full
+  // history, unlike `stats` which is re-scoped to a single month) rather
+  // than stats.monthly. stats.monthly is computed from data computeStats
+  // never actually receives more than one month of (InsightsPage always
+  // passes a single month's receipts/transactions/splitwiseExpenses into
+  // it), so in practice it can only ever resolve to one bucket — not a
+  // usable trend. Receipts are the one dataset already loaded un-scoped, so
+  // this reuses insights.js's own receiptShareAmt logic (personTotals[myId]
+  // once approved and split, full amount while still pending) rather than
+  // the raw grandTotal/total — same reasoning as the "By category" section:
+  // a receipt split among roommates shouldn't count the whole group's cost
+  // as your monthly spend.
+  const monthlyTrend = useMemo(() => {
+    const byMonth = {};
+    for (const r of receipts) {
+      const key = (r.date || r.scanned_at || '').slice(0, 7); // YYYY-MM
+      if (!key) continue;
+      const amt = r.approved ? (myId && r.personTotals?.[myId] || 0) : (r.grandTotal ?? r.total ?? 0);
+      byMonth[key] = (byMonth[key] || 0) + amt;
+    }
+    return Object.entries(byMonth)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(-6)
+      .map(([month, amount]) => ({ month, amount }));
+  }, [receipts, myId]);
+  const currentMonthKey = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}`;
+
   // The chat's context is tied to whichever month's stats it was sent —
   // switching months mid-conversation would otherwise leave earlier answers
   // referencing a different period than newer ones, so start fresh instead.
   useEffect(() => {
     setMessages([]);
+    setSelectedCategory(null);
+    setSelectedMerchant(null);
   }, [currentMonth]);
+
+  // Inline category change from ReceiptDetail — same optimistic-then-
+  // revert shape as HomePage's own handleChangeReceiptCategory.
+  const handleChangeReceiptCategory = async (receipt, category) => {
+    const previous = receipt.category;
+    setReceipts(r => r.map(x => x.id === receipt.id ? { ...x, category } : x));
+    setOpenReceipt(r => r && r.id === receipt.id ? { ...r, category } : r);
+    try {
+      await saveReceipt({ id: receipt.id, category });
+    } catch {
+      toast.error('Could not update category');
+      setReceipts(r => r.map(x => x.id === receipt.id ? { ...x, category: previous } : x));
+      setOpenReceipt(r => r && r.id === receipt.id ? { ...r, category: previous } : r);
+    }
+  };
+
+  // Category on a Splitwise-original expense — writes through to Splitwise
+  // itself since this app didn't create the expense. Same shape as
+  // HomePage's handleChangeExpenseCategory — ourCategory is one of
+  // ALL_CATEGORIES (SplitwiseExpenseDetail's dropdown, not Splitwise's own
+  // tree), mapped to a real Splitwise category before saving.
+  const handleChangeExpenseCategory = async (expense, ourCategory) => {
+    const swCat = mapToSplitwiseCategory(ourCategory, swCategories);
+    if (!swCat) { toast.error('Could not find a matching Splitwise category yet — try again in a moment.'); return; }
+    const previous = { category: expense.category, categoryId: expense.categoryId };
+    const apply = patch => {
+      setSplitwiseExpenses(prev => prev.map(e => e.id === expense.id ? { ...e, ...patch } : e));
+      setOpenExpense(prev => prev && prev.id === expense.id ? { ...prev, ...patch } : prev);
+    };
+    apply({ category: ourCategory, categoryId: swCat.id });
+    try {
+      const { category, categoryId: confirmedId } = await updateExpenseCategory(expense.id, swCat.id);
+      apply({ category, categoryId: confirmedId });
+    } catch {
+      toast.error('Could not update category on Splitwise');
+      apply(previous);
+    }
+  };
+
+  // Inline category change from BankTransactionDetail — same optimistic-
+  // then-revert shape as StatementsPage's own handleChangeCategory,
+  // including the "Transfers" special-case (writes overrideConfirmedTransfer
+  // alongside category — see that function's comment for the full
+  // reasoning) so computeStats picks up the exclusion too.
+  const handleChangeTransactionCategory = async (txn, category) => {
+    const isTransferCat  = category === TRANSFER_CATEGORY;
+    const wasTransferCat = txn.category === TRANSFER_CATEGORY;
+    const overrideFields = isTransferCat ? { overrideConfirmedTransfer: true }
+      : wasTransferCat ? { overrideConfirmedTransfer: null } : null;
+    setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category, ...(overrideFields || {}) } : t));
+    setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, category, ...(overrideFields || {}) } : prev);
+    try {
+      await updateTransactionCategory(txn.id, category);
+      if (overrideFields) await setTransactionOverride(txn.id, overrideFields);
+    } catch {
+      toast.error('Could not update category');
+      setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category: txn.category, overrideConfirmedTransfer: txn.overrideConfirmedTransfer } : t));
+      setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, category: txn.category, overrideConfirmedTransfer: txn.overrideConfirmedTransfer } : prev);
+    }
+  };
+
+  // BankTransactionDetail's escape hatch for anything beyond a category
+  // change (link/unlink Splitwise, delete, ...) — same openTxnId deep-link
+  // StatementsPage already supports, just triggered from inside the sheet
+  // instead of directly from the drill-down row.
+  const openTxnInStatements = () => {
+    if (!openTxn) return;
+    navigate('/statements', { state: { openTxnId: openTxn.id, accountSource: openTxn.source, date: openTxn.date } });
+  };
+
+  // A category- or merchant-detail row click, routed to wherever that item
+  // is actually editable — a receipt's own detail sheet (or the full edit
+  // flow for a still-pending one), a Splitwise-only expense's detail
+  // sheet, or a bank transaction's detail sheet (view + category edit,
+  // same shape as the other two — anything beyond that opens Statements
+  // from inside that sheet instead, see openTxnInStatements above). Closes
+  // whichever drill-down sheet triggered it first so sheets never stack.
+  const handleSelectItem = item => {
+    if (!item.id) return;
+    if (item.kind === 'receipt') {
+      const receipt = receipts.find(r => r.id === item.id);
+      if (!receipt) { toast.error("Couldn't find that receipt — try refreshing."); return; }
+      setSelectedCategory(null);
+      setSelectedMerchant(null);
+      if (receipt.approved) setOpenReceipt(receipt);
+      else navigate('/detail', { state: receipt });
+      return;
+    }
+    if (item.kind === 'splitwise') {
+      const expense = splitwiseExpenses.find(e => e.id === item.id);
+      if (!expense) { toast.error("Couldn't find that expense — try refreshing."); return; }
+      setSelectedCategory(null);
+      setSelectedMerchant(null);
+      setOpenExpense(expense);
+      return;
+    }
+    if (item.kind === 'bank') {
+      const txn = transactions.find(t => t.id === item.id);
+      setSelectedCategory(null);
+      setSelectedMerchant(null);
+      if (txn) {
+        setOpenTxnMatchLabel(item.source === 'bank (Splitwise-matched)' ? 'Matched to a Splitwise expense' : 'Personal — not split');
+        setOpenTxn(txn);
+      } else {
+        navigate('/statements', { state: { openTxnId: item.id, accountSource: item.accountSource, date: item.date } });
+      }
+    }
+  };
 
   const loading = initialLoading || statsLoading;
 
@@ -144,13 +331,13 @@ export default function InsightsPage() {
               <div className="w-20 h-20 rounded-3xl bg-indigo-50 flex items-center justify-center mb-4 anim-float">
                 <TrendingUp size={36} style={{ color: '#a5b4fc' }} />
               </div>
-              <h2 className="text-lg font-bold text-slate-500 mb-1">Nothing to analyze yet</h2>
-              <p className="text-sm text-slate-400">Scan a receipt, connect Splitwise, or import a bank statement</p>
+              <h2 className="text-lg font-bold text-muted mb-1">Nothing to analyze yet</h2>
+              <p className="text-sm text-subtle">Scan a receipt, connect Splitwise, or import a bank statement</p>
             </div>
           ) : (
             <>
               {/* Data sources — makes clear this isn't just scanned receipts */}
-              <p className="text-xs text-slate-400 anim-fade-up">
+              <p className="text-xs text-subtle anim-fade-up">
                 {stats.receiptCount} receipt{stats.receiptCount !== 1 ? 's' : ''}
                 {' · '}{stats.mySplitwiseShareCount} Splitwise expense{stats.mySplitwiseShareCount !== 1 ? 's' : ''}
                 {stats.hasBankData && <> · {stats.transactionCount} bank transaction{stats.transactionCount !== 1 ? 's' : ''}</>}
@@ -158,43 +345,81 @@ export default function InsightsPage() {
 
               {/* Stat cards */}
               <div className="grid grid-cols-2 gap-3 stagger">
-                <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm anim-fade-up">
-                  <p className="text-xs font-semibold text-slate-400 mb-1">Total spend</p>
-                  <p className="text-xl font-extrabold text-slate-800">${stats.totalSpent.toFixed(2)}</p>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
+                <div className="bg-surface rounded-2xl p-4 border border-edge shadow-sm anim-fade-up">
+                  <p className="text-xs font-semibold text-subtle mb-1">Total spend</p>
+                  <p className="text-xl font-extrabold text-ink">${stats.totalSpent.toFixed(2)}</p>
+                  <p className="text-[11px] text-subtle mt-0.5">
                     {stats.hasBankData ? 'reconciled with bank data' : 'Splitwise + pending receipts'}
                   </p>
                 </div>
-                <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm anim-fade-up">
-                  <p className="text-xs font-semibold text-slate-400 mb-1">Your Splitwise share</p>
+                <div className="bg-surface rounded-2xl p-4 border border-edge shadow-sm anim-fade-up">
+                  <p className="text-xs font-semibold text-subtle mb-1">Your Splitwise share</p>
                   {stats.hasMyShare ? (
                     <>
                       <p className="text-xl font-extrabold" style={{ color: INDIGO }}>${stats.mySplitwiseShare.toFixed(2)}</p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">across {stats.mySplitwiseShareCount} expense{stats.mySplitwiseShareCount !== 1 ? 's' : ''}</p>
+                      <p className="text-[11px] text-subtle mt-0.5">across {stats.mySplitwiseShareCount} expense{stats.mySplitwiseShareCount !== 1 ? 's' : ''}</p>
                     </>
                   ) : (
-                    <p className="text-sm text-slate-400 mt-1">Couldn't match your Splitwise profile</p>
+                    <p className="text-sm text-subtle mt-1">Couldn't match your Splitwise profile</p>
                   )}
                 </div>
               </div>
 
+              {/* Monthly trend — receipts by month, last 6 months (see
+                  monthlyTrend above for why this reads from `receipts`
+                  rather than stats.monthly). Current month full EMERALD,
+                  earlier months a lighter wash of the same hue — an
+                  emphasis treatment (this month is the point, history is
+                  context) rather than a second color, since it's still one
+                  series. */}
+              {monthlyTrend.length > 1 && (
+                <div className="anim-fade-up">
+                  <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">Monthly trend</p>
+                  <div className="bg-surface rounded-2xl border border-edge shadow-sm p-4">
+                    <div className="flex items-end gap-3 h-28">
+                      {monthlyTrend.map(m => {
+                        const max = Math.max(...monthlyTrend.map(x => x.amount), 1);
+                        const pct = Math.max((m.amount / max) * 100, 3);
+                        const isCurrent = m.month === currentMonthKey;
+                        return (
+                          <div key={m.month} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end">
+                            <span className={`text-[10px] font-bold ${isCurrent ? 'text-ink' : 'text-subtle'}`}>
+                              ${m.amount >= 1000 ? `${(m.amount / 1000).toFixed(1)}k` : m.amount.toFixed(0)}
+                            </span>
+                            <div
+                              className="w-full rounded-t-[4px]"
+                              style={{ height: `${pct}%`, background: EMERALD, opacity: isCurrent ? 1 : 0.35 }}
+                            />
+                            <span className={`text-[10px] ${isCurrent ? 'text-ink font-bold' : 'text-subtle'}`}>{formatMonthLabel(m.month)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Top merchants */}
               {stats.topMerchants.length > 0 && (
                 <div className="anim-fade-up">
-                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Top merchants</p>
-                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                  <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">Top merchants</p>
+                  <div className="bg-surface rounded-2xl border border-edge shadow-sm overflow-hidden">
                     {stats.topMerchants.map((m, i) => {
                       const pct = stats.topMerchants[0].amount ? (m.amount / stats.topMerchants[0].amount) * 100 : 0;
                       return (
-                        <div key={m.merchant} className={`px-4 py-3 ${i < stats.topMerchants.length - 1 ? 'border-b border-slate-100' : ''}`}>
+                        <button
+                          key={m.merchant}
+                          onClick={() => setSelectedMerchant(m.merchant)}
+                          className={`w-full text-left px-4 py-3 hover:bg-surface-alt transition-colors ${i < stats.topMerchants.length - 1 ? 'border-b border-edge' : ''}`}
+                        >
                           <div className="flex items-center justify-between mb-1.5 gap-2">
-                            <span className="text-sm font-semibold text-slate-700 truncate">{m.merchant}</span>
-                            <span className="text-sm font-bold text-slate-800 shrink-0">${m.amount.toFixed(2)}</span>
+                            <span className="text-sm font-semibold text-ink truncate">{m.merchant}</span>
+                            <span className="text-sm font-bold text-ink shrink-0">${m.amount.toFixed(2)}</span>
                           </div>
-                          <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                          <div className="h-1.5 rounded-full bg-surface-alt overflow-hidden">
                             <div className="h-full rounded-full" style={{ width: `${pct}%`, background: INDIGO }} />
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -204,18 +429,66 @@ export default function InsightsPage() {
               {/* Top categories */}
               {stats.topCategories.length > 0 && (
                 <div className="anim-fade-up">
-                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">By category</p>
-                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                  <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">By category</p>
+                  <div className="bg-surface rounded-2xl border border-edge shadow-sm overflow-hidden">
+                    <CategoryDonut categories={stats.topCategories} />
                     {stats.topCategories.map((c, i) => {
                       const pct = stats.topCategories[0].amount ? (c.amount / stats.topCategories[0].amount) * 100 : 0;
                       return (
-                        <div key={c.category} className={`px-4 py-3 ${i < stats.topCategories.length - 1 ? 'border-b border-slate-100' : ''}`}>
+                        <button
+                          key={c.category}
+                          onClick={() => setSelectedCategory(c.category)}
+                          className={`w-full text-left px-4 py-3 hover:bg-surface-alt transition-colors ${i < stats.topCategories.length - 1 ? 'border-b border-edge' : ''}`}
+                        >
                           <div className="flex items-center justify-between mb-1.5 gap-2">
-                            <span className="text-sm font-semibold text-slate-700 capitalize">{c.category}</span>
-                            <span className="text-sm font-bold text-slate-800 shrink-0">${c.amount.toFixed(2)}</span>
+                            <span className="text-sm font-semibold text-ink">{getCategoryIcon(c.category)} {c.category}</span>
+                            <span className="text-sm font-bold text-ink shrink-0">${c.amount.toFixed(2)}</span>
                           </div>
-                          <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                          <div className="h-1.5 rounded-full bg-surface-alt overflow-hidden">
                             <div className="h-full rounded-full" style={{ width: `${pct}%`, background: EMERALD }} />
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Split vs personal — only when bank data exists to split
+                  against (see hasBankData); bankPersonalTotal/
+                  splitwiseShareTotal come from the same matched pass
+                  totalSpent is built from (services/insights.js), so they
+                  always sum to the "Total spend" figure above rather than
+                  being a separate, possibly-disagreeing computation. Two
+                  series (categorical), so both get a legend swatch and a
+                  direct label — see the ORANGE/INDIGO comment above for
+                  why this exact pair. */}
+              {stats.hasBankData && (stats.bankPersonalTotal + stats.splitwiseShareTotal) > 0 && (
+                <div className="anim-fade-up">
+                  <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">Split vs personal</p>
+                  <div className="bg-surface rounded-2xl border border-edge shadow-sm p-4 space-y-3.5">
+                    {[
+                      { name: 'Splitwise share', value: stats.splitwiseShareTotal, color: INDIGO },
+                      { name: 'Personal',        value: stats.bankPersonalTotal,   color: ORANGE },
+                    ].map(({ name, value, color }) => {
+                      const total = stats.bankPersonalTotal + stats.splitwiseShareTotal;
+                      const max   = Math.max(stats.bankPersonalTotal, stats.splitwiseShareTotal, 1);
+                      const pct   = (value / max) * 100;
+                      const pctOfTotal = total > 0 ? Math.round((value / total) * 100) : 0;
+                      return (
+                        <div key={name}>
+                          <div className="flex items-center justify-between text-xs mb-1.5">
+                            <span className="flex items-center gap-1.5 text-muted">
+                              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
+                              {name}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-subtle">{pctOfTotal}%</span>
+                              <span className="font-bold text-ink">${value.toFixed(2)}</span>
+                            </div>
+                          </div>
+                          <div className="h-2 bg-surface-alt rounded-full overflow-hidden">
+                            <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: color }} />
                           </div>
                         </div>
                       );
@@ -226,8 +499,8 @@ export default function InsightsPage() {
 
               {/* Chat */}
               <div className="anim-fade-up">
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Ask about your spending</p>
-                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex flex-col">
+                <p className="text-xs font-bold text-muted uppercase tracking-wide mb-2">Ask about your spending</p>
+                <div className="bg-surface rounded-2xl border border-edge shadow-sm overflow-hidden flex flex-col">
                   <div ref={scrollRef} className="max-h-80 overflow-y-auto p-4 space-y-3">
                     {messages.length === 0 ? (
                       <div className="flex flex-wrap gap-2">
@@ -235,7 +508,7 @@ export default function InsightsPage() {
                           <button
                             key={s}
                             onClick={() => send(s)}
-                            className="text-left text-xs font-semibold px-3 py-2 rounded-xl border border-slate-200 text-slate-500 hover:border-indigo-200 hover:text-indigo-500 transition-colors"
+                            className="text-left text-xs font-semibold px-3 py-2 rounded-xl border border-edge text-muted hover:border-indigo-200 hover:text-indigo-500 transition-colors"
                           >
                             {s}
                           </button>
@@ -248,7 +521,7 @@ export default function InsightsPage() {
                             className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-line ${
                               m.role === 'user'
                                 ? 'text-white rounded-br-md'
-                                : 'bg-slate-50 text-slate-700 rounded-bl-md'
+                                : 'bg-surface-alt text-ink rounded-bl-md'
                             }`}
                             style={m.role === 'user' ? { background: INDIGO } : {}}
                           >
@@ -259,7 +532,7 @@ export default function InsightsPage() {
                     )}
                     {chatLoading && (
                       <div className="flex justify-start">
-                        <div className="bg-slate-50 rounded-2xl rounded-bl-md px-3.5 py-2.5 flex items-center gap-2 text-slate-400 text-sm">
+                        <div className="bg-surface-alt rounded-2xl rounded-bl-md px-3.5 py-2.5 flex items-center gap-2 text-subtle text-sm">
                           <Loader2 size={14} className="animate-spin" /> Thinking…
                         </div>
                       </div>
@@ -272,14 +545,14 @@ export default function InsightsPage() {
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2 p-3 border-t border-slate-100">
+                  <div className="flex items-center gap-2 p-3 border-t border-edge">
                     <input
                       value={input}
                       onChange={e => setInput(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') send(); }}
                       placeholder="Ask a question…"
                       disabled={chatLoading}
-                      className="flex-1 text-sm bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-indigo-200 disabled:opacity-60"
+                      className="flex-1 text-sm bg-surface-alt border border-edge rounded-xl px-3.5 py-2.5 outline-none focus:border-indigo-200 disabled:opacity-60"
                     />
                     <button
                       onClick={() => send()}
@@ -298,6 +571,57 @@ export default function InsightsPage() {
       </main>
 
       <BottomNav />
+
+      {selectedCategory && stats && (
+        <CategoryDetail
+          category={selectedCategory}
+          total={stats.topCategories.find(c => c.category === selectedCategory)?.amount || 0}
+          items={stats.itemizedTransactions.filter(t => (t.category || 'Other') === selectedCategory)}
+          onClose={() => setSelectedCategory(null)}
+          onSelect={handleSelectItem}
+        />
+      )}
+
+      {selectedMerchant && stats && (
+        <CategoryDetail
+          category={selectedMerchant}
+          icon="🏪"
+          total={stats.topMerchants.find(m => m.merchant === selectedMerchant)?.amount || 0}
+          items={stats.itemizedTransactions.filter(t => t.description === selectedMerchant)}
+          onClose={() => setSelectedMerchant(null)}
+          onSelect={handleSelectItem}
+        />
+      )}
+
+      {openReceipt && (
+        <ReceiptDetail
+          receipt={openReceipt}
+          groupName={groupName(openReceipt.groupId)}
+          onEdit={() => navigate('/detail', { state: openReceipt })}
+          onClose={() => setOpenReceipt(null)}
+          onChangeCategory={handleChangeReceiptCategory}
+        />
+      )}
+
+      {openExpense && (
+        <SplitwiseExpenseDetail
+          expense={openExpense}
+          groupName={groupName(openExpense.group_id)}
+          onChangeCategory={handleChangeExpenseCategory}
+          onClose={() => setOpenExpense(null)}
+        />
+      )}
+
+      {openTxn && (
+        <BankTransactionDetail
+          txn={openTxn}
+          matchLabel={openTxnMatchLabel}
+          onChangeCategory={handleChangeTransactionCategory}
+          actionLabel="Open in Statements"
+          onAction={openTxnInStatements}
+          onClose={() => setOpenTxn(null)}
+        />
+      )}
     </div>
   );
 }

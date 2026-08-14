@@ -44,17 +44,17 @@ export default function NetWorthDetail({ netWorth, plaidBalances, splitwiseNet, 
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40 anim-fade-in" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-t-3xl max-h-[85vh] flex flex-col anim-sheet-up">
+      <div className="bg-surface rounded-t-3xl max-h-[85vh] flex flex-col anim-sheet-up">
         <div className="flex justify-center pt-3 pb-1">
-          <div className="w-10 h-1 rounded-full bg-slate-200" />
+          <div className="w-10 h-1 rounded-full bg-surface-alt" />
         </div>
 
-        <div className="px-4 py-3 border-b border-slate-100 flex items-start justify-between">
+        <div className="px-4 py-3 border-b border-edge flex items-start justify-between">
           <div>
-            <p className="font-extrabold text-slate-800 text-sm">Net Worth</p>
-            <p className="text-xl font-extrabold text-slate-800 mt-0.5">{formatCurrency(netWorth)}</p>
+            <p className="font-extrabold text-ink text-sm">Net Worth</p>
+            <p className="text-xl font-extrabold text-ink mt-0.5">{formatCurrency(netWorth)}</p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 shrink-0">
+          <button onClick={onClose} className="p-1.5 rounded-lg text-subtle hover:text-muted shrink-0">
             <X size={18} />
           </button>
         </div>
@@ -63,7 +63,7 @@ export default function NetWorthDetail({ netWorth, plaidBalances, splitwiseNet, 
           {bankAccounts.length > 0 && (
             <Section title="Bank accounts" icon={<Landmark size={13} />}>
               {bankAccounts.map(a => (
-                <Row key={a.id} label={a.label} sub={a.institutionName} value={formatCurrency(a.current)} valueClass="text-slate-800" />
+                <Row key={a.id} label={a.label} sub={a.institutionName} value={formatCurrency(a.current)} valueClass="text-ink" />
               ))}
             </Section>
           )}
@@ -87,19 +87,19 @@ export default function NetWorthDetail({ netWorth, plaidBalances, splitwiseNet, 
 
           <Section title="Other accounts" icon={<Wallet size={13} />}>
             {manualAccounts.length === 0 && !formOpen && (
-              <p className="text-xs text-slate-400 py-1">No manual accounts yet — rewards points, cash, anything without a transaction feed.</p>
+              <p className="text-xs text-subtle py-1">No manual accounts yet — rewards points, cash, anything without a transaction feed.</p>
             )}
             {manualAccounts.map(a => (
               <div key={a.id} className="flex items-center justify-between py-1.5 group">
                 <div className="min-w-0">
-                  <p className="text-sm text-slate-700 truncate">{a.name}</p>
-                  <p className="text-[10px] text-slate-400">{a.type === 'liability' ? 'Liability' : 'Asset'}</p>
+                  <p className="text-sm text-ink truncate">{a.name}</p>
+                  <p className="text-[10px] text-subtle">{a.type === 'liability' ? 'Liability' : 'Asset'}</p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className={`text-sm font-semibold ${a.type === 'liability' ? 'text-red-500' : 'text-slate-800'}`}>
+                  <span className={`text-sm font-semibold ${a.type === 'liability' ? 'text-red-500' : 'text-ink'}`}>
                     {a.type === 'liability' ? '-' : ''}{formatCurrency(a.balance)}
                   </span>
-                  <button onClick={() => startEdit(a)} className="p-1 rounded-lg text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-colors">
+                  <button onClick={() => startEdit(a)} className="p-1 rounded-lg text-subtle hover:text-indigo-500 hover:bg-indigo-50 transition-colors">
                     <Pencil size={12} />
                   </button>
                   <button onClick={() => onDeleteAccount(a.id)} className="p-1 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors">
@@ -110,14 +110,14 @@ export default function NetWorthDetail({ netWorth, plaidBalances, splitwiseNet, 
             ))}
 
             {formOpen ? (
-              <form onSubmit={submitForm} className="mt-2 space-y-2 bg-slate-50 rounded-xl p-3">
+              <form onSubmit={submitForm} className="mt-2 space-y-2 bg-surface-alt rounded-xl p-3">
                 <input
                   autoFocus
                   type="text"
                   placeholder="Account name (e.g. Chase Rewards)"
                   value={form.name}
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-sm outline-none focus:border-indigo-300"
+                  className="w-full bg-surface border border-edge rounded-lg px-2.5 py-2 text-sm outline-none focus:border-indigo-300"
                 />
                 <div className="flex gap-2">
                   <input
@@ -126,15 +126,15 @@ export default function NetWorthDetail({ netWorth, plaidBalances, splitwiseNet, 
                     placeholder="Balance"
                     value={form.balance}
                     onChange={e => setForm(f => ({ ...f, balance: e.target.value }))}
-                    className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-sm outline-none focus:border-indigo-300"
+                    className="flex-1 bg-surface border border-edge rounded-lg px-2.5 py-2 text-sm outline-none focus:border-indigo-300"
                   />
-                  <div className="flex rounded-lg border border-slate-200 overflow-hidden shrink-0">
+                  <div className="flex rounded-lg border border-edge overflow-hidden shrink-0">
                     {['asset', 'liability'].map(t => (
                       <button
                         key={t}
                         type="button"
                         onClick={() => setForm(f => ({ ...f, type: t }))}
-                        className={`px-3 text-xs font-semibold capitalize transition-colors ${form.type === t ? 'text-white' : 'bg-white text-slate-500'}`}
+                        className={`px-3 text-xs font-semibold capitalize transition-colors ${form.type === t ? 'text-white' : 'bg-surface text-muted'}`}
                         style={form.type === t ? { background: INDIGO } : {}}
                       >
                         {t}
@@ -146,7 +146,7 @@ export default function NetWorthDetail({ netWorth, plaidBalances, splitwiseNet, 
                   <button
                     type="button"
                     onClick={() => { setFormOpen(false); setForm(BLANK_FORM); setEditingId(null); }}
-                    className="flex-1 text-xs font-semibold text-slate-500 border border-slate-200 rounded-lg py-2 hover:bg-white transition-colors"
+                    className="flex-1 text-xs font-semibold text-muted border border-edge rounded-lg py-2 hover:bg-surface transition-colors"
                   >
                     Cancel
                   </button>
@@ -163,7 +163,7 @@ export default function NetWorthDetail({ netWorth, plaidBalances, splitwiseNet, 
             ) : (
               <button
                 onClick={startAdd}
-                className="mt-2 w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold border-2 border-dashed border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 transition-colors"
+                className="mt-2 w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold border-2 border-dashed border-edge text-subtle hover:border-indigo-300 hover:text-indigo-500 transition-colors"
               >
                 <Plus size={12} /> Add account
               </button>
@@ -178,10 +178,10 @@ export default function NetWorthDetail({ netWorth, plaidBalances, splitwiseNet, 
 function Section({ title, icon, children }) {
   return (
     <div>
-      <p className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1.5">
+      <p className="flex items-center gap-1.5 text-[10px] font-bold text-subtle uppercase tracking-wide mb-1.5">
         {icon} {title}
       </p>
-      <div className="bg-white rounded-xl border border-slate-100 divide-y divide-slate-50 px-3">
+      <div className="bg-surface rounded-xl border border-edge divide-y divide-slate-50 px-3">
         {children}
       </div>
     </div>
@@ -192,8 +192,8 @@ function Row({ label, sub, value, valueClass }) {
   return (
     <div className="flex items-center justify-between py-2">
       <div className="min-w-0">
-        <p className="text-sm text-slate-700 truncate">{label}</p>
-        {sub && <p className="text-[10px] text-slate-400 truncate">{sub}</p>}
+        <p className="text-sm text-ink truncate">{label}</p>
+        {sub && <p className="text-[10px] text-subtle truncate">{sub}</p>}
       </div>
       <span className={`text-sm font-semibold shrink-0 ${valueClass}`}>{value}</span>
     </div>

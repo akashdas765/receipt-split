@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from 'react';
-import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2, Clock, ArrowLeftRight, Plus } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2, Clock, ArrowLeftRight, Plus, CreditCard } from 'lucide-react';
 import { formatCurrency, formatShortDate } from '../utils/statementFormatters';
-import { getCategoryIcon } from '../utils/categoryDetector';
+import { getCategoryIcon, ALL_CATEGORIES, TRANSFER_CATEGORY, TRANSFER_CATEGORY_ICON } from '../utils/categoryDetector';
 
 const INDIGO = '#6366f1';
 
@@ -16,16 +16,40 @@ const INDIGO = '#6366f1';
 // Previously two separate tabs (Review + All) — merged here so "all my
 // card activity" and "what still needs matching" live in one list instead
 // of two.
-export default function TransactionsList({ matched, creditTxns, pendingTxns = [], accountSummary, groupName, monthRange, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete }) {
+export default function TransactionsList({ matched, creditTxns, pendingTxns = [], accountSummary, groupName, monthRange, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory, onConfirmTransfer, onDismissTransfer, onClearTransfer, onDebitClick, onCreditClick, initialExpandedId }) {
   const [filter,   setFilter]   = useState(0); // 0=All 1=Unmatched 2=Matched 3=Credits 4=Pending
-  const [expanded, setExpanded] = useState({});
+  const [expanded, setExpanded] = useState(() => initialExpandedId ? { [initialExpandedId]: true } : {});
 
-  // Transfers are neither — they're excluded from both (matcher.js never
-  // even tries to score them), but stay visible in the "All" view (which
-  // renders straight off `matched`, unfiltered) with their own distinct
-  // row treatment (see DebitRow's isTransfer branch below).
-  const matchedTxns   = matched.filter(t => t.isSplitwised && !t.isTransfer);
-  const unmatchedTxns = matched.filter(t => !t.isSplitwised && !t.isTransfer);
+  // Deep-link from InsightsPage's category drill-down (see StatementsPage's
+  // pendingOpenTxnId) — expands that row and scrolls it into view once its
+  // DOM node exists. DebitRow carries a matching `id` attribute for this to
+  // find. A short retry loop (not a single lookup) because the row may not
+  // be in the DOM yet on the same tick this fires (filter/tab/data still
+  // settling) — gives up after ~1s rather than polling forever.
+  useEffect(() => {
+    if (!initialExpandedId) return;
+    setExpanded(p => ({ ...p, [initialExpandedId]: true }));
+    let attempts = 0;
+    const timer = setInterval(() => {
+      attempts++;
+      const el = document.getElementById(`txn-row-${initialExpandedId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        clearInterval(timer);
+      } else if (attempts > 10) {
+        clearInterval(timer);
+      }
+    }, 100);
+    return () => clearInterval(timer);
+  }, [initialExpandedId]);
+
+  // Transfers and payments are neither — they're excluded from both
+  // (matcher.js never even tries to score them), but stay visible in the
+  // "All" view (which renders straight off `matched`, unfiltered) with
+  // their own distinct row treatment (see DebitRow's isTransfer/isPayment
+  // branches below).
+  const matchedTxns   = matched.filter(t => t.isSplitwised && !t.isTransfer && !t.isPayment);
+  const unmatchedTxns = matched.filter(t => !t.isSplitwised && !t.isTransfer && !t.isPayment);
   const suggestedCount = unmatchedTxns.filter(t => t.suggestedMatch).length;
   const displayed =
     filter === 1 ? unmatchedTxns :
@@ -64,7 +88,7 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
 
   if (!matched.length && !creditTxns.length && !pendingTxns.length) {
     return (
-      <div className="text-center py-10 text-sm text-slate-400">
+      <div className="text-center py-10 text-sm text-subtle">
         <p>Upload a bank statement first,</p>
         <p className="mt-1">then come back here to see your transactions.</p>
       </div>
@@ -75,12 +99,12 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
     <div className="space-y-4">
       {accountSummary && (
         <>
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide -mb-1">{monthRange.label}</p>
-          <SummaryCard title={accountSummary.title} kind={accountSummary.type} data={accountSummary} />
+          <p className="text-xs font-bold text-subtle uppercase tracking-wide -mb-1">{monthRange.label}</p>
+          <SummaryCard title={accountSummary.title} kind={accountSummary.type} data={accountSummary} onDebitClick={onDebitClick} onCreditClick={onCreditClick} />
           {savedTotal > 0.5 && (
             <p className="text-xs text-emerald-600 font-semibold">-{formatCurrency(savedTotal)} saved via Splitwise splits</p>
           )}
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-subtle">
             {matchedTxns.length} matched · {unmatchedTxns.length} unmatched · {creditTxns.length} credit{creditTxns.length !== 1 ? 's' : ''}
             {pendingTxns.length > 0 && <> · {pendingTxns.length} pending</>}
           </p>
@@ -90,16 +114,16 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
       {/* Filter chips — wraps instead of scrolling horizontally */}
       <div className="flex flex-wrap gap-1.5">
         {[
-          { label: 'All', value: matched.length + creditTxns.length + pendingTxns.length, active: filter === 0, onClick: () => setFilter(0), color: 'text-slate-800' },
+          { label: 'All', value: matched.length + creditTxns.length + pendingTxns.length, active: filter === 0, onClick: () => setFilter(0), color: 'text-ink' },
           { label: '✅ Matched', value: matchedTxns.length, active: filter === 2, onClick: () => setFilter(2), color: 'text-emerald-500' },
           { label: '⚠️ Unmatched', value: unmatchedTxns.length, active: filter === 1, onClick: () => setFilter(1), color: 'text-amber-500' },
           { label: '💳 Credits', value: creditTxns.length, active: filter === 3, onClick: () => setFilter(3), color: 'text-emerald-500' },
-          ...(pendingTxns.length > 0 ? [{ label: '🕒 Pending', value: pendingTxns.length, active: filter === 4, onClick: () => setFilter(4), color: 'text-slate-500' }] : []),
+          ...(pendingTxns.length > 0 ? [{ label: '🕒 Pending', value: pendingTxns.length, active: filter === 4, onClick: () => setFilter(4), color: 'text-muted' }] : []),
         ].map(c => (
           <button key={c.label} onClick={c.onClick}
-            className={`flex-1 min-w-[70px] rounded-xl px-1.5 py-2.5 text-center border transition-colors ${c.active ? 'border-indigo-200 bg-indigo-50' : 'border-slate-100 bg-white hover:border-slate-200'}`}>
+            className={`flex-1 min-w-[70px] rounded-xl px-1.5 py-2.5 text-center border transition-colors ${c.active ? 'border-indigo-200 bg-indigo-50' : 'border-edge bg-surface hover:border-edge'}`}>
             <p className={`font-extrabold text-sm ${c.color}`}>{c.value}</p>
-            <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">{c.label}</p>
+            <p className="text-[10px] text-subtle mt-0.5 leading-tight">{c.label}</p>
           </button>
         ))}
       </div>
@@ -110,7 +134,7 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
         </p>
       )}
       {filter === 0 && unmatchedTxns.length > 0 && (
-        <p className="text-xs text-slate-400">
+        <p className="text-xs text-subtle">
           Tap <span className="font-semibold" style={{ color: INDIGO }}>Link</span> on any unmatched transaction to connect it to a Splitwise expense.
         </p>
       )}
@@ -120,19 +144,25 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
         {filter === 0 ? (
           combinedAll.map(({ t, kind }) => (
             kind === 'credit' ? <CreditRow key={t.id} txn={t} onDelete={onDelete} /> :
-            kind === 'pending' ? <PendingRow key={t.id} txn={t} onDelete={onDelete} /> :
             <DebitRow key={t.id} txn={t} isOpen={!!expanded[t.id]} setExpanded={setExpanded}
               groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
-              onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} />
+              onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} onChangeCategory={onChangeCategory}
+              onConfirmTransfer={onConfirmTransfer} onDismissTransfer={onDismissTransfer} onClearTransfer={onClearTransfer} />
           ))
         ) : (
           <>
             {showCredits && creditTxns.map(txn => <CreditRow key={txn.id} txn={txn} onDelete={onDelete} />)}
-            {showPending && pendingTxns.map(txn => <PendingRow key={txn.id} txn={txn} onDelete={onDelete} />)}
+            {showPending && pendingTxns.map(txn => (
+              <DebitRow key={txn.id} txn={txn} isOpen={!!expanded[txn.id]} setExpanded={setExpanded}
+                groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
+                onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} onChangeCategory={onChangeCategory}
+              onConfirmTransfer={onConfirmTransfer} onDismissTransfer={onDismissTransfer} onClearTransfer={onClearTransfer} />
+            ))}
             {displayed.map(txn => (
               <DebitRow key={txn.id} txn={txn} isOpen={!!expanded[txn.id]} setExpanded={setExpanded}
                 groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
-                onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} />
+                onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} onChangeCategory={onChangeCategory}
+              onConfirmTransfer={onConfirmTransfer} onDismissTransfer={onDismissTransfer} onClearTransfer={onClearTransfer} />
             ))}
           </>
         )}
@@ -142,21 +172,19 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
 }
 
 function CreditRow({ txn, onDelete }) {
-  // Same "hint here, confirm in its own tab" pattern as isTransfer below —
-  // a "payment thank you"-style credit needs a tap in the Payments tab
-  // before it stops counting toward the card's credit total.
-  const needsConfirm = txn.paymentNeedsConfirm;
   return (
-    <div className={`rounded-2xl border bg-white p-3 flex items-center gap-3 ${needsConfirm ? 'border-amber-100' : 'border-emerald-100'}`}>
-      <span className="text-base shrink-0">💳</span>
+    <div id={`txn-row-${txn.id}`} className={`rounded-2xl border bg-surface p-3 flex items-center gap-3 ${txn.isIncome ? 'border-emerald-200' : 'border-emerald-100'}`}>
+      <span className="text-base shrink-0">{txn.isIncome ? '💵' : '💳'}</span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           {txn.transferHintLabel && <ArrowLeftRight size={11} style={{ color: INDIGO }} className="shrink-0" />}
-          <p className="text-sm font-semibold text-slate-700 truncate">{txn.transferHintLabel || txn.description}</p>
+          <p className="text-sm font-semibold text-ink truncate">{txn.transferHintLabel || txn.description}</p>
+          {txn.isIncome && (
+            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 rounded-full shrink-0">Income</span>
+          )}
         </div>
-        {txn.transferHintLabel && <p className="text-xs text-slate-500 mt-0.5 truncate">{txn.description}</p>}
-        <p className="text-xs text-slate-400 mt-0.5 truncate">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
-        {needsConfirm && <p className="text-xs text-amber-500 mt-0.5">Possible bill payment — confirm in the Payments tab</p>}
+        {txn.transferHintLabel && <p className="text-xs text-muted mt-0.5 truncate">{txn.description}</p>}
+        <p className="text-xs text-subtle mt-0.5 truncate">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
       </div>
       <p className="text-sm font-bold text-emerald-500 shrink-0">+{formatCurrency(txn.amount)}</p>
       <button onClick={() => onDelete(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
@@ -166,52 +194,40 @@ function CreditRow({ txn, onDelete }) {
   );
 }
 
-function PendingRow({ txn, onDelete }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 border-dashed bg-white p-3 flex items-center gap-3">
-      <Clock size={16} className="text-slate-400 shrink-0" />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
-          <p className="text-sm font-semibold text-slate-600 truncate">{txn.description}</p>
-          <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 rounded-full shrink-0">Pending</span>
-        </div>
-        <p className="text-xs text-slate-400 mt-0.5 truncate">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
-      </div>
-      <p className="text-sm font-bold text-slate-500 shrink-0">-{formatCurrency(txn.amount)}</p>
-      <button onClick={() => onDelete(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
-        <Trash2 size={14} />
-      </button>
-    </div>
-  );
-}
-
-function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete }) {
+function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory, onConfirmTransfer, onDismissTransfer, onClearTransfer }) {
   const isOverridden = txn.manualOverride;
   const suggestion   = !txn.isSplitwised ? txn.suggestedMatch : null;
 
   return (
-    <div className={`rounded-2xl overflow-hidden border bg-white ${
-      txn.isTransfer ? 'border-indigo-100' : txn.isSplitwised ? 'border-emerald-100' : suggestion ? 'border-indigo-100' : 'border-amber-100'
+    <div id={`txn-row-${txn.id}`} className={`rounded-2xl overflow-hidden border bg-surface ${txn.isPending ? 'border-dashed' : ''} ${
+      txn.isTransfer ? 'border-indigo-100' : txn.isPayment ? 'border-edge' : txn.isSplitwised ? 'border-emerald-100' : suggestion ? 'border-indigo-100' : 'border-amber-100'
     }`}>
       <div className="w-full flex items-center gap-2 p-3">
         <button className="flex-1 flex items-center gap-3 text-left min-w-0" onClick={() => setExpanded(p => ({ ...p, [txn.id]: !p[txn.id] }))}>
           <div className="shrink-0">
             {txn.isTransfer
               ? <ArrowLeftRight size={18} style={{ color: INDIGO }} />
-              : txn.isSplitwised
-                ? <CheckCircle2 size={18} className="text-emerald-500" />
-                : suggestion
-                  ? <Sparkles size={18} style={{ color: INDIGO }} />
-                  : <AlertCircle size={18} className="text-amber-500" />}
+              : txn.isPayment
+                ? <CreditCard size={18} className="text-subtle" />
+                : txn.isSplitwised
+                  ? <CheckCircle2 size={18} className="text-emerald-500" />
+                  : suggestion
+                    ? <Sparkles size={18} style={{ color: INDIGO }} />
+                    : <AlertCircle size={18} className="text-amber-500" />}
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5">
               {txn.transferHintLabel ? <ArrowLeftRight size={12} style={{ color: INDIGO }} className="shrink-0" /> : <span className="text-sm">{getCategoryIcon(txn.category)}</span>}
-              <p className="text-sm font-semibold text-slate-700 truncate">{txn.transferHintLabel || txn.description}</p>
+              <p className="text-sm font-semibold text-ink truncate">{txn.transferHintLabel || txn.description}</p>
               {isOverridden && <span className="text-xs bg-indigo-50 px-1.5 rounded-full shrink-0" style={{ color: INDIGO }}>manual</span>}
+              {txn.isPending && (
+                <span className="text-[10px] font-bold text-muted bg-surface-alt px-1.5 rounded-full shrink-0 flex items-center gap-0.5">
+                  <Clock size={9} /> Pending
+                </span>
+              )}
             </div>
-            {txn.transferHintLabel && <p className="text-xs text-slate-500 mt-0.5 truncate">{txn.description}</p>}
-            <p className="text-xs text-slate-400 mt-0.5 truncate">
+            {txn.transferHintLabel && <p className="text-xs text-muted mt-0.5 truncate">{txn.description}</p>}
+            <p className="text-xs text-subtle mt-0.5 truncate">
               {formatShortDate(txn.date)} · {txn.sourceName || txn.source}
               {txn.isSplitwised && (
                 <span className="ml-1.5 text-emerald-500">
@@ -226,10 +242,10 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
             </p>
           </div>
           <div className="text-right shrink-0">
-            <p className="text-sm font-bold text-slate-800">-{formatCurrency(txn.effectiveAmount)}</p>
+            <p className="text-sm font-bold text-ink">-{formatCurrency(txn.effectiveAmount)}</p>
             {txn.isSplitwised && txn.savings > 0.5 && <p className="text-xs text-emerald-500">-{formatCurrency(txn.savings)}</p>}
           </div>
-          {isOpen ? <ChevronUp size={14} className="text-slate-400 shrink-0" /> : <ChevronDown size={14} className="text-slate-400 shrink-0" />}
+          {isOpen ? <ChevronUp size={14} className="text-subtle shrink-0" /> : <ChevronDown size={14} className="text-subtle shrink-0" />}
         </button>
         <button onClick={() => onDelete(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
           <Trash2 size={14} />
@@ -237,19 +253,66 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
       </div>
 
       {isOpen && (
-        <div className="border-t border-slate-100 px-3 pb-3 pt-2 space-y-2">
+        <div className="border-t border-edge px-3 pb-3 pt-2 space-y-2">
           {txn.postedDate && (
             <div className="flex justify-between text-xs px-0.5">
-              <span className="text-slate-400">Posted</span>
-              <span className="text-slate-500">{formatShortDate(txn.postedDate)}</span>
+              <span className="text-subtle">Posted</span>
+              <span className="text-muted">{formatShortDate(txn.postedDate)}</span>
             </div>
           )}
+          <div className="flex items-center justify-between gap-2 px-0.5">
+            <span className="text-xs text-subtle">Category</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm">{getCategoryIcon(txn.category)}</span>
+              <select
+                value={txn.category || 'Other'}
+                onChange={e => onChangeCategory(txn, e.target.value)}
+                onClick={e => e.stopPropagation()}
+                className="text-xs font-semibold text-ink bg-transparent outline-none text-right"
+              >
+                {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                <option value={TRANSFER_CATEGORY}>{TRANSFER_CATEGORY_ICON} {TRANSFER_CATEGORY}</option>
+              </select>
+            </div>
+          </div>
           {txn.isTransfer ? (
-            <div className="rounded-xl p-2.5" style={{ background: '#eef1fb' }}>
+            <div className="rounded-xl p-2.5 tint-indigo-flat">
               <p className="text-xs flex items-center gap-1.5" style={{ color: INDIGO }}>
                 <ArrowLeftRight size={12} /> Money between your own accounts — not spend, not Splitwise-matchable.
               </p>
-              <p className="text-xs text-slate-500 mt-1">Confirm or dismiss it from the Transfers tab.</p>
+              {txn.overrideConfirmedTransfer ? (
+                <div className="flex items-center justify-between mt-1.5">
+                  <p className="text-xs font-semibold flex items-center gap-1" style={{ color: INDIGO }}>
+                    <Check size={12} /> Confirmed transfer
+                  </p>
+                  {onClearTransfer && (
+                    <button onClick={() => onClearTransfer(txn)} className="text-xs font-semibold text-muted hover:text-ink transition-colors">
+                      Undo
+                    </button>
+                  )}
+                </div>
+              ) : (onConfirmTransfer || onDismissTransfer) && (
+                <div className="flex gap-2 mt-2">
+                  {onDismissTransfer && (
+                    <button onClick={() => onDismissTransfer(txn)}
+                      className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-muted border border-edge rounded-xl py-2 hover:bg-surface-alt transition-colors bg-surface">
+                      <X size={13} /> Not a transfer
+                    </button>
+                  )}
+                  {onConfirmTransfer && (
+                    <button onClick={() => onConfirmTransfer(txn)}
+                      className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-white rounded-xl py-2 transition-colors" style={{ background: INDIGO }}>
+                      <Check size={13} /> Confirm transfer
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : txn.isPayment ? (
+            <div className="rounded-xl p-2.5 bg-surface-alt">
+              <p className="text-xs flex items-center gap-1.5 text-muted">
+                <CreditCard size={12} /> Bill payment or account transfer — not spend, not Splitwise-matchable.
+              </p>
             </div>
           ) : txn.isSplitwised ? (
             <div className="bg-emerald-50 rounded-xl p-2.5 space-y-1">
@@ -261,8 +324,8 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
                   {txn.splitwiseMatches.map(m => (
                     <div key={m.id} className="flex items-center justify-between gap-2 text-xs bg-white/70 rounded-lg px-2 py-1.5">
                       <div className="min-w-0">
-                        <p className="text-slate-700 font-semibold truncate">{m.description}</p>
-                        <p className="text-slate-400 truncate">
+                        <p className="text-ink font-semibold truncate">{m.description}</p>
+                        <p className="text-subtle truncate">
                           {formatShortDate(m.date)}{groupName(m.group_id) ? ` · ${groupName(m.group_id)}` : ''}
                         </p>
                       </div>
@@ -283,7 +346,7 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
               {!txn.manualOverride && <Row label="Confidence" value={`${txn.matchScore}%`} />}
             </div>
           ) : suggestion ? (
-            <div className="rounded-xl p-2.5 space-y-1" style={{ background: '#eef1fb' }}>
+            <div className="rounded-xl p-2.5 space-y-1 tint-indigo-flat">
               <p className="text-xs font-semibold flex items-center gap-1" style={{ color: INDIGO }}>
                 <Sparkles size={12} /> Possible match
               </p>
@@ -299,7 +362,7 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
             </div>
           )}
 
-          {!txn.isTransfer && (
+          {!txn.isTransfer && !txn.isPayment && (
           <div className="flex gap-2 pt-1">
             {txn.isSplitwised ? (
               <>
@@ -315,7 +378,7 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
             ) : suggestion ? (
               <>
                 <button onClick={() => { onUnlink(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
-                  className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-500 border border-slate-200 rounded-xl py-2 hover:bg-slate-50 transition-colors">
+                  className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-muted border border-edge rounded-xl py-2 hover:bg-surface-alt transition-colors">
                   <X size={13} /> Not this
                 </button>
                 <button onClick={() => { onConfirmSuggestion(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
@@ -334,7 +397,7 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
                   <Plus size={13} /> Add to Splitwise
                 </button>
                 {isOverridden && (
-                  <button onClick={() => onClearOverride(txn)} className="flex items-center justify-center gap-1 text-xs font-semibold text-slate-500 border border-slate-200 rounded-xl px-3 py-2 hover:bg-slate-50 transition-colors">
+                  <button onClick={() => onClearOverride(txn)} className="flex items-center justify-center gap-1 text-xs font-semibold text-muted border border-edge rounded-xl px-3 py-2 hover:bg-surface-alt transition-colors">
                     Auto
                   </button>
                 )}
@@ -342,16 +405,23 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
             )}
           </div>
           )}
+
+          {!txn.isTransfer && !txn.isPayment && !txn.isSplitwised && onConfirmTransfer && (
+            <button onClick={() => { onConfirmTransfer(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
+              className="flex items-center justify-center gap-1.5 text-xs font-semibold text-muted hover:text-ink transition-colors pt-1">
+              <ArrowLeftRight size={12} /> Mark as transfer between my accounts
+            </button>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function Row({ label, value, valueClass = 'text-slate-700' }) {
+function Row({ label, value, valueClass = 'text-ink' }) {
   return (
     <div className="flex justify-between text-xs">
-      <span className="text-slate-400">{label}</span>
+      <span className="text-subtle">{label}</span>
       <span className={valueClass}>{value}</span>
     </div>
   );
@@ -365,30 +435,30 @@ function Row({ label, value, valueClass = 'text-slate-700' }) {
 // type: a bank account's "Transfers" vs. a card's "Payments made"
 // (bill payments specifically, not merchant refunds — see
 // StatementsPage.jsx's accountSummary for how that's told apart).
-function SummaryCard({ title, kind, data }) {
+function SummaryCard({ title, kind, data, onDebitClick, onCreditClick }) {
   const netPositive = data.net >= 0;
   return (
-    <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
+    <div className="bg-surface rounded-2xl p-4 border border-edge shadow-sm">
       <div className="flex items-center justify-between mb-2">
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">{title}</p>
+        <p className="text-xs font-bold text-subtle uppercase tracking-wide">{title}</p>
         <p className={`text-sm font-extrabold ${netPositive ? 'text-emerald-600' : 'text-red-500'}`}>
           {netPositive ? '+' : ''}{formatCurrency(data.net)} net
         </p>
       </div>
       <div className="grid grid-cols-2 gap-2 mb-2">
-        <div className="bg-red-50 rounded-xl px-3 py-2">
+        <button onClick={onDebitClick} className="text-left bg-red-50 rounded-xl px-3 py-2 hover:bg-red-100 transition-colors">
           <p className="text-base font-bold text-red-500">-{formatCurrency(data.debit)}</p>
-          <p className="text-[10px] text-slate-400">Debit</p>
-        </div>
-        <div className="bg-emerald-50 rounded-xl px-3 py-2">
+          <p className="text-[10px] text-subtle">Debit</p>
+        </button>
+        <button onClick={onCreditClick} className="text-left bg-emerald-50 rounded-xl px-3 py-2 hover:bg-emerald-100 transition-colors">
           <p className="text-base font-bold text-emerald-600">+{formatCurrency(data.credit)}</p>
-          <p className="text-[10px] text-slate-400">Credit</p>
-        </div>
+          <p className="text-[10px] text-subtle">Credit</p>
+        </button>
       </div>
       {kind === 'bank' ? (
-        <p className="text-xs text-slate-500">Transfers <span className="font-semibold text-slate-700">{formatCurrency(data.transfers)}</span></p>
+        <p className="text-xs text-muted">Transfers <span className="font-semibold text-ink">{formatCurrency(data.transfers)}</span></p>
       ) : (
-        <p className="text-xs text-slate-500">Payments made <span className="font-semibold text-slate-700">{formatCurrency(data.payments)}</span></p>
+        <p className="text-xs text-muted">Payments received <span className="font-semibold text-ink">{formatCurrency(data.credit)}</span></p>
       )}
     </div>
   );

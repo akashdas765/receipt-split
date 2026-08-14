@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
-import { Plus, Check } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { detectCategory, ALL_CATEGORIES } from '../utils/categoryDetector';
+import { useToast } from './ToastProvider';
 
-const INDIGO = '#6366f1';
-const BLANK  = { date: '', description: '', amount: '', category: '' };
+const BLANK = { date: '', description: '', amount: '', category: '' };
 
 export default function ManualEntryForm({ onAdd }) {
+  const toast = useToast();
   const [form,    setForm]    = useState(BLANK);
-  const [success, setSuccess] = useState(false);
   const [errors,  setErrors]  = useState({});
 
   function validate() {
@@ -37,25 +37,24 @@ export default function ManualEntryForm({ onAdd }) {
     await onAdd([txn], 'Manual entry');
     setForm(BLANK);
     setErrors({});
-    setSuccess(true);
-    setTimeout(() => setSuccess(false), 1800);
+    toast.success('Transaction added');
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1">Date *</label>
+          <label className="block text-xs font-semibold text-muted mb-1">Date *</label>
           <input
             type="date"
             value={form.date}
             onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-            className={`w-full bg-white border rounded-xl px-3 py-2.5 text-sm text-slate-800 outline-none transition-colors ${errors.date ? 'border-red-300' : 'border-slate-200 focus:border-indigo-300'}`}
+            className={`w-full bg-surface border rounded-xl px-3 py-2.5 text-sm text-ink outline-none transition-colors ${errors.date ? 'border-red-300' : 'border-edge focus:border-indigo-300'}`}
           />
           {errors.date && <p className="text-red-500 text-xs mt-1">{errors.date}</p>}
         </div>
         <div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1">Amount (USD) *</label>
+          <label className="block text-xs font-semibold text-muted mb-1">Amount (USD) *</label>
           <input
             type="number"
             min="0.01"
@@ -63,32 +62,32 @@ export default function ManualEntryForm({ onAdd }) {
             value={form.amount}
             onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
             placeholder="0.00"
-            className={`w-full bg-white border rounded-xl px-3 py-2.5 text-sm text-slate-800 outline-none transition-colors ${errors.amount ? 'border-red-300' : 'border-slate-200 focus:border-indigo-300'}`}
+            className={`w-full bg-surface border rounded-xl px-3 py-2.5 text-sm text-ink outline-none transition-colors ${errors.amount ? 'border-red-300' : 'border-edge focus:border-indigo-300'}`}
           />
           {errors.amount && <p className="text-red-500 text-xs mt-1">{errors.amount}</p>}
         </div>
       </div>
 
       <div>
-        <label className="block text-xs font-semibold text-slate-500 mb-1">Description *</label>
+        <label className="block text-xs font-semibold text-muted mb-1">Description *</label>
         <input
           type="text"
           value={form.description}
           onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
           placeholder="e.g. Trader Joe's, Uber, Netflix…"
-          className={`w-full bg-white border rounded-xl px-3 py-2.5 text-sm text-slate-800 outline-none transition-colors ${errors.description ? 'border-red-300' : 'border-slate-200 focus:border-indigo-300'}`}
+          className={`w-full bg-surface border rounded-xl px-3 py-2.5 text-sm text-ink outline-none transition-colors ${errors.description ? 'border-red-300' : 'border-edge focus:border-indigo-300'}`}
         />
         {errors.description && <p className="text-red-500 text-xs mt-1">{errors.description}</p>}
       </div>
 
       <div>
-        <label className="block text-xs font-semibold text-slate-500 mb-1">
-          Category <span className="text-slate-400 font-normal">(auto-detected if blank)</span>
+        <label className="block text-xs font-semibold text-muted mb-1">
+          Category <span className="text-subtle font-normal">(auto-detected if blank)</span>
         </label>
         <select
           value={form.category}
           onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
-          className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-indigo-300 transition-colors"
+          className="w-full bg-surface border border-edge rounded-xl px-3 py-2.5 text-sm text-ink outline-none focus:border-indigo-300 transition-colors"
         >
           <option value="">Auto-detect</option>
           {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
@@ -97,9 +96,9 @@ export default function ManualEntryForm({ onAdd }) {
 
       <button
         type="submit"
-        className={`w-full flex items-center justify-center gap-2 font-bold rounded-xl py-3 text-sm text-white transition-colors btn-press ${success ? 'bg-emerald-500' : 'btn-gradient'}`}
+        className="w-full flex items-center justify-center gap-2 font-bold rounded-xl py-3 text-sm text-white transition-colors btn-press btn-gradient"
       >
-        {success ? <><Check size={16} /> Added!</> : <><Plus size={16} /> Add transaction</>}
+        <Plus size={16} /> Add transaction
       </button>
     </form>
   );

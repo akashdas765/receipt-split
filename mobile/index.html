@@ -6,15 +6,21 @@
     <meta name="theme-color" content="#6366f1" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="ReceiptSplit" />
+    <meta name="apple-mobile-web-app-title" content="Truespend" />
     <meta name="description" content="Scan receipts and split with Splitwise" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <!-- Sets the dark class before first paint (no flash of wrong theme).
+         External file, not inline, because the CSP's script-src 'self' has
+         no 'unsafe-inline' — see public/theme-init.js. Must load before any
+         other script, without defer/async. -->
+    <script src="/theme-init.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <title>ReceiptSplit</title>
+    <title>Truespend</title>
   </head>
   <body>
     <div id="root"></div>

@@ -14,6 +14,7 @@ import ApprovePage from './pages/ApprovePage';
 import InsightsPage from './pages/InsightsPage';
 import StatementsPage from './pages/StatementsPage';
 import SearchPage from './pages/SearchPage';
+import SettingsPage from './pages/SettingsPage';
 
 function Spinner() {
   return (
@@ -78,6 +79,7 @@ export default function App() {
             <Route path="/insights" element={<InsightsPage />} />
             <Route path="/statements" element={<StatementsPage />} />
             <Route path="/search" element={<SearchPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
             <Route path="*"        element={<Navigate to="/" replace />} />
           </>
         ) : (

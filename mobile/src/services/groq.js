@@ -1,4 +1,5 @@
 import { auth } from './firebase';
+import { ALL_CATEGORIES } from '../utils/categoryDetector';
 
 // Requests go through our serverless proxy so the Groq API key never ships
 // in the client bundle (previously a VITE_* env var read straight from here).
@@ -18,7 +19,8 @@ JSON structure:
   "subtotal": 0.00,
   "tax": 0.00,
   "tip": 0.00,
-  "total": 0.00
+  "total": 0.00,
+  "spendCategory": "one of: ${ALL_CATEGORIES.join(', ')}"
 }
 
 Strict rules:
@@ -31,8 +33,9 @@ Strict rules:
 7. DO NOT TRUNCATE: Include every single item.
 8. VERIFY: Sum all items ≈ subtotal (pre-tax).
 9. TIP: Include as item with category "tip" AND set top-level tip field.
-10. CATEGORIES: food, drink, alcohol, tip, fee, other.
-11. All amounts positive. Use null for unknown fields.`;
+10. CATEGORIES (per item): food, drink, alcohol, tip, fee, other.
+11. All amounts positive. Use null for unknown fields.
+12. SPEND CATEGORY: "spendCategory" is ONE category for the WHOLE receipt (not per item) — pick from the exact list given above based on the merchant name and what was purchased (e.g. a grocery store → "Groceries", a restaurant → "Food & Dining", a pharmacy → "Healthcare"). If genuinely unclear, use "Other".`;
 
 function stripFences(text) {
   if (text.includes('```json')) return text.split('```json')[1].split('```')[0].trim();
@@ -69,6 +72,11 @@ function reconcile(parsed) {
     if (EXCLUDE_STARTS.some(p => desc.startsWith(p))) return false;
     return true;
   });
+  // Guard against a hallucinated/malformed value — spendCategory must be
+  // exactly one of the categories given in the prompt, or DetailPage's
+  // category dropdown (which only offers ALL_CATEGORIES) would show
+  // something not in its own option list.
+  if (!ALL_CATEGORIES.includes(parsed.spendCategory)) parsed.spendCategory = 'Other';
   return parsed;
 }
 
@@ -79,7 +87,11 @@ function purchasableSum(parsed) {
   }, 0);
 }
 
-async function callGroq(base64, mime, userText) {
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function attemptGroq(base64, mime, userText) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45000);
 
@@ -122,16 +134,36 @@ async function callGroq(base64, mime, userText) {
       }),
     });
   } catch (err) {
-    if (err.name === 'AbortError') throw new Error('Request timed out. Check your connection and try again.');
-    throw err;
+    // Both a timeout (our own abort) and a raw network failure (dropped
+    // connection, DNS blip, offline for a moment) are transient — worth
+    // retrying rather than failing the scan outright. See callGroq below.
+    const message = err.name === 'AbortError' ? 'Request timed out. Check your connection and try again.' : err.message;
+    const retryable = new Error(message);
+    retryable.retryable = true;
+    throw retryable;
   } finally {
     clearTimeout(timer);
   }
 
-  const data = await res.json();
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    // A non-JSON body (e.g. a platform error page during an outage) means
+    // something went wrong before the request ever reached our own proxy
+    // logic — also transient, also worth retrying.
+    const err = new Error('Groq API error');
+    err.retryable = true;
+    throw err;
+  }
   if (!res.ok) {
     const message = typeof data?.error === 'string' ? data.error : data?.error?.message;
-    throw new Error(message || 'Groq API error');
+    const err = new Error(message || 'Groq API error');
+    // 5xx is Groq/the proxy having a bad moment — worth retrying. 4xx
+    // (bad request, unsupported model, oversized body, auth failure) is
+    // deterministic; retrying identical input won't change the outcome.
+    err.retryable = res.status >= 500;
+    throw err;
   }
   let parsed;
   try {
@@ -139,7 +171,8 @@ async function callGroq(base64, mime, userText) {
   } catch {
     // Surface something a user can act on instead of a raw SyntaxError
     // ("Unrecognized token '*'") — that wording means nothing to someone
-    // who just uploaded a photo.
+    // who just uploaded a photo. Not retryable — a malformed response
+    // isn't a transient-failure symptom, retrying won't fix a bad parse.
     throw new Error('Could not read this image as a receipt. Try a clearer photo, or remove it and parse the others separately.');
   }
   // Surfaces which provider actually served this request (the proxy falls
@@ -147,6 +180,25 @@ async function callGroq(base64, mime, userText) {
   // know when that happened.
   parsed._provider = res.headers.get('X-Ai-Provider') || 'groq';
   return parsed;
+}
+
+// Up to 2 retries (3 attempts total) with short backoff, only for
+// conditions attemptGroq marks retryable (network failure, timeout, 5xx) —
+// a single-shot call meant every brief network blip or momentary Groq
+// overload surfaced as a hard "scan failed" requiring the user to manually
+// try again, even though a second attempt usually just works.
+const MAX_ATTEMPTS   = 3;
+const RETRY_DELAYS_MS = [800, 2000];
+
+async function callGroq(base64, mime, userText) {
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      return await attemptGroq(base64, mime, userText);
+    } catch (err) {
+      if (!err.retryable || attempt === MAX_ATTEMPTS - 1) throw err;
+      await sleep(RETRY_DELAYS_MS[attempt]);
+    }
+  }
 }
 
 // base64: raw base64 string (no data URI prefix), mime: 'image/jpeg' or 'image/png'

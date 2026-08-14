@@ -2,7 +2,6 @@ import { auth } from './firebase';
 import { matchTransactions, computeSummary } from '../utils/matcher';
 import { detectTransfers } from '../utils/transferMatcher';
 import { isPaymentTransaction } from '../utils/paymentDetector';
-import { mapReceiptCategory } from '../utils/categoryDetector';
 import { session } from './session';
 
 // Same auth-gated proxy groq.js uses — this just sends a text-only chat
@@ -18,7 +17,7 @@ const MODEL = 'openai/gpt-oss-20b';
 // a conversation grows without capping what's shown in the UI.
 const MAX_HISTORY_TURNS = 10;
 
-const CHAT_SYSTEM = `You are a friendly personal finance assistant inside ReceiptSplit, an app that combines receipt scanning, Splitwise, and bank statement import into one expense picture. You're given JSON for one month combining — where available — the user's scanned receipts, their full Splitwise expense history (not just receipts posted through this app), and their imported bank transactions reconciled against Splitwise (matched transactions count only the user's owed share, not the full amount). You'll see which sources contributed (hasBankData, receiptCount, transactionCount) — factor that into how confident you sound about coverage. Fields: totalSpent, mySplitwiseShare, topMerchants, topCategories (pre-aggregated sums), monthly, and itemizedTransactions — the actual line items (each with date, description, category, amount, source) behind those sums, so you CAN list or filter individual transactions (e.g. "what's in Other", "list my Splitwise expenses") instead of only reporting totals — do that whenever asked, don't claim you lack the detail when itemizedTransactions has it. Be specific and cite real numbers. If something genuinely isn't in the data (e.g. a purchase never scanned or imported at all), say so honestly instead of guessing. Keep answers concise: a few sentences or a short list, plain text, no markdown headers.`;
+const CHAT_SYSTEM = `You are a friendly personal finance assistant inside Truespend, an app that combines receipt scanning, Splitwise, and bank statement import into one expense picture. You're given JSON for one month combining — where available — the user's scanned receipts, their full Splitwise expense history (not just receipts posted through this app), and their imported bank transactions reconciled against Splitwise (matched transactions count only the user's owed share, not the full amount). You'll see which sources contributed (hasBankData, receiptCount, transactionCount) — factor that into how confident you sound about coverage. Fields: totalSpent, mySplitwiseShare, topMerchants, topCategories (pre-aggregated sums), monthly, and itemizedTransactions — the actual line items (each with date, description, category, amount, source) behind those sums, so you CAN list or filter individual transactions (e.g. "what's in Other", "list my Splitwise expenses") instead of only reporting totals — do that whenever asked, don't claim you lack the detail when itemizedTransactions has it. Be specific and cite real numbers. If something genuinely isn't in the data (e.g. a purchase never scanned or imported at all), say so honestly instead of guessing. Keep answers concise: a few sentences or a short list, plain text, no markdown headers.`;
 
 // Combines every data source this app has for "where did my money go":
 //   - receipts: Firestore receipt docs scanned through this app (item-level
@@ -35,22 +34,37 @@ export function computeStats({ receipts, myId, myFullName = '', transactions = [
   const approved        = receipts.filter(r => r.approved);
   const pendingReceipts = receipts.filter(r => !r.approved);
   const receiptAmt      = r => r.grandTotal ?? r.total ?? 0;
+  // The user's own effective spend on a receipt — personTotals[myId] once
+  // it's approved and actually split (the same figure HomePage's
+  // receiptShare uses), falling back to the full receipt amount while
+  // pending since personTotals doesn't exist until approval and "my share"
+  // genuinely isn't knowable yet. Used for the category breakdown/
+  // itemized list below so a receipt split among roommates counts your
+  // share there too, not the whole group's cost.
+  const receiptShareAmt = r => r.approved ? (myId && r.personTotals?.[myId] || 0) : receiptAmt(r);
 
   const hasBankData     = transactions.length > 0;
 
   // Money moved between the user's own accounts (a Zelle self-transfer, a
   // bank->card bill payment) is never a "merchant" or real spend — without
   // this, something like "AKASH DAS" or "Payment to Chase card ending in
-  // 3358" would show up as a top merchant. Unlike StatementsPage, this view
-  // has no per-row confirm/dismiss affordance of its own, so (unlike there)
-  // every DETECTED candidate is excluded here outright, confirmed or not —
-  // same "just exclude it" treatment isPayment already gets below, not the
-  // confirm-gated one used for Statements' own totals.
+  // 3358" would show up as a top merchant. Every DETECTED candidate is
+  // excluded here outright, confirmed or not — same "exclude on detection"
+  // policy StatementsPage/HomePage now both use for their own totals; a
+  // detected-but-unconfirmed transfer still shows in Statements' Transfers
+  // tab for review, it just doesn't count as spend/income anywhere in the
+  // meantime.
   const myAccountNames = session.getAllMyAccountNames();
   const typedTxns = transactions.map(t => ({ ...t, accountType: session.getAccountType(t.source) }));
   const { pairedTxnIds, hints } = detectTransfers(typedTxns, { myAccountNames, myFullName });
   const transferIds = new Set(pairedTxnIds);
   hints.forEach(h => transferIds.add(h.txn.id));
+  // overrideConfirmedTransfer catches what detectTransfers can't find on
+  // its own: a transaction manually confirmed as a transfer (Statements'
+  // "Confirm transfer" button) or given the special "Transfers" category
+  // (TransactionsList/BankTransactionDetail's category dropdown) — neither
+  // is a pattern detectTransfers looks for, only a flag stamped on the doc.
+  transactions.forEach(t => { if (t.overrideConfirmedTransfer) transferIds.add(t.id); });
 
   // isBankAccount tags checking/bank-classified Plaid txns so
   // matchTransactions() doesn't auto-match them against Splitwise (see
@@ -74,7 +88,22 @@ export function computeStats({ receipts, myId, myFullName = '', transactions = [
   // want: full Splitwise history folded in even before any statement's
   // been imported, not gated behind having bank data at all.
   const matched      = matchTransactions(bankExpenseTxns, splitwiseExpenses);
-  const matchSummary = computeSummary(matched); // ignores isSplitOnly rows by design
+  const matchSummary = computeSummary(matched); // ignores isSplitOnly rows by design — fine for savings (below), not for total spend (see bankPersonalTotal/splitwiseShareTotal)
+
+  // Split vs personal, for the Insights "Split vs personal" chart — computed
+  // from the SAME `matched` array totalSpent below is built from (not a
+  // separate re-derivation from splitwiseExpenses, e.g. mySplitwiseShare),
+  // so the two bars are guaranteed to sum to totalSpent by construction
+  // rather than by two independent computations happening to agree. Unlike
+  // matchSummary above, this does NOT skip isSplitOnly rows — a Splitwise
+  // expense that never hit a bank transaction is still real spend for
+  // "total spend" purposes, same reasoning HomePage's actualSpend uses
+  // splitwiseSpendTotal for.
+  let bankPersonalTotal = 0, splitwiseShareTotal = 0;
+  matched.forEach(t => {
+    if (t.isSplitwised) splitwiseShareTotal += (t.effectiveAmount || 0);
+    else bankPersonalTotal += (t.effectiveAmount || 0);
+  });
 
   // Full Splitwise share — not just receipts posted through this app,
   // which is strictly narrower (misses expenses added any other way).
@@ -96,52 +125,84 @@ export function computeStats({ receipts, myId, myFullName = '', transactions = [
   // receipt amount is the best available figure). Once bank data exists,
   // pending receipts are assumed to already show up there as unmatched
   // personal spend, so they're left out to avoid double-counting.
+  //
+  // bankPersonalTotal + splitwiseShareTotal, not matchSummary.totalEffective
+  // — that field skips isSplitOnly rows by design (see above), which would
+  // silently drop any Splitwise expense that never hit a bank transaction
+  // (e.g. paid in cash) the moment ANY bank transaction existed this month,
+  // even one unrelated to it.
   const totalSpent = hasBankData
-    ? matchSummary.totalEffective
+    ? bankPersonalTotal + splitwiseShareTotal
     : mySplitwiseShare + pendingTotal;
 
-  // Merchant/category breakdowns. `matched` already covers every Splitwise
-  // expense (bank-reconciled or not), including ones posted through this
-  // app — so only pending (not-yet-posted) receipts get looped separately
-  // for merchants; otherwise a posted receipt would count twice, once as
-  // itself and once as the Splitwise expense it created. postedExpenseIds
-  // (from each approved receipt's own splitwise_expense_id — see
-  // ApprovePage) makes that dedup exact, including the case where the
-  // matcher later links that same expense to an imported bank transaction.
+  // Line-item detail — the one source both the chat's drill-down answers
+  // ("what's in Other", "list my Splitwise transactions") AND the
+  // merchant/category aggregates below are built from, so a merchant/
+  // category total and "tap it to see what's behind it" (InsightsPage's
+  // CategoryDetail) can never disagree about which records make it up —
+  // they're the same records, just grouped differently, instead of two
+  // independently-written loops that happened to (or didn't) agree. One
+  // entry per receipt (not per item within it) at receiptShareAmt (your
+  // split share) — everything else here is already transaction-granularity
+  // (one Splitwise expense, one bank charge), so a receipt exploded into
+  // its individual items at full item price both read oddly next to those
+  // and overstated a split receipt's cost. postedExpenseIds (from each
+  // approved receipt's own splitwise_expense_id — see ApprovePage) skips
+  // a posted receipt's own Splitwise expense from the second loop so it
+  // isn't listed twice — once as itself, once as the expense it created.
+  //
+  // id/kind: which underlying record this line item came from, so a UI
+  // can navigate to it for editing (see InsightsPage's CategoryDetail
+  // click-through) — not needed for the chat, but cheap to carry and
+  // avoids a second, parallel "itemized but with ids" list. 'splitwise'
+  // uses the expense's own id (isSplitOnly rows never touched a bank
+  // transaction, so there's no transaction id to use instead). 'bank' uses
+  // the transaction's own id — even for a Splitwise-matched bank row,
+  // since the bank transaction is still the editable record in Statements,
+  // not the Splitwise expense it's linked to. accountSource (bank only) is
+  // the transaction's own `source`, so a caller can preselect the right
+  // account/card filter.
   const postedExpenseIds = new Set(approved.map(r => r.splitwise_expense_id).filter(Boolean));
-  const byMerchant = {};
-  const byCategory = {};
-
-  pendingReceipts.forEach(r => {
-    const key = r.merchant || 'Unknown';
-    byMerchant[key] = (byMerchant[key] || 0) + receiptAmt(r);
-  });
-
-  // Category uses ALL receipts (posted or not) for item-level
-  // food/drink/alcohol precision — bank/Splitwise category data for the
-  // same underlying spend is intentionally skipped below to avoid double
-  // counting, at the cost of not knowing the category of a posted expense
-  // that never came from a receipt scan. Good enough for "what am I
-  // spending on", not exact to the cent.
+  const itemizedTransactions = [];
   receipts.forEach(r => {
-    (r.items || []).forEach(item => {
-      const cat = mapReceiptCategory(item.category);
-      const amt = parseFloat(item.amount) || 0;
-      byCategory[cat] = (byCategory[cat] || 0) + amt;
+    const amt = receiptShareAmt(r);
+    if (amt <= 0) return;
+    itemizedTransactions.push({
+      id:          r.id,
+      kind:        'receipt',
+      date:        r.date || r.scanned_at?.slice(0, 10) || null,
+      description: r.merchant || 'Receipt',
+      category:    r.category || 'Other',
+      amount:      amt,
+      source:      r.approved ? 'receipt' : 'receipt (pending, not yet split)',
     });
   });
-
   matched.forEach(t => {
-    const key = t.description || 'Unknown';
-    byMerchant[key] = (byMerchant[key] || 0) + (t.effectiveAmount || 0);
-    // Skip categorizing a row that's just a posted receipt's own Splitwise
-    // expense re-appearing (isSplitOnly, or later matched to a bank txn —
-    // either way, same underlying spend) — already counted above via that
-    // receipt's own items. Only count Splitwise/bank spend that never came
-    // from a receipt scan here, under its coarser bank/Splitwise category.
-    if (!postedExpenseIds.has(t.splitwiseId)) {
-      byCategory[t.category || 'Other'] = (byCategory[t.category || 'Other'] || 0) + (t.effectiveAmount || 0);
-    }
+    if (postedExpenseIds.has(t.splitwiseId)) return; // already listed above via its receipt's items
+    itemizedTransactions.push({
+      id:            t.isSplitOnly ? t.splitwiseId : t.id,
+      kind:          t.isSplitOnly ? 'splitwise' : 'bank',
+      accountSource: t.source,
+      date:          t.date || null,
+      description:   t.description || 'Unknown',
+      category:      t.category || 'Other',
+      amount:        t.effectiveAmount || 0,
+      source:        t.isSplitOnly ? 'Splitwise' : t.isSplitwised ? 'bank (Splitwise-matched)' : 'bank (personal)',
+    });
+  });
+  itemizedTransactions.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const MAX_ITEMIZED = 300; // defensive cap — data is already month-scoped by callers
+  const itemized = itemizedTransactions.slice(0, MAX_ITEMIZED);
+
+  // Merchant/category breakdowns, grouped straight off itemizedTransactions
+  // (the full, un-capped list, not the MAX_ITEMIZED-sliced `itemized`) —
+  // see the comment above for why this is derived rather than a second,
+  // separately-written aggregation.
+  const byMerchant = {};
+  const byCategory = {};
+  itemizedTransactions.forEach(t => {
+    byMerchant[t.description] = (byMerchant[t.description] || 0) + t.amount;
+    byCategory[t.category]    = (byCategory[t.category]    || 0) + t.amount;
   });
 
   const topMerchants = Object.entries(byMerchant)
@@ -153,45 +214,11 @@ export function computeStats({ receipts, myId, myFullName = '', transactions = [
     .sort((a, b) => b[1] - a[1])
     .map(([category, amount]) => ({ category, amount }));
 
-  // Line-item detail, so the chat can actually answer "what's in Other" or
-  // "list my Splitwise transactions" instead of only ever seeing the
-  // aggregated sums above — those alone have no way to answer a drill-down
-  // question since the individual entries were never in its context.
-  // Receipt items give the most granular data available (each item's own
-  // category, not the whole receipt as one line); everything else is at
-  // expense/transaction granularity. Same postedExpenseIds dedup as above.
-  const itemizedTransactions = [];
-  receipts.forEach(r => {
-    (r.items || []).forEach(item => {
-      const amt = parseFloat(item.amount) || 0;
-      if (amt <= 0) return;
-      itemizedTransactions.push({
-        date:        r.date || r.scanned_at?.slice(0, 10) || null,
-        description: `${item.description || 'Item'} (${r.merchant || 'receipt'})`,
-        category:    mapReceiptCategory(item.category),
-        amount:      amt,
-        source:      r.approved ? 'receipt' : 'receipt (pending, not yet split)',
-      });
-    });
-  });
-  matched.forEach(t => {
-    if (postedExpenseIds.has(t.splitwiseId)) return; // already listed above via its receipt's items
-    itemizedTransactions.push({
-      date:        t.date || null,
-      description: t.description || 'Unknown',
-      category:    t.category || 'Other',
-      amount:      t.effectiveAmount || 0,
-      source:      t.isSplitOnly ? 'Splitwise' : t.isSplitwised ? 'bank (Splitwise-matched)' : 'bank (personal)',
-    });
-  });
-  itemizedTransactions.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  const MAX_ITEMIZED = 300; // defensive cap — data is already month-scoped by callers
-  const itemized = itemizedTransactions.slice(0, MAX_ITEMIZED);
-
-  // Monthly mirrors totalSpent's logic so the two numbers stay consistent.
+  // Monthly mirrors totalSpent's logic so the two numbers stay consistent —
+  // includes isSplitOnly rows now too, same fix as totalSpent above.
   const byMonth = {};
   const monthlySource = hasBankData
-    ? matched.filter(t => !t.isSplitOnly).map(t => ({ date: t.date, amount: t.effectiveAmount }))
+    ? matched.map(t => ({ date: t.date, amount: t.effectiveAmount }))
     : [
         ...matched.map(t => ({ date: t.date, amount: t.effectiveAmount })), // all isSplitOnly here
         ...pendingReceipts.map(r => ({ date: r.date || r.scanned_at?.slice(0, 10), amount: receiptAmt(r) })),
@@ -212,6 +239,8 @@ export function computeStats({ receipts, myId, myFullName = '', transactions = [
     transactionCount: transactions.length,
     hasBankData,
     totalSpent,
+    bankPersonalTotal,
+    splitwiseShareTotal,
     savingsViaSplits: matchSummary.totalSavings,
     mySplitwiseShare,
     mySplitwiseShareCount,

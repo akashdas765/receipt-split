@@ -33,7 +33,7 @@ export default function MonthSlider({ currentMonth, onChange }) {
             <button
               key={d.toISOString()}
               onClick={() => onChange(d)}
-              className={`shrink-0 px-3.5 py-1.5 rounded-full text-xs font-bold transition-colors btn-press ${selected ? 'text-white' : 'bg-white text-slate-500 border border-slate-200 hover:border-indigo-200'}`}
+              className={`shrink-0 px-3.5 py-1.5 rounded-full text-xs font-bold transition-colors btn-press ${selected ? 'text-white' : 'bg-surface text-muted border border-edge hover:border-indigo-200'}`}
               style={selected ? { background: INDIGO } : {}}
             >
               {d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })}

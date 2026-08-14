@@ -56,7 +56,7 @@ export default function SignupPage() {
           <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4 logo-glow anim-float">
             <Receipt size={32} color="#fff" />
           </div>
-          <h1 className="text-3xl font-extrabold text-gradient tracking-tight">ReceiptSplit</h1>
+          <h1 className="text-3xl font-extrabold text-gradient tracking-tight">Truespend</h1>
           <p className="text-sm text-slate-400 mt-1">Create your account</p>
         </div>
 

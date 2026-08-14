@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
 import { detectCategory } from './categoryDetector';
-import { isPaymentTransaction } from './paymentDetector';
+import { isPaymentTransaction, isIncomeTransaction } from './paymentDetector';
 
 // Smart CSV parser that handles many common bank/CC export formats: Chase,
 // BoA, Wells Fargo, Capital One, Citi, Amex, Discover. Ported from
@@ -109,6 +109,7 @@ export function parseCsv(text, sourceName = 'csv') {
             category:    isCreditRow ? 'Payment' : detectCategory(desc),
             isPayment:   isCreditRow || isPaymentTransaction(desc),
             isCredit:    isCreditRow,
+            isIncome:    isCreditRow && isIncomeTransaction(desc),
           });
         }
 

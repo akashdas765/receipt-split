@@ -121,6 +121,10 @@ export async function fetchAllExpenses(myId, { datedAfter, datedBefore, groupId 
         date:          e.date,
         group_id:      e.group_id,
         category:      e.category?.name || 'Other',
+        // Splitwise's own category id (not this app's ALL_CATEGORIES) —
+        // needed to pre-select the right option in SplitwiseExpenseDetail's
+        // category editor and to send back on update_expense.
+        categoryId:    e.category?.id ?? null,
         addedBy:       e.created_by?.first_name || null,
         myPaidShare:   parseFloat(userShare?.paid_share  || 0),
         myOwedShare:   parseFloat(userShare?.owed_share  || 0),
@@ -168,6 +172,57 @@ export async function fetchAllExpenses(myId, { datedAfter, datedBefore, groupId 
     });
 
   return { expenses, otherCurrencyExpenses, paymentsReceived };
+}
+
+// Who actually paid an expense — distinct from an expense's own addedBy
+// field (who logged it in Splitwise, not necessarily who paid for it).
+// Takes the `splits` array every expense above already carries (paidShare
+// > 0 per payer, joined for the rare split-payment case). Shared between
+// HomePage's compact rows and ReceiptDetail/SplitwiseExpenseDetail's
+// fuller view so the two never derive it differently.
+export function paidByName(splits) {
+  return (splits || []).filter(s => (s.paidShare || 0) > 0).map(s => s.name).join(', ') || null;
+}
+
+// Splitwise's own category tree (top-level categories, most with
+// subcategories — the actual assignable leaf is a subcategory for most
+// top-levels, but a few like "General"/"Uncategorized" have none and are
+// assignable directly). Separate from this app's own ALL_CATEGORIES list
+// (categoryDetector.js) — used only for editing the category on a
+// Splitwise-original expense we didn't create, where changing it needs to
+// use Splitwise's own taxonomy so the group sees a category that actually
+// exists in their Splitwise UI.
+export async function fetchCategories() {
+  const res  = await swFetch('/get_categories');
+  const data = await res.json();
+  if (!res.ok || data?.error) throw new Error(data?.error || 'Could not load Splitwise categories.');
+  return (data.categories || []).map(c => ({
+    id:   c.id,
+    name: c.name,
+    subcategories: (c.subcategories || []).map(sc => ({ id: sc.id, name: sc.name })),
+  }));
+}
+
+// Changes the category on an expense that already exists in Splitwise —
+// distinct from postExpense's update path (which re-sends the full expense
+// to avoid duplicating it on re-approval). This sends only category_id,
+// Splitwise's update_expense endpoint supports partial-field updates so the
+// rest of the expense (cost, split, description) is left untouched.
+export async function updateExpenseCategory(expenseId, categoryId) {
+  const res  = await swFetch(`/update_expense/${expenseId}`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body:    `category_id=${encodeURIComponent(categoryId)}`,
+  });
+  const data = await res.json();
+  if (!res.ok || (data?.errors && Object.keys(data.errors).length > 0)) {
+    const message = data?.errors
+      ? Object.values(data.errors).flat().join(' ')
+      : (data?.error || 'Splitwise rejected the category change.');
+    throw new Error(message);
+  }
+  const expense = data?.expenses?.[0];
+  return { category: expense?.category?.name, categoryId: expense?.category?.id };
 }
 
 export async function postExpense({ description, details, groupId, paidAmounts = {}, personTotals, members, expenseId }) {

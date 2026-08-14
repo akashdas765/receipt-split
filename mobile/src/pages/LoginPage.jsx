@@ -1,15 +1,18 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Receipt, Mail, Lock, AlertCircle } from 'lucide-react';
-import { login } from '../services/auth';
+import { login, resetPassword } from '../services/auth';
+import { useToast } from '../components/ToastProvider';
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [email,   setEmail]   = useState('');
   const [pass,    setPass]    = useState('');
   const [showPw,  setShowPw]  = useState(false);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
+  const [resetting, setResetting] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -24,6 +27,19 @@ export default function LoginPage() {
     }
   };
 
+  const handleForgotPassword = async () => {
+    if (!email.trim()) { setError('Enter your email above first, then tap "Forgot password?"'); return; }
+    setError(''); setResetting(true);
+    try {
+      await resetPassword(email.trim());
+      toast.success(`Password reset email sent to ${email.trim()}`);
+    } catch (err) {
+      toast.error(err?.message || 'Could not send reset email');
+    } finally {
+      setResetting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4 aurora-bg">
       <div className="w-full max-w-sm">
@@ -32,7 +48,7 @@ export default function LoginPage() {
           <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4 logo-glow anim-float">
             <Receipt size={32} color="#fff" />
           </div>
-          <h1 className="text-3xl font-extrabold text-gradient tracking-tight">ReceiptSplit</h1>
+          <h1 className="text-3xl font-extrabold text-gradient tracking-tight">Truespend</h1>
           <p className="text-sm text-slate-400 mt-1">Sign in to your account</p>
         </div>
 
@@ -65,6 +81,12 @@ export default function LoginPage() {
                 {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
+            <button
+              type="button" onClick={handleForgotPassword} disabled={resetting}
+              className="text-xs font-semibold mt-2 disabled:opacity-60" style={{ color: 'var(--indigo)' }}
+            >
+              {resetting ? 'Sending…' : 'Forgot password?'}
+            </button>
           </div>
 
           {error && (

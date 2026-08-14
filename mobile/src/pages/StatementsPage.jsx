@@ -10,6 +10,7 @@ import { matchTransactions, computeSummary } from '../utils/matcher';
 import { detectTransfers } from '../utils/transferMatcher';
 import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { isPaymentTransaction, isIncomeTransaction, isCreditConfirmation } from '../utils/paymentDetector';
+import { TRANSFER_CATEGORY } from '../utils/categoryDetector';
 import { session } from '../services/session';
 import { useToast } from '../components/ToastProvider';
 import StatementUpload from '../components/StatementUpload';
@@ -277,7 +278,15 @@ export default function StatementsPage() {
       .map(t => ({
         ...t,
         isBankAccount: session.isBankAccountSource(t.source),
-        isTransfer: transferLabelById.has(t.id),
+        // overrideConfirmedTransfer alone (no detection backing it) is
+        // included here too — detectTransfers/findTransferPairs have no
+        // idea a transaction was manually marked as a transfer from
+        // TransactionsList's own row (see onConfirmTransfer below), since
+        // that override isn't a signal they look at, only a totals-
+        // exclusion flag. Without this, a manually-confirmed transfer that
+        // auto-detection never found would keep showing amber/unmatched
+        // styling even after being confirmed.
+        isTransfer: transferLabelById.has(t.id) || !!t.overrideConfirmedTransfer,
         transferHintLabel: transferLabelById.get(t.id),
       })),
     [monthlyTransactions, transferLabelById]
@@ -287,13 +296,16 @@ export default function StatementsPage() {
   // money paid out (a debit), full stop. Replaces the old isCreditConfirmation
   // guesswork (which tried to tell a card "payment thank you" apart from a
   // plain merchant refund and needed its own confirm/dismiss step to do it).
-  // Transfers never count as either — same "only exclude once actually
-  // confirmed" policy used everywhere else in this file (an unconfirmed
-  // transfer candidate still counts here until confirmed in the Transfers
-  // tab), and pending is excluded since the amount isn't final yet.
+  // Transfers never count as either — excluded the moment they're DETECTED
+  // (transferLabelById.has), not only once confirmed (overrideConfirmedTransfer
+  // still checked too, for a manual mark that detection itself never found —
+  // see the Transfers category/Confirm-transfer button). A detected candidate
+  // stays visible and confirmable/dismissable in the Transfers tab; this just
+  // keeps it out of the totals in the meantime, same reasoning HomePage's
+  // personalSpendTxns uses. Pending is excluded since the amount isn't final yet.
   const paymentsReceived = useMemo(() =>
     monthlyTransactions
-      .filter(t => t.isCredit && !t.isPending && !t.overrideConfirmedTransfer)
+      .filter(t => t.isCredit && !t.isPending && !t.overrideConfirmedTransfer && !transferLabelById.has(t.id))
       .map(t => ({ ...t, isTransfer: transferLabelById.has(t.id), transferHintLabel: transferLabelById.get(t.id) })),
     [monthlyTransactions, transferLabelById]
   );
@@ -310,7 +322,7 @@ export default function StatementsPage() {
     monthlyTransactions
       .filter(t => isCardsView
         ? (t.isCredit && !t.isPending && isCreditConfirmation(t.description))
-        : (!t.isCredit && !t.isPending && !t.overrideConfirmedTransfer))
+        : (!t.isCredit && !t.isPending && !t.overrideConfirmedTransfer && !transferLabelById.has(t.id)))
       .map(t => ({ ...t, isTransfer: transferLabelById.has(t.id), transferHintLabel: transferLabelById.get(t.id) })),
     [monthlyTransactions, transferLabelById, isCardsView]
   );
@@ -334,18 +346,17 @@ export default function StatementsPage() {
 
   // Spend/expense TOTALS still exclude transfers (a transfer was never
   // spend, however visible it stays in the actual transaction list) — used
-  // by the stat bar below instead of bankExpenseTxns directly. Excludes only
-  // CONFIRMED transfers (overrideConfirmedTransfer), not just detected ones
-  // (isTransfer) — same "don't change a total before confirmation" policy
-  // accountSummary/paymentsMade/paymentsReceived already use below. An
-  // unconfirmed candidate that turns out to be a false positive (two
-  // unrelated charges that coincidentally matched) would otherwise vanish
-  // from "Actual spend" the moment it's detected, before the user ever gets
-  // a chance to dismiss it as "not a transfer" in the Transfers tab. Also
-  // excludes isPayment (bill payments/account transfers) — bankExpenseTxns
-  // now includes those for ledger completeness (see its own comment), but
-  // paying your own card bill or moving money to savings still isn't spend.
-  const realExpenseTxns = useMemo(() => bankExpenseTxns.filter(t => !t.isPayment && !t.overrideConfirmedTransfer), [bankExpenseTxns]);
+  // by the stat bar below instead of bankExpenseTxns directly. Excludes on
+  // DETECTION (t.isTransfer, which bankExpenseTxns already tags as
+  // transferLabelById.has || overrideConfirmedTransfer — see its own
+  // comment), not just once confirmed — same "exclude the moment it looks
+  // like a transfer" policy HomePage's personalSpendTxns uses, applied here
+  // too now (a detected candidate stays visible/confirmable in the Transfers
+  // tab; this just keeps it out of the total in the meantime). Also excludes
+  // isPayment (bill payments/account transfers) — bankExpenseTxns now
+  // includes those for ledger completeness (see its own comment), but paying
+  // your own card bill or moving money to savings still isn't spend.
+  const realExpenseTxns = useMemo(() => bankExpenseTxns.filter(t => !t.isPayment && !t.isTransfer), [bankExpenseTxns]);
 
   // Account-aware Debit/Credit/Net summary — deliberately computed from the
   // RAW month(+account)-scoped transaction list, not bankExpenseTxns/
@@ -372,34 +383,40 @@ export default function StatementsPage() {
     // transactions get summed into debit/credit.
     const computeFor = (txns, scopePredicate) => {
       const settled = txns.filter(t => !t.isPending);
-      // Confirmed transfers are excluded from BOTH debit and credit — money
-      // moving out to another of your own accounts was never really a
-      // debit (nothing left your net worth), and money moving in from one
-      // was never really a credit, same reason a confirmed card payment
-      // isn't real credit. overrideConfirmedTransfer is stamped directly on
-      // the transaction doc once confirmed (either side of a pair, or a
-      // hint), so checking it here needs no cross-reference back to
-      // transferPairsThisMonth/transferHintsThisMonth. Unconfirmed
-      // candidates stay counted until the user actually confirms one, same
-      // "don't change a total before confirmation" policy used everywhere
-      // else in this file.
-      const debitTxns  = settled.filter(t => !t.isCredit && !t.overrideConfirmedTransfer);
+      // Transfers are excluded from BOTH debit and credit the moment
+      // they're DETECTED — money moving out to another of your own accounts
+      // was never really a debit (nothing left your net worth), and money
+      // moving in from one was never really a credit, same reason a
+      // confirmed card payment isn't real credit. Checked via
+      // transferLabelById (detected) OR overrideConfirmedTransfer (manually
+      // marked, e.g. via the Transfers category, when detection itself
+      // missed it) — same "exclude on detection" policy realExpenseTxns/
+      // paymentsMade/paymentsReceived use above. A detected candidate stays
+      // confirmable/dismissable in the Transfers tab; this just keeps it out
+      // of the debit/credit totals in the meantime (see transferPairAmt/
+      // transferHintAmt below, which count it into the Transfers line
+      // instead so the account still reconciles).
+      const isXfer = t => transferLabelById.has(t.id) || !!t.overrideConfirmedTransfer;
+      const debitTxns  = settled.filter(t => !t.isCredit && !isXfer(t));
       // This is a ledger view (mirrors the real card/bank statement for
       // this account), so every credit counts here — including card
       // payments — unlike the Statements stat bar's "Actual Credit" card,
       // which deliberately excludes those to answer a different question
-      // ("how much real money came in this month"). Only confirmed
-      // transfers are excluded — money moving in from one of your own
-      // accounts was never really a credit either.
-      const creditTxns = settled.filter(t => t.isCredit && !t.overrideConfirmedTransfer);
+      // ("how much real money came in this month"). Transfers excluded same
+      // as debitTxns above.
+      const creditTxns = settled.filter(t => t.isCredit && !isXfer(t));
       const debit  = debitTxns.reduce((s, t) => s + (t.amount || 0), 0);
       const credit = creditTxns.reduce((s, t) => s + (t.amount || 0), 0);
       const inScope = scopePredicate;
+      // Every detected pair/hint counts here now (not just confirmed ones)
+      // to match debitTxns/creditTxns excluding them on detection — keeps
+      // this account summary internally consistent (debit + credit +
+      // transfers should track the full settled total either way).
       const transferPairAmt = transferPairsThisMonth
-        .filter(p => p.confirmed && (inScope(p.debit.source) || inScope(p.credit.source)))
+        .filter(p => inScope(p.debit.source) || inScope(p.credit.source))
         .reduce((s, p) => s + p.debit.amount, 0);
       const transferHintAmt = transferHintsThisMonth
-        .filter(h => h.confirmed && inScope(h.txn.source))
+        .filter(h => inScope(h.txn.source))
         .reduce((s, h) => s + h.txn.amount, 0);
       // debitTxns/creditTxns exposed alongside the sums so the Debit/Credit
       // boxes in TransactionsList's SummaryCard can drill down into exactly
@@ -423,15 +440,12 @@ export default function StatementsPage() {
       title: groupKey === 'bank' ? 'All Bank Accounts' : groupKey === 'credit' ? 'All Cards' : 'Uncategorized',
       ...computeFor(monthlyTransactions, s => matchesAccountFilter(s, accountFilter)),
     };
-  }, [monthlyTransactions, accountFilter, transferPairsThisMonth, transferHintsThisMonth, statements]);
+  }, [monthlyTransactions, accountFilter, transferPairsThisMonth, transferHintsThisMonth, statements, transferLabelById]);
 
   // matched includes isTransfer rows (matcher.js just never scores them —
   // see its Section 3 skip) so they still render in the Transactions tab;
-  // computeSummary excludes only CONFIRMED transfers (same reasoning as
-  // realExpenseTxns above) since "My actual spend" must not count a
-  // transfer as spend once it's actually confirmed as one, but shouldn't
-  // silently drop an unconfirmed candidate before the user's had a chance
-  // to review it — plus isPayment rows, same as realExpenseTxns.
+  // computeSummary excludes them on DETECTION (same reasoning as
+  // realExpenseTxns above) — plus isPayment rows, same as realExpenseTxns.
   const matched = useMemo(() => matchTransactions(bankExpenseTxns, swExpenses), [bankExpenseTxns, swExpenses]);
   const matchedBankOnly = useMemo(() => matched.filter(t => !t.isSplitOnly), [matched]);
   // Run the same matcher over pending transactions, kept separate from
@@ -461,7 +475,7 @@ export default function StatementsPage() {
     })),
     swExpenses
   ).filter(t => !t.isSplitOnly), [pendingTxns, swExpenses, transferLabelById]);
-  const summary = useMemo(() => computeSummary(matched.filter(t => !t.isPayment && !t.overrideConfirmedTransfer)), [matched]);
+  const summary = useMemo(() => computeSummary(matched.filter(t => !t.isPayment && !t.isTransfer)), [matched]);
   // Net spend — Actual spend minus Actual Credit (both defined above). Not
   // its own drill-down list (it's a difference of two totals, not a
   // filtered transaction set) — the two cards it's built from are each
@@ -472,7 +486,7 @@ export default function StatementsPage() {
   // drill-down list for "Actual spend"/"Amount saved via splits", kept in
   // sync with summary by construction rather than recomputed separately.
   const spendBreakdownTxns = useMemo(() =>
-    matched.filter(t => !t.isPayment && !t.overrideConfirmedTransfer && !t.isSplitOnly),
+    matched.filter(t => !t.isPayment && !t.isTransfer && !t.isSplitOnly),
     [matched]
   );
 
@@ -709,13 +723,28 @@ export default function StatementsPage() {
     overrideSplitwiseIds: null, overrideExpenseDataList: null,
   });
 
+  // Picking the special "Transfers" category is a manual "mark as transfer"
+  // action, not a real category — it writes overrideConfirmedTransfer
+  // alongside category so the transaction gets the same totals-exclusion
+  // treatment as one auto-detected (see isTransfer/overrideConfirmedTransfer
+  // checks throughout this file). Moving AWAY from Transfers to a real
+  // category clears that flag again, since picking a real category is an
+  // explicit "this isn't a transfer" — unless the flag was independently
+  // set via the Transfers tab/Confirm-transfer button while the category
+  // was something else, in which case this never touched it in the first
+  // place (wasTransferCat only fires when the OLD category was Transfers).
   const handleChangeCategory = async (txn, category) => {
-    setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category } : t));
+    const isTransferCat  = category === TRANSFER_CATEGORY;
+    const wasTransferCat = txn.category === TRANSFER_CATEGORY;
+    const overrideFields = isTransferCat ? { overrideConfirmedTransfer: true }
+      : wasTransferCat ? { overrideConfirmedTransfer: null } : null;
+    setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category, ...(overrideFields || {}) } : t));
     try {
       await updateTransactionCategory(txn.id, category);
+      if (overrideFields) await setTransactionOverride(txn.id, overrideFields);
     } catch {
       toast.error('Could not update category');
-      setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category: txn.category } : t));
+      setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category: txn.category, overrideConfirmedTransfer: txn.overrideConfirmedTransfer } : t));
     }
   };
 
@@ -1053,6 +1082,9 @@ export default function StatementsPage() {
                       onConfirmSuggestion={handleConfirmSuggestion}
                       onDelete={handleRemoveTxn}
                       onChangeCategory={handleChangeCategory}
+                      onConfirmTransfer={handleConfirmTransfer}
+                      onDismissTransfer={handleDismissTransferHint}
+                      onClearTransfer={txn => applyOverride(txn.id, { overrideConfirmedTransfer: null })}
                       initialExpandedId={pendingOpenTxnId}
                       onDebitClick={() => setStatBreakdown({
                         title: `${accountSummary.title} — Debit`, subtitle: monthRange.label,

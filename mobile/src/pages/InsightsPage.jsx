@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TrendingUp, Loader2, AlertCircle, Send } from 'lucide-react';
-import { loadReceiptsForInsights, loadTransactions, saveReceipt, updateTransactionCategory } from '../services/db';
+import { loadReceiptsForInsights, loadTransactions, saveReceipt, updateTransactionCategory, setTransactionOverride } from '../services/db';
 import { fetchCurrentUser, fetchAllExpenses, fetchGroups, fetchCategories, updateExpenseCategory } from '../services/splitwise';
 import { computeStats, askInsightsChat } from '../services/insights';
 import { getMonthRange } from '../utils/statementFormatters';
-import { getCategoryIcon, mapToSplitwiseCategory } from '../utils/categoryDetector';
+import { getCategoryIcon, mapToSplitwiseCategory, TRANSFER_CATEGORY } from '../utils/categoryDetector';
 import { useToast } from '../components/ToastProvider';
 import BottomNav from '../components/BottomNav';
 import MonthSlider from '../components/MonthSlider';
@@ -216,16 +216,24 @@ export default function InsightsPage() {
   };
 
   // Inline category change from BankTransactionDetail — same optimistic-
-  // then-revert shape as StatementsPage's own handleChangeCategory.
+  // then-revert shape as StatementsPage's own handleChangeCategory,
+  // including the "Transfers" special-case (writes overrideConfirmedTransfer
+  // alongside category — see that function's comment for the full
+  // reasoning) so computeStats picks up the exclusion too.
   const handleChangeTransactionCategory = async (txn, category) => {
-    setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category } : t));
-    setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, category } : prev);
+    const isTransferCat  = category === TRANSFER_CATEGORY;
+    const wasTransferCat = txn.category === TRANSFER_CATEGORY;
+    const overrideFields = isTransferCat ? { overrideConfirmedTransfer: true }
+      : wasTransferCat ? { overrideConfirmedTransfer: null } : null;
+    setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category, ...(overrideFields || {}) } : t));
+    setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, category, ...(overrideFields || {}) } : prev);
     try {
       await updateTransactionCategory(txn.id, category);
+      if (overrideFields) await setTransactionOverride(txn.id, overrideFields);
     } catch {
       toast.error('Could not update category');
-      setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category: txn.category } : t));
-      setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, category: txn.category } : prev);
+      setTransactions(prev => prev.map(t => t.id === txn.id ? { ...t, category: txn.category, overrideConfirmedTransfer: txn.overrideConfirmedTransfer } : t));
+      setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, category: txn.category, overrideConfirmedTransfer: txn.overrideConfirmedTransfer } : prev);
     }
   };
 

@@ -199,8 +199,21 @@ export function mapFromSplitwiseCategory(splitwiseCategoryName) {
 }
 
 export function getCategoryIcon(cat) {
+  if (cat === TRANSFER_CATEGORY) return TRANSFER_CATEGORY_ICON;
   return CATEGORIES[cat]?.icon ?? '📦';
 }
+
+// A selectable category for bank transactions only — not part of CATEGORIES/
+// ALL_CATEGORIES since it has no place on a receipt line item or a
+// Splitwise expense (nothing to map to in SPLITWISE_CATEGORY_CANDIDATES,
+// no keyword-detection use case). Picking it from a transaction's category
+// dropdown is a manual "mark as transfer" action — TransactionsList/
+// BankTransactionDetail write overrideConfirmedTransfer alongside it so the
+// transaction gets the exact same totals-exclusion treatment as one
+// detected automatically (see StatementsPage/HomePage/insights.js's
+// overrideConfirmedTransfer checks) without duplicating that logic here.
+export const TRANSFER_CATEGORY = 'Transfers';
+export const TRANSFER_CATEGORY_ICON = '🔁';
 
 export const ALL_CATEGORIES = Object.keys(CATEGORIES);
 

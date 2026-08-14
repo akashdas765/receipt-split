@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2, Clock, ArrowLeftRight, Plus, CreditCard } from 'lucide-react';
 import { formatCurrency, formatShortDate } from '../utils/statementFormatters';
-import { getCategoryIcon, ALL_CATEGORIES } from '../utils/categoryDetector';
+import { getCategoryIcon, ALL_CATEGORIES, TRANSFER_CATEGORY, TRANSFER_CATEGORY_ICON } from '../utils/categoryDetector';
 
 const INDIGO = '#6366f1';
 
@@ -16,7 +16,7 @@ const INDIGO = '#6366f1';
 // Previously two separate tabs (Review + All) — merged here so "all my
 // card activity" and "what still needs matching" live in one list instead
 // of two.
-export default function TransactionsList({ matched, creditTxns, pendingTxns = [], accountSummary, groupName, monthRange, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory, onDebitClick, onCreditClick, initialExpandedId }) {
+export default function TransactionsList({ matched, creditTxns, pendingTxns = [], accountSummary, groupName, monthRange, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory, onConfirmTransfer, onDismissTransfer, onClearTransfer, onDebitClick, onCreditClick, initialExpandedId }) {
   const [filter,   setFilter]   = useState(0); // 0=All 1=Unmatched 2=Matched 3=Credits 4=Pending
   const [expanded, setExpanded] = useState(() => initialExpandedId ? { [initialExpandedId]: true } : {});
 
@@ -146,7 +146,8 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
             kind === 'credit' ? <CreditRow key={t.id} txn={t} onDelete={onDelete} /> :
             <DebitRow key={t.id} txn={t} isOpen={!!expanded[t.id]} setExpanded={setExpanded}
               groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
-              onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} onChangeCategory={onChangeCategory} />
+              onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} onChangeCategory={onChangeCategory}
+              onConfirmTransfer={onConfirmTransfer} onDismissTransfer={onDismissTransfer} onClearTransfer={onClearTransfer} />
           ))
         ) : (
           <>
@@ -154,12 +155,14 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
             {showPending && pendingTxns.map(txn => (
               <DebitRow key={txn.id} txn={txn} isOpen={!!expanded[txn.id]} setExpanded={setExpanded}
                 groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
-                onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} onChangeCategory={onChangeCategory} />
+                onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} onChangeCategory={onChangeCategory}
+              onConfirmTransfer={onConfirmTransfer} onDismissTransfer={onDismissTransfer} onClearTransfer={onClearTransfer} />
             ))}
             {displayed.map(txn => (
               <DebitRow key={txn.id} txn={txn} isOpen={!!expanded[txn.id]} setExpanded={setExpanded}
                 groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
-                onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} onChangeCategory={onChangeCategory} />
+                onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} onChangeCategory={onChangeCategory}
+              onConfirmTransfer={onConfirmTransfer} onDismissTransfer={onDismissTransfer} onClearTransfer={onClearTransfer} />
             ))}
           </>
         )}
@@ -191,7 +194,7 @@ function CreditRow({ txn, onDelete }) {
   );
 }
 
-function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory }) {
+function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory, onConfirmTransfer, onDismissTransfer, onClearTransfer }) {
   const isOverridden = txn.manualOverride;
   const suggestion   = !txn.isSplitwised ? txn.suggestedMatch : null;
 
@@ -268,6 +271,7 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
                 className="text-xs font-semibold text-ink bg-transparent outline-none text-right"
               >
                 {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                <option value={TRANSFER_CATEGORY}>{TRANSFER_CATEGORY_ICON} {TRANSFER_CATEGORY}</option>
               </select>
             </div>
           </div>
@@ -276,7 +280,33 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
               <p className="text-xs flex items-center gap-1.5" style={{ color: INDIGO }}>
                 <ArrowLeftRight size={12} /> Money between your own accounts — not spend, not Splitwise-matchable.
               </p>
-              <p className="text-xs text-muted mt-1">Confirm or dismiss it from the Transfers tab.</p>
+              {txn.overrideConfirmedTransfer ? (
+                <div className="flex items-center justify-between mt-1.5">
+                  <p className="text-xs font-semibold flex items-center gap-1" style={{ color: INDIGO }}>
+                    <Check size={12} /> Confirmed transfer
+                  </p>
+                  {onClearTransfer && (
+                    <button onClick={() => onClearTransfer(txn)} className="text-xs font-semibold text-muted hover:text-ink transition-colors">
+                      Undo
+                    </button>
+                  )}
+                </div>
+              ) : (onConfirmTransfer || onDismissTransfer) && (
+                <div className="flex gap-2 mt-2">
+                  {onDismissTransfer && (
+                    <button onClick={() => onDismissTransfer(txn)}
+                      className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-muted border border-edge rounded-xl py-2 hover:bg-surface-alt transition-colors bg-surface">
+                      <X size={13} /> Not a transfer
+                    </button>
+                  )}
+                  {onConfirmTransfer && (
+                    <button onClick={() => onConfirmTransfer(txn)}
+                      className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-white rounded-xl py-2 transition-colors" style={{ background: INDIGO }}>
+                      <Check size={13} /> Confirm transfer
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ) : txn.isPayment ? (
             <div className="rounded-xl p-2.5 bg-surface-alt">
@@ -374,6 +404,13 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
               </>
             )}
           </div>
+          )}
+
+          {!txn.isTransfer && !txn.isPayment && !txn.isSplitwised && onConfirmTransfer && (
+            <button onClick={() => { onConfirmTransfer(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
+              className="flex items-center justify-center gap-1.5 text-xs font-semibold text-muted hover:text-ink transition-colors pt-1">
+              <ArrowLeftRight size={12} /> Mark as transfer between my accounts
+            </button>
           )}
         </div>
       )}

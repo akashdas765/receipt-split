@@ -1,7 +1,7 @@
 import React from 'react';
 import { X, Calendar, Landmark, Tag, ArrowUpRight } from 'lucide-react';
 import { formatCurrency, formatShortDate } from '../utils/statementFormatters';
-import { ALL_CATEGORIES, getCategoryIcon } from '../utils/categoryDetector';
+import { ALL_CATEGORIES, getCategoryIcon, TRANSFER_CATEGORY, TRANSFER_CATEGORY_ICON } from '../utils/categoryDetector';
 
 // Detail sheet for a bank transaction — same view+inline-category-edit
 // shape as ReceiptDetail/SplitwiseExpenseDetail, shared between
@@ -62,6 +62,7 @@ export default function BankTransactionDetail({ txn, matchLabel, onChangeCategor
                   className="text-sm font-semibold text-ink bg-transparent outline-none text-right min-w-0"
                 >
                   {ALL_CATEGORIES.map(cat => <option key={cat} value={cat}>{getCategoryIcon(cat)} {cat}</option>)}
+                  <option value={TRANSFER_CATEGORY}>{TRANSFER_CATEGORY_ICON} {TRANSFER_CATEGORY}</option>
                 </select>
               </div>
             )}

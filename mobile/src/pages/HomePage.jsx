@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Receipt, Settings as SettingsIcon, Trash2, CheckCheck, AlertTriangle, X, Users, AlertCircle, Landmark, CreditCard, Loader2, ArrowLeftRight } from 'lucide-react';
-import { loadReceiptsForInsights, deleteReceipt, saveReceipt, loadManualAccounts, saveManualAccount, deleteManualAccount, loadTransactions, updateTransactionCategory } from '../services/db';
+import { loadReceiptsForInsights, deleteReceipt, saveReceipt, loadManualAccounts, saveManualAccount, deleteManualAccount, loadTransactions, updateTransactionCategory, setTransactionOverride } from '../services/db';
 import { fetchCurrentUser, fetchAllExpenses, fetchGroups, fetchNetBalance, fetchCategories, updateExpenseCategory, paidByName } from '../services/splitwise';
 import { fetchAccountBalances } from '../services/plaid';
 import { session } from '../services/session';
 import { accountLabel } from '../utils/accountLabel';
-import { getCategoryIcon, mapToSplitwiseCategory, mapFromSplitwiseCategory } from '../utils/categoryDetector';
+import { getCategoryIcon, mapToSplitwiseCategory, mapFromSplitwiseCategory, TRANSFER_CATEGORY } from '../utils/categoryDetector';
 import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { matchTransactions } from '../utils/matcher';
 import { detectTransfers } from '../utils/transferMatcher';
@@ -225,16 +225,21 @@ export default function HomePage() {
   // Transfers between the user's own accounts — same detection
   // StatementsPage runs, so a transaction that's an obvious transfer
   // (e.g. "Withdrawal to 360 Checking") shows a hint here too instead of
-  // silently reading as ordinary personal spend with no explanation. See
-  // StatementsPage's own comment on this exact pattern: detected transfers
-  // stay fully visible and counted in "Actual spend" until CONFIRMED (not
-  // just detected) in Statements' Transfers tab — an unconfirmed candidate
-  // could be a false positive (two unrelated charges that coincidentally
-  // matched), so removing it from spend before the user gets a chance to
-  // dismiss it would be worse than the alternative. Scanned across ALL
-  // bankTxns (not month-scoped) widened ±3 days past the visible month —
-  // same reasoning as transferScanTxns there — so a pair straddling a
-  // month boundary is still found.
+  // silently reading as ordinary personal spend with no explanation.
+  // Unlike StatementsPage (which only excludes a CONFIRMED transfer from
+  // its totals, since it has a Transfers tab to confirm/dismiss a
+  // candidate in), HomePage excludes any DETECTED transfer from spend
+  // totals immediately — see personalSpendTxns below — because it has no
+  // such tab of its own; requiring a trip to Statements just to stop an
+  // obvious transfer from inflating Actual Spend would leave the number
+  // wrong indefinitely for anyone who never makes that trip. The
+  // transaction itself stays fully visible in the timeline either way
+  // (labeled, not hidden), so a false-positive detection is still
+  // reviewable and dismissible in Statements — it just doesn't get to
+  // silently count as spend in the meantime. Scanned across ALL bankTxns
+  // (not month-scoped) widened ±3 days past the visible month — same
+  // reasoning as transferScanTxns there — so a pair straddling a month
+  // boundary is still found.
   const myAccountNames = useMemo(() => session.getAllMyAccountNames(), [bankTxns]);
   const transferScanTxns = useMemo(() => {
     const pad = (dateStr, days) => {
@@ -291,6 +296,17 @@ export default function HomePage() {
     [realBankExpenseTxns, splitwiseExpenses]
   );
   const personalTxns = useMemo(() => matchedSpendTxns.filter(t => !t.isSplitwised), [matchedSpendTxns]);
+  // Transfers are still shown (via personalTxns/combinedTimeline below,
+  // with their "Possible transfer" badge) but never counted as spend —
+  // same "a transfer was never spend" principle StatementsPage's own
+  // totals use, applied without requiring confirmation first since
+  // HomePage has no Transfers tab of its own to confirm/dismiss in (an
+  // obvious candidate like "Withdrawal to 360 Checking" would otherwise
+  // count as personal spend indefinitely, with only a badge saying
+  // otherwise). Feeds every dollar total/count derived below
+  // (categorizedSpendTxns, myShareTotal's personal share) — the full,
+  // transfer-inclusive lists are untouched for actually displaying rows.
+  const personalSpendTxns = useMemo(() => personalTxns.filter(t => !t.isTransfer), [personalTxns]);
 
   // Splitwise expense ids already represented in matchedSpendTxns (a bank
   // charge the auto-matcher linked to that expense) — used below so a
@@ -435,10 +451,17 @@ export default function HomePage() {
   // "my share" isn't knowable — kept out of every bucket and shown
   // separately below instead of silently inflating one of them with a full
   // amount that isn't really "my spend" yet.
+  // myShareCount deliberately still counts every personalTxns row (transfer
+  // included) — filteredTimeline right below this renders the same full
+  // list, and the two need to agree on "how many rows" even though the $
+  // total above (personalShare) excludes the transfer's amount. A $0-
+  // contributing row still being counted as "a transaction" is the more
+  // honest tradeoff versus the count silently disagreeing with the visible
+  // list length.
   const { myShareTotal, myShareCount } = useMemo(() => {
     const receiptShare  = approvedMonthlyReceipts.reduce((s, r) => s + (myId && r.personTotals?.[myId] || 0), 0);
     const splitwiseShare = splitwiseSpendTotal + matchedSplitwiseOnlyShare;
-    const personalShare  = personalTxns.reduce((s, t) => s + (t.effectiveAmount || 0), 0);
+    const personalShare  = personalSpendTxns.reduce((s, t) => s + (t.effectiveAmount || 0), 0);
     if (txnFilter === 'receipt')   return { myShareTotal: receiptShare, myShareCount: approvedMonthlyReceipts.length };
     if (txnFilter === 'splitwise') return { myShareTotal: splitwiseShare, myShareCount: splitwiseOnly.length };
     if (txnFilter === 'personal')  return { myShareTotal: personalShare, myShareCount: personalTxns.length };
@@ -446,7 +469,7 @@ export default function HomePage() {
       myShareTotal: receiptShare + splitwiseShare + personalShare,
       myShareCount: approvedMonthlyReceipts.length + splitwiseOnly.length + personalTxns.length,
     };
-  }, [txnFilter, approvedMonthlyReceipts, splitwiseOnly, personalTxns, myId, splitwiseSpendTotal, matchedSplitwiseOnlyShare]);
+  }, [txnFilter, approvedMonthlyReceipts, splitwiseOnly, personalTxns, personalSpendTxns, myId, splitwiseSpendTotal, matchedSplitwiseOnlyShare]);
 
   // Net worth = cash on hand + what you're owed - what you owe. Credit
   // card `current` balance is what you owe on it (a liability), so it
@@ -480,10 +503,16 @@ export default function HomePage() {
   const netWorth = bankTotal - creditDebtTotal + splitwiseNet + manualAssetTotal - manualLiabilityTotal;
   const hasNetWorthData = hasPlaidAccounts || manualAccounts.length > 0;
 
-  // Bank transactions + unmatched posted receipts, combined before the
-  // category split so a receipt's spend lands in the right bucket the same
-  // way a bank transaction's does (see unmatchedReceiptTxns above).
-  const categorizedSpendTxns = useMemo(() => [...matchedSpendTxns, ...unmatchedReceiptTxns], [matchedSpendTxns, unmatchedReceiptTxns]);
+  // Bank transactions (transfers excluded — see personalSpendTxns above;
+  // a transfer can only ever land here as an unmatched personal row, never
+  // Splitwise-matched, since matcher.js already refuses to score an
+  // isTransfer transaction) + unmatched posted receipts, combined before
+  // the category split so a receipt's spend lands in the right bucket the
+  // same way a bank transaction's does (see unmatchedReceiptTxns above).
+  const categorizedSpendTxns = useMemo(() =>
+    [...matchedSpendTxns.filter(t => !t.isTransfer), ...unmatchedReceiptTxns],
+    [matchedSpendTxns, unmatchedReceiptTxns]
+  );
   const loanTxns      = useMemo(() => categorizedSpendTxns.filter(t => t.category === 'Loan Payments'), [categorizedSpendTxns]);
   const rentUtilTxns  = useMemo(() => categorizedSpendTxns.filter(t => RENT_UTILITY_CATEGORIES.has(t.category)), [categorizedSpendTxns]);
   const miscTxns      = useMemo(() => categorizedSpendTxns.filter(t => !RENT_UTILITY_CATEGORIES.has(t.category) && t.category !== 'Loan Payments'), [categorizedSpendTxns]);
@@ -684,15 +713,25 @@ export default function HomePage() {
   // (matchedSpendTxns/categorizedSpendTxns are derived from it, so this
   // cascades through to the Spending card without a separate refetch),
   // same optimistic-then-revert shape as the other two category handlers.
+  // Picking the special "Transfers" category is a manual "mark as transfer"
+  // action — see StatementsPage.jsx's handleChangeCategory for the full
+  // reasoning; writes overrideConfirmedTransfer alongside category so the
+  // transaction gets excluded from Actual Spend the same way an
+  // auto-detected transfer already is (see personalSpendTxns above).
   const handleChangeTransactionCategory = async (txn, category) => {
-    setBankTxns(prev => prev.map(t => t.id === txn.id ? { ...t, category } : t));
-    setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, category } : prev);
+    const isTransferCat  = category === TRANSFER_CATEGORY;
+    const wasTransferCat = txn.category === TRANSFER_CATEGORY;
+    const overrideFields = isTransferCat ? { overrideConfirmedTransfer: true }
+      : wasTransferCat ? { overrideConfirmedTransfer: null } : null;
+    setBankTxns(prev => prev.map(t => t.id === txn.id ? { ...t, category, ...(overrideFields || {}) } : t));
+    setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, category, ...(overrideFields || {}) } : prev);
     try {
       await updateTransactionCategory(txn.id, category);
+      if (overrideFields) await setTransactionOverride(txn.id, overrideFields);
     } catch {
       toast.error('Could not update category');
-      setBankTxns(prev => prev.map(t => t.id === txn.id ? { ...t, category: txn.category } : t));
-      setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, category: txn.category } : prev);
+      setBankTxns(prev => prev.map(t => t.id === txn.id ? { ...t, category: txn.category, overrideConfirmedTransfer: txn.overrideConfirmedTransfer } : t));
+      setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, category: txn.category, overrideConfirmedTransfer: txn.overrideConfirmedTransfer } : prev);
     }
   };
 

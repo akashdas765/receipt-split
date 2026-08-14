@@ -329,18 +329,21 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
               <Unlink size={15} />
             </button>
           </div>
-          {/* Manual fallback — StatementsPage.jsx auto-detects and fixes
-              legacy-format transactions (pre-per-account-split) on load, so
-              this shouldn't normally be needed, but stays as a way to force
-              a full re-sync regardless of account count (a single-account
-              connection can carry the legacy format just as easily as a
-              multi-account one — no reason to gate this on account count). */}
+          {/* Originally just a manual fallback for legacy-format transactions
+              (pre-per-account-split) — StatementsPage.jsx auto-fixes those on
+              load, so this shouldn't normally be needed for that anymore.
+              Kept (and now labeled for its more common real use) because a
+              full re-sync — cursor reset to null, re-pulls the whole history
+              — also undoes an accidentally deleted transaction: ids are
+              stable and addTransactions writes with merge:true, so Plaid
+              handing the same transaction back just recreates the Firestore
+              doc rather than duplicating it. */}
           <button
             onClick={() => doSync(active, { full: true })}
             disabled={syncingId === active.itemId}
             className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold text-indigo-500 hover:bg-indigo-50 transition-colors btn-press disabled:opacity-60"
           >
-            {fullSyncId === active.itemId ? <><Loader2 size={12} className="animate-spin" /> Re-tagging past transactions by card…</> : 'Re-split older transactions by card'}
+            {fullSyncId === active.itemId ? <><Loader2 size={12} className="animate-spin" /> Restoring full history…</> : 'Restore full history (undo a deleted transaction)'}
           </button>
         </div>
       ) : (

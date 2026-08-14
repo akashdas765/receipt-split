@@ -48,16 +48,23 @@ export function computeStats({ receipts, myId, myFullName = '', transactions = [
   // Money moved between the user's own accounts (a Zelle self-transfer, a
   // bank->card bill payment) is never a "merchant" or real spend — without
   // this, something like "AKASH DAS" or "Payment to Chase card ending in
-  // 3358" would show up as a top merchant. Unlike StatementsPage, this view
-  // has no per-row confirm/dismiss affordance of its own, so (unlike there)
-  // every DETECTED candidate is excluded here outright, confirmed or not —
-  // same "just exclude it" treatment isPayment already gets below, not the
-  // confirm-gated one used for Statements' own totals.
+  // 3358" would show up as a top merchant. Every DETECTED candidate is
+  // excluded here outright, confirmed or not — same "exclude on detection"
+  // policy StatementsPage/HomePage now both use for their own totals; a
+  // detected-but-unconfirmed transfer still shows in Statements' Transfers
+  // tab for review, it just doesn't count as spend/income anywhere in the
+  // meantime.
   const myAccountNames = session.getAllMyAccountNames();
   const typedTxns = transactions.map(t => ({ ...t, accountType: session.getAccountType(t.source) }));
   const { pairedTxnIds, hints } = detectTransfers(typedTxns, { myAccountNames, myFullName });
   const transferIds = new Set(pairedTxnIds);
   hints.forEach(h => transferIds.add(h.txn.id));
+  // overrideConfirmedTransfer catches what detectTransfers can't find on
+  // its own: a transaction manually confirmed as a transfer (Statements'
+  // "Confirm transfer" button) or given the special "Transfers" category
+  // (TransactionsList/BankTransactionDetail's category dropdown) — neither
+  // is a pattern detectTransfers looks for, only a flag stamped on the doc.
+  transactions.forEach(t => { if (t.overrideConfirmedTransfer) transferIds.add(t.id); });
 
   // isBankAccount tags checking/bank-classified Plaid txns so
   // matchTransactions() doesn't auto-match them against Splitwise (see

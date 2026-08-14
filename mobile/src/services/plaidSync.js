@@ -31,6 +31,28 @@ async function carryOverridesForward(txn) {
   return Object.keys(carried).length ? { ...txn, ...carried } : txn;
 }
 
+// plaid.js stamps every synced transaction with a fresh
+// `category: detectCategory(desc)` guess (see its own comment) — fine for a
+// transaction Firestore has never seen, but Plaid resends a transaction
+// under `modified` for reasons that have nothing to do with its category
+// (a pending amount settling, a merchant name tweak), and a full resync
+// (PlaidConnect's "Restore full history") resends EVERY past transaction —
+// either would otherwise silently blow away a category the user manually
+// corrected (or one already auto-detected and left alone), overwriting it
+// right back to whatever keyword-matching guesses today via addTransactions'
+// merge:true write. Dropping `category` from the outgoing object (rather
+// than setting it back to the old value) is what actually protects it —
+// merge:true only leaves a field untouched when it's absent from the write
+// entirely. Only applies once a transaction already has a stored category;
+// a genuinely new one still gets its first auto-detected guess.
+async function preserveStoredCategory(txn) {
+  const existing = await getTransaction(txn.id).catch(() => null);
+  if (!existing?.category) return txn;
+  const rest = { ...txn };
+  delete rest.category;
+  return rest;
+}
+
 // Core of a Plaid sync, extracted from PlaidConnect.jsx's doSync so it can
 // run without that component being mounted — needed by StatementsPage.jsx's
 // auto-fix for legacy-format transactions (see the source-format comment in
@@ -66,7 +88,7 @@ export async function syncPlaidConnection(conn, { full = false, onAdd }) {
       const acct  = accounts.find(a => a.id === accountId);
       const label = acct ? accountLabel(acct) : (conn.institutionName || 'Bank (Plaid)');
       const withSource = await Promise.all(
-        txns.map(t => carryOverridesForward({ ...t, source: `plaid-${conn.itemId}-${accountId}` }))
+        txns.map(t => carryOverridesForward({ ...t, source: `plaid-${conn.itemId}-${accountId}` }).then(preserveStoredCategory))
       );
       await onAdd(withSource, label);
     }

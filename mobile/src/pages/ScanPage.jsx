@@ -78,28 +78,31 @@ async function imageToDataUrl(file) {
   });
 }
 
-async function imageToBase64(file) {
-  const dataUrl = await imageToDataUrl(file);
-  return dataUrl.split(',')[1];
-}
+// A phone camera photo is routinely 3-10MB at full resolution — base64
+// inflates that another ~33% before it even reaches the proxy's 12MB body
+// cap (see shared/groqProxy.js's MAX_BODY_BYTES), and a multi-MB upload on
+// a slow mobile connection eats into the request timeout for no OCR-quality
+// benefit (receipt text is legible in the scan well below full camera
+// resolution). Every image — HEIC included, which Groq's vision API
+// rejects outright with a 400 unless re-encoded first — goes through this
+// single canvas resize+re-encode pass instead of being sent as-is.
+const MAX_IMAGE_DIM = 2200;
+const IMAGE_QUALITY  = 0.85;
 
-const GROQ_SUPPORTED_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
-
-// Groq's vision API rejects HEIC/HEIF (and anything else outside the
-// standard web formats) with a 400. Re-encode those to JPEG via canvas;
-// leave already-supported formats untouched (no need to pay the decode
-// cost when it isn't necessary).
 async function toGroqCompatible(file) {
-  if (GROQ_SUPPORTED_MIMES.has(file.type)) {
-    return { b64: await imageToBase64(file), mime: file.type };
-  }
   const bitmap = await createImageBitmap(file);
   try {
+    let { width, height } = bitmap;
+    if (Math.max(width, height) > MAX_IMAGE_DIM) {
+      const scale = MAX_IMAGE_DIM / Math.max(width, height);
+      width  = Math.round(width * scale);
+      height = Math.round(height * scale);
+    }
     const canvas = document.createElement('canvas');
-    canvas.width  = bitmap.width;
-    canvas.height = bitmap.height;
-    canvas.getContext('2d').drawImage(bitmap, 0, 0);
-    return { b64: canvas.toDataURL('image/jpeg', 0.92).split(',')[1], mime: 'image/jpeg' };
+    canvas.width  = width;
+    canvas.height = height;
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
+    return { b64: canvas.toDataURL('image/jpeg', IMAGE_QUALITY).split(',')[1], mime: 'image/jpeg' };
   } finally {
     bitmap.close();
   }

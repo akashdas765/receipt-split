@@ -93,19 +93,35 @@ export async function proxyGroq({ idToken, body }) {
   // above actually takes effect (and callNvidia re-parses this same string).
   body = JSON.stringify(parsedBody);
 
+  const nvidiaKey = process.env.NVIDIA_API_KEY;
+
   // A network-level failure reaching Groq (dropped connection, EPIPE on a
   // large image body, DNS blip, ...) must not escape as an uncaught
   // exception — that crashes the whole function and the client sees a
   // platform error page instead of JSON, which res.json() then chokes on.
+  // Also worth an NVIDIA attempt, same as the 429/5xx cases below — a
+  // dropped connection to Groq reads the same as "Groq isn't working right
+  // now" from here.
   let groqRes;
   try {
     groqRes = await callGroq(groqKey, body);
   } catch (err) {
+    if (nvidiaKey) {
+      try {
+        const nvidiaRes = await callNvidia(nvidiaKey, body);
+        return { status: nvidiaRes.status, bodyText: await nvidiaRes.text(), provider: 'nvidia' };
+      } catch { /* fall through to the original network error below */ }
+    }
     return { status: 502, bodyText: JSON.stringify({ error: `Could not reach Groq: ${err.message}` }) };
   }
 
-  const nvidiaKey = process.env.NVIDIA_API_KEY;
-  if (groqRes.status !== 429 || !nvidiaKey) {
+  // 429 (rate-limited) and 5xx (Groq itself erroring/overloaded) both mean
+  // "Groq isn't serving this request right now" — not a problem with the
+  // request itself, so NVIDIA is worth trying before giving up. A 4xx below
+  // 429 (bad request, unsupported model) is deterministic and NVIDIA would
+  // fail it the same way, so it isn't worth the extra round trip.
+  const groqTransientError = groqRes.status === 429 || groqRes.status >= 500;
+  if (!groqTransientError || !nvidiaKey) {
     return { status: groqRes.status, bodyText: await groqRes.text(), provider: 'groq' };
   }
 
@@ -113,7 +129,7 @@ export async function proxyGroq({ idToken, body }) {
   try {
     nvidiaRes = await callNvidia(nvidiaKey, body);
   } catch {
-    // Fallback itself failed — surface the original Groq rate-limit error
+    // Fallback itself failed — surface the original Groq error (429 or 5xx)
     // rather than a fallback-specific one, since that's the actual cause.
     return { status: groqRes.status, bodyText: await groqRes.text(), provider: 'groq' };
   }

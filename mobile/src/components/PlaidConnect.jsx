@@ -4,7 +4,7 @@ import { Landmark, Loader2, CheckCircle2, RefreshCw, Unlink, AlertCircle, Plus, 
 import { session } from '../services/session';
 import { createLinkToken, exchangePublicToken, fetchAccounts, defaultAccountType } from '../services/plaid';
 import { syncPlaidConnection } from '../services/plaidSync';
-import { savePlaidConnection, deletePlaidConnection, renameTransactionsSource } from '../services/db';
+import { savePlaidConnection, deletePlaidConnection, renameTransactionsSource, logNotification } from '../services/db';
 import { accountLabel } from '../utils/accountLabel';
 
 const INDIGO = '#6366f1';
@@ -96,6 +96,11 @@ export default function PlaidConnect({ onAdd, onRenameSource }) {
         const conn = { itemId, accessToken, cursor: null, institutionName, accounts };
         session.upsertPlaidConnection(conn);
         await savePlaidConnection(conn);
+        logNotification({
+          type: 'bank_linked',
+          text: `${institutionName || 'A bank account'} was linked to your account`,
+          navigateTo: '/statements',
+        }).catch(() => {});
         refreshConnections();
         setActiveItemId(itemId);
         await doSync(conn);

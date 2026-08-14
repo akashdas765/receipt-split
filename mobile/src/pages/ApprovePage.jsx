@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { CloudUpload, AlertCircle, CheckCircle2, Loader2, Equal } from 'lucide-react';
 import { postExpense, fetchCurrentUser } from '../services/splitwise';
-import { saveReceipt, setTransactionOverride } from '../services/db';
+import { saveReceipt, setTransactionOverride, logNotification } from '../services/db';
 import { memberColor } from '../utils/memberColor';
 import PageHeader from '../components/PageHeader';
 import TransactionPickerModal from '../components/TransactionPickerModal';
@@ -146,6 +146,15 @@ export default function ApprovePage() {
       if (!expense?.id) throw new Error('Splitwise did not confirm the expense was created.');
       if (receiptId) {
         await saveReceipt({ ...state, id: receiptId, approved: true, splitwise_expense_id: expense.id });
+      }
+      // existingExpenseId means this was a re-post/edit of an already-posted
+      // receipt, not a new one — only the first post is worth a notification.
+      if (!existingExpenseId) {
+        logNotification({
+          type: 'receipt_posted',
+          text: `${merchant || 'Receipt'} ($${grandTotal.toFixed(2)}) was posted to Splitwise`,
+          receiptId,
+        }).catch(() => {});
       }
       // Offer to match this to a bank transaction instead of navigating away
       // immediately — otherwise the receipt and its card charge show up as

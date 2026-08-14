@@ -29,6 +29,22 @@ export function getMonthRange(date = new Date()) {
   };
 }
 
+// Sunday-start week range for a date string, e.g. "Aug 10 – Aug 16" — used
+// to break a long date-descending transaction list into weekly sections
+// (see HomePage's timeline). UTC throughout, same as formatShortDate, so a
+// date string doesn't shift to the wrong week/day near midnight in a
+// non-UTC timezone.
+export function weekRangeLabel(dateStr) {
+  const d = new Date(dateStr);
+  if (isNaN(d)) return 'Unknown date';
+  const start = new Date(d);
+  start.setUTCDate(d.getUTCDate() - d.getUTCDay());
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 6);
+  const fmt = x => x.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return `${fmt(start)} – ${fmt(end)}`;
+}
+
 export function parseDate(str) {
   if (!str) return null;
   const d = new Date(str);

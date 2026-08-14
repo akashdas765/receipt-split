@@ -388,7 +388,7 @@ export default function InsightsPage() {
                             </span>
                             <div
                               className="w-full rounded-t-[4px]"
-                              style={{ height: `${pct}%`, background: EMERALD, opacity: isCurrent ? 1 : 0.35 }}
+                              style={{ height: `${pct}%`, background: isCurrent ? EMERALD : 'var(--c-surface-alt)' }}
                             />
                             <span className={`text-[10px] ${isCurrent ? 'text-ink font-bold' : 'text-subtle'}`}>{formatMonthLabel(m.month)}</span>
                           </div>

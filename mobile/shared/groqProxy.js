@@ -9,10 +9,11 @@ const NVIDIA_MODEL = 'meta/llama-3.2-11b-vision-instruct';
 
 // Signup is open, so "has a valid Firebase token" isn't much of a barrier to
 // someone wanting to run arbitrary inference on our Groq/NVIDIA quota. Pin
-// the request to the one model + token budget this app's receipt parser
-// actually uses (see src/services/groq.js's callGroq) so the endpoint can't
-// be repurposed as a general-purpose LLM its billing foots.
-const ALLOWED_MODELS = new Set(['qwen/qwen3.6-27b']);
+// the request to the exact models this app actually sends — the receipt
+// parser's vision model (src/services/groq.js's callGroq) and Insights'
+// chat model (src/services/insights.js's askInsightsChat) — so the endpoint
+// can't be repurposed as a general-purpose LLM its billing foots.
+const ALLOWED_MODELS = new Set(['qwen/qwen3.6-27b', 'openai/gpt-oss-20b']);
 const MAX_TOKENS_CAP = 4096;
 // Receipt/statement images are sent inline as base64, so the body is
 // legitimately a few MB — cap generously, only to stop absurd abuse.

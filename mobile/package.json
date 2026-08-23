@@ -9,6 +9,10 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/icons-material": "^9.3.1",
+    "@mui/material": "^9.3.1",
     "firebase": "^12.17.1",
     "jose": "^6.2.3",
     "lucide-react": "^0.400.0",

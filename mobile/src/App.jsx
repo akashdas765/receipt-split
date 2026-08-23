@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
+import { Box, CircularProgress } from '@mui/material';
 import { onAuthChange } from './services/auth';
 import { db } from './services/firebase';
 import { session } from './services/session';
@@ -18,11 +19,9 @@ import SettingsPage from './pages/SettingsPage';
 
 function Spinner() {
   return (
-    <div className="flex items-center justify-center min-h-screen aurora-bg">
-      <div className="w-14 h-14 rounded-2xl logo-glow anim-float flex items-center justify-center">
-        <div className="w-7 h-7 rounded-full border-[3px] border-white/30 border-t-white animate-spin" />
-      </div>
-    </div>
+    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100dvh' }}>
+      <CircularProgress />
+    </Box>
   );
 }
 
@@ -69,7 +68,20 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <Routes>
+      <AnimatedRoutes user={user} />
+    </BrowserRouter>
+  );
+}
+
+// Every page remounts fresh on navigation already (different route ->
+// different component); keying this wrapper on pathname just gives that
+// fresh mount a moment of motion (the `pageFadeIn` keyframe defined in
+// theme.js's MuiCssBaseline overrides) instead of an instant, jarring swap.
+function AnimatedRoutes({ user }) {
+  const location = useLocation();
+  return (
+    <Box key={location.pathname} sx={{ animation: 'pageFadeIn 220ms ease' }}>
+      <Routes location={location}>
         {user ? (
           <>
             <Route path="/"        element={<HomePage />} />
@@ -90,6 +102,6 @@ export default function App() {
           </>
         )}
       </Routes>
-    </BrowserRouter>
+    </Box>
   );
 }

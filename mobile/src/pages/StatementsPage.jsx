@@ -8,6 +8,7 @@ import { categorizeTransactions } from '../services/categorize';
 import { fetchAccounts, defaultAccountType } from '../services/plaid';
 import { matchTransactions, computeSummary } from '../utils/matcher';
 import { detectTransfers } from '../utils/transferMatcher';
+import { findStalePendingIds } from '../utils/pendingReconciler';
 import { getMonthRange, formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { isPaymentTransaction, isIncomeTransaction, isCreditConfirmation } from '../utils/paymentDetector';
 import { TRANSFER_CATEGORY } from '../utils/categoryDetector';
@@ -112,6 +113,10 @@ export default function StatementsPage() {
   // below — prevents a re-render mid-fix from firing a second concurrent
   // batch write for the same set of stale rows.
   const reclassifyingRef = useRef(false);
+  // Same concurrency guard, for the stale-pending cleanup effect below —
+  // keyed by transaction id so deleting one stale row (which changes
+  // `transactions` and re-fires the effect) doesn't re-issue its delete.
+  const stalePendingFixingRef = useRef(new Set());
 
   const groupName = id => groups.find(g => g.id === id)?.name;
   const monthRange = useMemo(() => getMonthRange(currentMonth), [currentMonth]);
@@ -664,6 +669,32 @@ export default function StatementsPage() {
         }
       })();
     }
+  }, [transactions, loadingTxns]);
+
+  // Cleans up pending transactions Plaid never told us to remove — see
+  // pendingReconciler.js for why this can't just be trusted to the
+  // `removed` array a sync already handles (services/plaidSync.js). Runs
+  // off `transactions` (so it re-checks after every Plaid sync/refresh,
+  // not just once on page load) and is silent by design, same as the
+  // legacy-source auto-fix above: this is a data-correctness fix, not
+  // something the user needs a banner for.
+  useEffect(() => {
+    if (loadingTxns) return;
+    const staleIds = findStalePendingIds(transactions).filter(id => !stalePendingFixingRef.current.has(id));
+    if (!staleIds.length) return;
+    staleIds.forEach(id => stalePendingFixingRef.current.add(id));
+    (async () => {
+      for (const id of staleIds) {
+        try {
+          await deleteTransaction(id);
+          setTransactions(prev => prev.filter(t => t.id !== id));
+        } catch (err) {
+          console.error(`Stale-pending cleanup failed for transaction ${id}:`, err);
+        } finally {
+          stalePendingFixingRef.current.delete(id);
+        }
+      }
+    })();
   }, [transactions, loadingTxns]);
 
   const handleRemoveSource = useCallback(async (sourceId) => {

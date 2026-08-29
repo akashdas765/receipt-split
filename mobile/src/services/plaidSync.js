@@ -14,6 +14,7 @@ const OVERRIDE_FIELDS = [
   'overrideForcedUnmatched',
   'overrideConfirmedTransfer', 'overrideDismissedTransferHint',
   'overrideConfirmedPayment', 'overrideDismissedPaymentHint',
+  'overridePayment', 'overrideExcludedFromSpend',
 ];
 
 // A posted transaction's pendingTransactionId (see services/plaid.js) points

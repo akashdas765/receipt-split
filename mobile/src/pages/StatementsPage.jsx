@@ -28,6 +28,7 @@ import MonthSlider from '../components/MonthSlider';
 import PageHeader from '../components/PageHeader';
 import StatBreakdown from '../components/StatBreakdown';
 import BankTransactionDetail from '../components/BankTransactionDetail';
+import { ledgerTypeOverrideFields } from '../utils/ledgerTypes';
 
 const INDIGO = '#6366f1';
 
@@ -282,6 +283,19 @@ export default function StatementsPage() {
       .filter(t => !t.isCredit && !t.isPending)
       .map(t => ({
         ...t,
+        // The user's explicit "Counts as" choice (see handleSetLedgerType)
+        // beats the ingestion-time isPayment stamp both ways — forcing a
+        // misdetected "PAYMENT..." merchant back into spend, or marking an
+        // undetected bill payment as one. Resolved once here so everything
+        // downstream (realExpenseTxns, matcher, summary, row styling) reads
+        // one flag instead of re-deriving the precedence per call site.
+        isPayment: t.overridePayment ?? t.isPayment,
+        // "Don't count" from the same control — real spend-shaped money
+        // that just isn't the user's own spend (reimbursed, bought for
+        // someone else). Stays in the ledger and Debit/Credit statement
+        // totals; excluded from every spend number and from Splitwise
+        // matching (see matcher.js's skip).
+        isExcluded: !!t.overrideExcludedFromSpend,
         isBankAccount: session.isBankAccountSource(t.source),
         // overrideConfirmedTransfer alone (no detection backing it) is
         // included here too — detectTransfers/findTransferPairs have no
@@ -314,6 +328,18 @@ export default function StatementsPage() {
       .map(t => ({ ...t, isTransfer: transferLabelById.has(t.id), transferHintLabel: transferLabelById.get(t.id) })),
     [monthlyTransactions, transferLabelById]
   );
+  // The Transactions tab's credit rows — unlike paymentsReceived (a totals
+  // list, which drops transfer-marked credits so they don't count as money
+  // received), the ledger keeps every settled credit visible, transfer or
+  // not, with the transfer ones tagged so CreditRow can badge them — same
+  // "not spend and not shown are different things" rule bankExpenseTxns
+  // already applies to debits.
+  const ledgerCreditTxns = useMemo(() =>
+    monthlyTransactions
+      .filter(t => t.isCredit && !t.isPending)
+      .map(t => ({ ...t, isTransfer: transferLabelById.has(t.id) || !!t.overrideConfirmedTransfer, isExcluded: !!t.overrideExcludedFromSpend, transferHintLabel: transferLabelById.get(t.id) })),
+    [monthlyTransactions, transferLabelById]
+  );
   // In cards mode (viewing a single credit card or "All Cards"), "money
   // paid out" isn't the interesting question — a card's own purchases
   // already show up elsewhere (Actual spend). What you actually paid
@@ -326,7 +352,10 @@ export default function StatementsPage() {
   const paymentsMade = useMemo(() =>
     monthlyTransactions
       .filter(t => isCardsView
-        ? (t.isCredit && !t.isPending && isCreditConfirmation(t.description))
+        // overridePayment beats the description pattern here too — a
+        // card-side credit the user reclassified via "Counts as" moves in
+        // or out of the payments-toward-card list accordingly.
+        ? (t.isCredit && !t.isPending && (t.overridePayment ?? isCreditConfirmation(t.description)))
         : (!t.isCredit && !t.isPending && !t.overrideConfirmedTransfer && !transferLabelById.has(t.id)))
       .map(t => ({ ...t, isTransfer: transferLabelById.has(t.id), transferHintLabel: transferLabelById.get(t.id) })),
     [monthlyTransactions, transferLabelById, isCardsView]
@@ -340,7 +369,7 @@ export default function StatementsPage() {
   // their own Income card below, so counting them here too would double
   // them up). What's left is refunds, cashback, reimbursements — "extra"
   // money in, not salary and not paying yourself back.
-  const actualCreditTxns  = useMemo(() => paymentsReceived.filter(t => !isCreditConfirmation(t.description) && !t.isIncome), [paymentsReceived]);
+  const actualCreditTxns  = useMemo(() => paymentsReceived.filter(t => !(t.overridePayment ?? isCreditConfirmation(t.description)) && !t.isIncome && !t.overrideExcludedFromSpend), [paymentsReceived]);
   const actualCreditTotal = useMemo(() => actualCreditTxns.reduce((s, t) => s + (t.amount || 0), 0), [actualCreditTxns]);
   // Same isCredit-not-isPayment reasoning as bankExpenseTxns above — a
   // pending bill payment/transfer debit still belongs in the ledger.
@@ -361,7 +390,7 @@ export default function StatementsPage() {
   // isPayment (bill payments/account transfers) — bankExpenseTxns now
   // includes those for ledger completeness (see its own comment), but paying
   // your own card bill or moving money to savings still isn't spend.
-  const realExpenseTxns = useMemo(() => bankExpenseTxns.filter(t => !t.isPayment && !t.isTransfer), [bankExpenseTxns]);
+  const realExpenseTxns = useMemo(() => bankExpenseTxns.filter(t => !t.isPayment && !t.isTransfer && !t.isExcluded), [bankExpenseTxns]);
 
   // Account-aware Debit/Credit/Net summary — deliberately computed from the
   // RAW month(+account)-scoped transaction list, not bankExpenseTxns/
@@ -474,13 +503,15 @@ export default function StatementsPage() {
   const matchedPending = useMemo(() => matchTransactions(
     pendingTxns.map(t => ({
       ...t,
+      isPayment: t.overridePayment ?? t.isPayment,
+      isExcluded: !!t.overrideExcludedFromSpend,
       isBankAccount: session.isBankAccountSource(t.source),
-      isTransfer: transferLabelById.has(t.id),
+      isTransfer: transferLabelById.has(t.id) || !!t.overrideConfirmedTransfer,
       transferHintLabel: transferLabelById.get(t.id),
     })),
     swExpenses
   ).filter(t => !t.isSplitOnly), [pendingTxns, swExpenses, transferLabelById]);
-  const summary = useMemo(() => computeSummary(matched.filter(t => !t.isPayment && !t.isTransfer)), [matched]);
+  const summary = useMemo(() => computeSummary(matched.filter(t => !t.isPayment && !t.isTransfer && !t.isExcluded)), [matched]);
   // Net spend — Actual spend minus Actual Credit (both defined above). Not
   // its own drill-down list (it's a difference of two totals, not a
   // filtered transaction set) — the two cards it's built from are each
@@ -491,7 +522,7 @@ export default function StatementsPage() {
   // drill-down list for "Actual spend"/"Amount saved via splits", kept in
   // sync with summary by construction rather than recomputed separately.
   const spendBreakdownTxns = useMemo(() =>
-    matched.filter(t => !t.isPayment && !t.isTransfer && !t.isSplitOnly),
+    matched.filter(t => !t.isPayment && !t.isTransfer && !t.isExcluded && !t.isSplitOnly),
     [matched]
   );
 
@@ -520,12 +551,12 @@ export default function StatementsPage() {
   // than one view" pattern already used for regular purchases showing in
   // both the Transactions and Payments tabs), so the ledger stays complete
   // while this gives income its own distinct total and section.
-  const incomeTxns  = useMemo(() => paymentsReceived.filter(t => t.isIncome), [paymentsReceived]);
+  const incomeTxns  = useMemo(() => paymentsReceived.filter(t => t.isIncome && !t.overrideExcludedFromSpend), [paymentsReceived]);
   const incomeTotal = incomeTxns.reduce((s, t) => s + (t.amount || 0), 0);
   // Excludes transfers and payments — the "needs your attention" badge
   // shouldn't count rows that were never Splitwise-matchable to begin with
   // (same reasoning as excluding them from realExpenseTxns above).
-  const unmatchedCt  = matchedBankOnly.filter(t => !t.isSplitwised && !t.isTransfer && !t.isPayment).length;
+  const unmatchedCt  = matchedBankOnly.filter(t => !t.isSplitwised && !t.isTransfer && !t.isPayment && !t.isExcluded).length;
 
   // Transactions saved before their description was checked against the
   // payment/income patterns (isPayment/isIncome are stamped once at write
@@ -533,10 +564,13 @@ export default function StatementsPage() {
   // a full re-sync/re-upload. Checked across ALL loaded transactions, not
   // just this month, since a stale row could be from any past statement.
   const fixableCount = useMemo(() =>
-    transactions.filter(t =>
+    // overridePayment == null mirrors reclassifyTransactions' own skip (see
+    // db.js) — a manual "Counts as" choice settles the question, so those
+    // rows shouldn't keep the banner alive.
+    transactions.filter(t => t.overridePayment == null && !t.overrideExcludedFromSpend && (
       (!t.isPayment && isPaymentTransaction(t.description)) ||
       (t.isCredit && !t.isIncome && isIncomeTransaction(t.description))
-    ).length,
+    )).length,
     [transactions]
   );
 
@@ -854,16 +888,45 @@ export default function StatementsPage() {
   // coincidentally match two unrelated transactions on different cards, so
   // a pair needs the same explicit confirm step as a hint before it's
   // treated as a real transfer anywhere (summary totals, confident wording).
+  // The "Counts as" control (see LedgerTypeRow for the choices and the
+  // override fields each writes) — one explicit classification per
+  // transaction: expense (counts as actual spend), card payment or
+  // transfer (both excluded from spend), excluded (real money movement
+  // that's simply not the user's spend — a reimbursed work charge, a
+  // purchase made for someone else — kept on the statement and in the
+  // Debit/Credit ledger totals, just out of every spend number), or auto
+  // (defer to detection). Survives pending→posted (plaidSync's
+  // OVERRIDE_FIELDS) and re-syncs. openTxn is synced too — the same
+  // control lives in BankTransactionDetail (opened from stat drill-downs),
+  // and that sheet renders from its own state snapshot, so without this a
+  // change made there would visually revert while the sheet stays open.
+  const handleSetLedgerType = (txn, type) => {
+    const fields = ledgerTypeOverrideFields(type);
+    applyOverride(txn.id, fields);
+    setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, ...fields } : prev);
+  };
+
   const handleConfirmTransfer = txn => applyOverride(txn.id, { overrideConfirmedTransfer: true });
   const handleDismissTransferHint = txn => applyOverride(txn.id, { overrideDismissedTransferHint: true });
   const handleConfirmTransferPair = pair => {
     applyOverride(pair.debit.id, { overrideConfirmedTransfer: true });
     applyOverride(pair.credit.id, { overrideConfirmedTransfer: true });
   };
+  // overrideConfirmedTransfer must be cleared alongside the dismissal —
+  // un-pairing a CONFIRMED pair otherwise leaves the confirmed flag behind
+  // on both rows: detection stops re-pairing them (dismissed), so they
+  // vanish from this tab, but the stale confirmed flag keeps them tagged
+  // isTransfer (excluded from spend, transfer-styled) everywhere else,
+  // with no visible control left anywhere to undo it.
   const handleUnpairTransfer = pair => {
-    applyOverride(pair.debit.id, { overrideDismissedTransferHint: true });
-    applyOverride(pair.credit.id, { overrideDismissedTransferHint: true });
+    applyOverride(pair.debit.id, { overrideConfirmedTransfer: null, overrideDismissedTransferHint: true });
+    applyOverride(pair.credit.id, { overrideConfirmedTransfer: null, overrideDismissedTransferHint: true });
   };
+  // Undo for a CONFIRMED one-sided hint — clearing the confirmed flag puts
+  // it back to an unconfirmed "Possible transfer" (detection still finds
+  // the hint; it just loses its confirmed status), unlike unpair's
+  // dismissal, which stops detection entirely.
+  const handleUndoConfirmedHint = txn => applyOverride(txn.id, { overrideConfirmedTransfer: null });
 
   return (
     <div className="min-h-screen flex flex-col aurora-bg">
@@ -1101,7 +1164,7 @@ export default function StatementsPage() {
                     )}
                     <TransactionsList
                       matched={matchedBankOnly}
-                      creditTxns={paymentsReceived}
+                      creditTxns={ledgerCreditTxns}
                       pendingTxns={matchedPending}
                       accountSummary={accountSummary}
                       groupName={groupName}
@@ -1116,6 +1179,7 @@ export default function StatementsPage() {
                       onConfirmTransfer={handleConfirmTransfer}
                       onDismissTransfer={handleDismissTransferHint}
                       onClearTransfer={txn => applyOverride(txn.id, { overrideConfirmedTransfer: null })}
+                      onSetLedgerType={handleSetLedgerType}
                       initialExpandedId={pendingOpenTxnId}
                       onDebitClick={() => setStatBreakdown({
                         title: `${accountSummary.title} — Debit`, subtitle: monthRange.label,
@@ -1249,6 +1313,7 @@ export default function StatementsPage() {
                   onDismiss={handleDismissTransferHint}
                   onConfirmPair={handleConfirmTransferPair}
                   onUnpair={handleUnpairTransfer}
+                  onUndoHint={handleUndoConfirmedHint}
                 />
               )}
             </>
@@ -1334,6 +1399,7 @@ export default function StatementsPage() {
               : 'Personal — not split'
           }
           onChangeCategory={handleChangeCategory}
+          onSetLedgerType={handleSetLedgerType}
           actionLabel="Edit full details"
           onAction={openTxnFullEdit}
           onClose={() => setOpenTxn(null)}

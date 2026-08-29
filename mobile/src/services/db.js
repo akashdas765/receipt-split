@@ -115,6 +115,13 @@ export async function deleteTransactionsBySource(source) {
 // fetch); returns [{id, fields}] for whichever rows were actually updated.
 export async function reclassifyTransactions(transactions) {
   const toFix = transactions
+    // A row the user manually classified via the ledger's "Counts as"
+    // control (overridePayment true/false — see StatementsPage's
+    // handleSetLedgerType) is settled by that override everywhere totals
+    // are computed, so re-stamping its underlying isPayment would change
+    // nothing visible — skip it so the "Fix now" banner's count doesn't
+    // nag forever about rows the user already decided on.
+    .filter(t => t.overridePayment == null && !t.overrideExcludedFromSpend)
     .map(t => {
       const fields = {};
       if (!t.isPayment && isPaymentTransaction(t.description)) {

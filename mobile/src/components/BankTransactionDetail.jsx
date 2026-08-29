@@ -2,6 +2,7 @@ import React from 'react';
 import { X, Calendar, Landmark, Tag, ArrowUpRight } from 'lucide-react';
 import { formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { ALL_CATEGORIES, getCategoryIcon, TRANSFER_CATEGORY, TRANSFER_CATEGORY_ICON } from '../utils/categoryDetector';
+import LedgerTypeRow from './LedgerTypeRow';
 
 // Detail sheet for a bank transaction — same view+inline-category-edit
 // shape as ReceiptDetail/SplitwiseExpenseDetail, shared between
@@ -18,7 +19,7 @@ import { ALL_CATEGORIES, getCategoryIcon, TRANSFER_CATEGORY, TRANSFER_CATEGORY_I
 // navigates cross-page to Statements (openTxnId deep-link), Statements
 // itself just closes this card and expands/scrolls to the row already
 // on-screen. Omit both to hide the button entirely.
-export default function BankTransactionDetail({ txn, matchLabel, onChangeCategory, actionLabel, onAction, onClose }) {
+export default function BankTransactionDetail({ txn, matchLabel, onChangeCategory, onSetLedgerType, actionLabel, onAction, onClose }) {
   // A card payment or a transfer between the user's own accounts isn't a
   // real spending category — both are already excluded from every spend/
   // category total elsewhere in the app (see insights.js's bankExpenseTxns
@@ -67,6 +68,17 @@ export default function BankTransactionDetail({ txn, matchLabel, onChangeCategor
               </div>
             )}
             {matchLabel && <Row label="Splitwise" value={matchLabel} />}
+            {/* Same "Counts as" control the ledger rows carry (see
+                LedgerTypeRow) — reachable here so a stat drill-down
+                (Actual spend, Actual Credit, Income, …) can reclassify a
+                row in place instead of routing through "Edit full
+                details" first. Optional: only Statements/Home pass the
+                handler; other callers keep the view-only card. */}
+            {onSetLedgerType && (
+              <div className="py-2.5">
+                <LedgerTypeRow txn={txn} kind={txn.isCredit ? 'credit' : 'debit'} onSetLedgerType={onSetLedgerType} />
+              </div>
+            )}
           </div>
 
           {onAction && (

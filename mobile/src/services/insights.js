@@ -79,8 +79,15 @@ export function computeStats({ receipts, myId, myFullName = '', transactions = [
   // misclassified in Insights until someone runs Statements' "Fix payment
   // labels" reclassification. Checking live means a pattern update fixes
   // Insights immediately for every transaction, already-synced or not.
+  // overridePayment (Statements' "Counts as" control) settles the payment
+  // question outright when set — beating both the stored flag and the live
+  // pattern check, so a user's explicit classification holds here too.
+  // !isCredit must be explicit now: it used to ride along for free because
+  // isPayment is stamped true on every credit at ingestion (see plaid.js),
+  // but a credit reclassified as "Credit / refund" carries
+  // overridePayment:false — money received, still never an expense.
   const bankExpenseTxns = transactions
-    .filter(t => !t.isPayment && !isPaymentTransaction(t.description) && !t.isPending && !transferIds.has(t.id))
+    .filter(t => !t.isCredit && !(t.overridePayment ?? (t.isPayment || isPaymentTransaction(t.description))) && !t.overrideExcludedFromSpend && !t.isPending && !transferIds.has(t.id))
     .map(t => ({ ...t, isBankAccount: session.isBankAccountSource(t.source) }));
   // Always run the matcher, even with zero bank transactions — with
   // nothing to match against, every Splitwise expense just falls through

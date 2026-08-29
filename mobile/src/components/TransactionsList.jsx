@@ -1,7 +1,9 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2, Clock, ArrowLeftRight, Plus, CreditCard } from 'lucide-react';
+import { Link2, Unlink, CheckCircle2, AlertCircle, Pencil, ChevronDown, ChevronUp, Sparkles, X, Check, Trash2, Clock, ArrowLeftRight, Plus, CreditCard, Ban } from 'lucide-react';
 import { formatCurrency, formatShortDate } from '../utils/statementFormatters';
 import { getCategoryIcon, ALL_CATEGORIES, TRANSFER_CATEGORY, TRANSFER_CATEGORY_ICON } from '../utils/categoryDetector';
+import { isCreditConfirmation } from '../utils/paymentDetector';
+import LedgerTypeRow from './LedgerTypeRow';
 
 const INDIGO = '#6366f1';
 
@@ -16,7 +18,7 @@ const INDIGO = '#6366f1';
 // Previously two separate tabs (Review + All) — merged here so "all my
 // card activity" and "what still needs matching" live in one list instead
 // of two.
-export default function TransactionsList({ matched, creditTxns, pendingTxns = [], accountSummary, groupName, monthRange, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory, onConfirmTransfer, onDismissTransfer, onClearTransfer, onDebitClick, onCreditClick, initialExpandedId }) {
+export default function TransactionsList({ matched, creditTxns, pendingTxns = [], accountSummary, groupName, monthRange, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory, onConfirmTransfer, onDismissTransfer, onClearTransfer, onSetLedgerType, onDebitClick, onCreditClick, initialExpandedId }) {
   const [filter,   setFilter]   = useState(0); // 0=All 1=Unmatched 2=Matched 3=Credits 4=Pending
   const [expanded, setExpanded] = useState(() => initialExpandedId ? { [initialExpandedId]: true } : {});
 
@@ -48,8 +50,8 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
   // "All" view (which renders straight off `matched`, unfiltered) with
   // their own distinct row treatment (see DebitRow's isTransfer/isPayment
   // branches below).
-  const matchedTxns   = matched.filter(t => t.isSplitwised && !t.isTransfer && !t.isPayment);
-  const unmatchedTxns = matched.filter(t => !t.isSplitwised && !t.isTransfer && !t.isPayment);
+  const matchedTxns   = matched.filter(t => t.isSplitwised && !t.isTransfer && !t.isPayment && !t.isExcluded);
+  const unmatchedTxns = matched.filter(t => !t.isSplitwised && !t.isTransfer && !t.isPayment && !t.isExcluded);
   const suggestedCount = unmatchedTxns.filter(t => t.suggestedMatch).length;
   const displayed =
     filter === 1 ? unmatchedTxns :
@@ -143,26 +145,26 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
       <div className="space-y-2">
         {filter === 0 ? (
           combinedAll.map(({ t, kind }) => (
-            kind === 'credit' ? <CreditRow key={t.id} txn={t} onDelete={onDelete} /> :
+            kind === 'credit' ? <CreditRow key={t.id} txn={t} isOpen={!!expanded[t.id]} setExpanded={setExpanded} onDelete={onDelete} onSetLedgerType={onSetLedgerType} /> :
             <DebitRow key={t.id} txn={t} isOpen={!!expanded[t.id]} setExpanded={setExpanded}
               groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
               onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} onChangeCategory={onChangeCategory}
-              onConfirmTransfer={onConfirmTransfer} onDismissTransfer={onDismissTransfer} onClearTransfer={onClearTransfer} />
+              onConfirmTransfer={onConfirmTransfer} onDismissTransfer={onDismissTransfer} onClearTransfer={onClearTransfer} onSetLedgerType={onSetLedgerType} />
           ))
         ) : (
           <>
-            {showCredits && creditTxns.map(txn => <CreditRow key={txn.id} txn={txn} onDelete={onDelete} />)}
+            {showCredits && creditTxns.map(txn => <CreditRow key={txn.id} txn={txn} isOpen={!!expanded[txn.id]} setExpanded={setExpanded} onDelete={onDelete} onSetLedgerType={onSetLedgerType} />)}
             {showPending && pendingTxns.map(txn => (
               <DebitRow key={txn.id} txn={txn} isOpen={!!expanded[txn.id]} setExpanded={setExpanded}
                 groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
                 onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} onChangeCategory={onChangeCategory}
-              onConfirmTransfer={onConfirmTransfer} onDismissTransfer={onDismissTransfer} onClearTransfer={onClearTransfer} />
+              onConfirmTransfer={onConfirmTransfer} onDismissTransfer={onDismissTransfer} onClearTransfer={onClearTransfer} onSetLedgerType={onSetLedgerType} />
             ))}
             {displayed.map(txn => (
               <DebitRow key={txn.id} txn={txn} isOpen={!!expanded[txn.id]} setExpanded={setExpanded}
                 groupName={groupName} onLink={onLink} onAddNew={onAddNew} onUnlink={onUnlink} onClearOverride={onClearOverride}
                 onConfirmSuggestion={onConfirmSuggestion} onDelete={onDelete} onChangeCategory={onChangeCategory}
-              onConfirmTransfer={onConfirmTransfer} onDismissTransfer={onDismissTransfer} onClearTransfer={onClearTransfer} />
+              onConfirmTransfer={onConfirmTransfer} onDismissTransfer={onDismissTransfer} onClearTransfer={onClearTransfer} onSetLedgerType={onSetLedgerType} />
             ))}
           </>
         )}
@@ -171,41 +173,71 @@ export default function TransactionsList({ matched, creditTxns, pendingTxns = []
   );
 }
 
-function CreditRow({ txn, onDelete }) {
+function CreditRow({ txn, isOpen, setExpanded, onDelete, onSetLedgerType }) {
   return (
-    <div id={`txn-row-${txn.id}`} className={`rounded-2xl border bg-surface p-3 flex items-center gap-3 ${txn.isIncome ? 'border-emerald-200' : 'border-emerald-100'}`}>
-      <span className="text-base shrink-0">{txn.isIncome ? '💵' : '💳'}</span>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
-          {txn.transferHintLabel && <ArrowLeftRight size={11} style={{ color: INDIGO }} className="shrink-0" />}
-          <p className="text-sm font-semibold text-ink truncate">{txn.transferHintLabel || txn.description}</p>
-          {txn.isIncome && (
-            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 rounded-full shrink-0">Income</span>
-          )}
-        </div>
-        {txn.transferHintLabel && <p className="text-xs text-muted mt-0.5 truncate">{txn.description}</p>}
-        <p className="text-xs text-subtle mt-0.5 truncate">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
+    <div id={`txn-row-${txn.id}`} className={`rounded-2xl overflow-hidden border bg-surface ${txn.isTransfer ? 'border-indigo-100' : txn.isIncome ? 'border-emerald-200' : 'border-emerald-100'}`}>
+      <div className="p-3 flex items-center gap-3">
+        <button className="flex-1 flex items-center gap-3 text-left min-w-0" onClick={() => setExpanded(p => ({ ...p, [txn.id]: !p[txn.id] }))}>
+          <span className="text-base shrink-0">{txn.isTransfer ? '🔁' : txn.isIncome ? '💵' : '💳'}</span>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              {txn.isTransfer && <ArrowLeftRight size={11} style={{ color: INDIGO }} className="shrink-0" />}
+              <p className="text-sm font-semibold text-ink truncate">{txn.transferHintLabel || txn.description}</p>
+              {txn.isIncome && !txn.isTransfer && (
+                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 rounded-full shrink-0">Income</span>
+              )}
+              {/* A manually-confirmed transfer with no detection behind it has
+                  no transferHintLabel — badge it so the exclusion is visible. */}
+              {txn.isTransfer && !txn.transferHintLabel && (
+                <span className="text-[10px] font-bold bg-indigo-50 px-1.5 rounded-full shrink-0" style={{ color: INDIGO }}>Transfer</span>
+              )}
+            </div>
+            {txn.transferHintLabel && <p className="text-xs text-muted mt-0.5 truncate">{txn.description}</p>}
+            <p className="text-xs text-subtle mt-0.5 truncate">{formatShortDate(txn.date)} · {txn.sourceName || txn.source}</p>
+          </div>
+          <p className={`text-sm font-bold shrink-0 ${txn.isTransfer ? 'text-muted' : 'text-emerald-500'}`}>+{formatCurrency(txn.amount)}</p>
+          {isOpen ? <ChevronUp size={14} className="text-subtle shrink-0" /> : <ChevronDown size={14} className="text-subtle shrink-0" />}
+        </button>
+        <button onClick={() => onDelete(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
+          <Trash2 size={14} />
+        </button>
       </div>
-      <p className="text-sm font-bold text-emerald-500 shrink-0">+{formatCurrency(txn.amount)}</p>
-      <button onClick={() => onDelete(txn.id)} className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
-        <Trash2 size={14} />
-      </button>
+      {isOpen && (
+        <div className="border-t border-edge px-3 pb-3 pt-2 space-y-2">
+          {txn.postedDate && (
+            <div className="flex justify-between text-xs px-0.5">
+              <span className="text-subtle">Posted</span>
+              <span className="text-muted">{formatShortDate(txn.postedDate)}</span>
+            </div>
+          )}
+          <LedgerTypeRow txn={txn} kind="credit" onSetLedgerType={onSetLedgerType} />
+          {txn.isExcluded ? (
+            <p className="text-xs text-muted px-0.5">Not counted — stays on the statement, excluded from Actual Credit and income.</p>
+          ) : txn.isTransfer ? (
+            <p className="text-xs text-muted px-0.5">Transfer between your own accounts — not counted as money received.</p>
+          ) : (txn.overridePayment ?? isCreditConfirmation(txn.description)) ? (
+            <p className="text-xs text-muted px-0.5">Payment toward this card — not counted in Actual Credit.</p>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }
 
-function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory, onConfirmTransfer, onDismissTransfer, onClearTransfer }) {
+function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnlink, onClearOverride, onConfirmSuggestion, onDelete, onChangeCategory, onConfirmTransfer, onDismissTransfer, onClearTransfer, onSetLedgerType }) {
   const isOverridden = txn.manualOverride;
   const suggestion   = !txn.isSplitwised ? txn.suggestedMatch : null;
 
   return (
     <div id={`txn-row-${txn.id}`} className={`rounded-2xl overflow-hidden border bg-surface ${txn.isPending ? 'border-dashed' : ''} ${
-      txn.isTransfer ? 'border-indigo-100' : txn.isPayment ? 'border-edge' : txn.isSplitwised ? 'border-emerald-100' : suggestion ? 'border-indigo-100' : 'border-amber-100'
+      txn.isExcluded ? 'border-edge' : txn.isTransfer ? 'border-indigo-100' : txn.isPayment ? 'border-edge' : txn.isSplitwised ? 'border-emerald-100' : suggestion ? 'border-indigo-100' : 'border-amber-100'
     }`}>
       <div className="w-full flex items-center gap-2 p-3">
         <button className="flex-1 flex items-center gap-3 text-left min-w-0" onClick={() => setExpanded(p => ({ ...p, [txn.id]: !p[txn.id] }))}>
           <div className="shrink-0">
-            {txn.isTransfer
+            {txn.isExcluded
+              ? <Ban size={18} className="text-subtle" />
+              : txn.isTransfer
               ? <ArrowLeftRight size={18} style={{ color: INDIGO }} />
               : txn.isPayment
                 ? <CreditCard size={18} className="text-subtle" />
@@ -275,7 +307,14 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
               </select>
             </div>
           </div>
-          {txn.isTransfer ? (
+          <LedgerTypeRow txn={txn} kind="debit" onSetLedgerType={onSetLedgerType} />
+          {txn.isExcluded ? (
+            <div className="rounded-xl p-2.5 bg-surface-alt">
+              <p className="text-xs flex items-center gap-1.5 text-muted">
+                <Ban size={12} /> Not counted as your spend — stays on the statement, excluded from all spend totals.
+              </p>
+            </div>
+          ) : txn.isTransfer ? (
             <div className="rounded-xl p-2.5 tint-indigo-flat">
               <p className="text-xs flex items-center gap-1.5" style={{ color: INDIGO }}>
                 <ArrowLeftRight size={12} /> Money between your own accounts — not spend, not Splitwise-matchable.
@@ -362,7 +401,7 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
             </div>
           )}
 
-          {!txn.isTransfer && !txn.isPayment && (
+          {!txn.isTransfer && !txn.isPayment && !txn.isExcluded && (
           <div className="flex gap-2 pt-1">
             {txn.isSplitwised ? (
               <>
@@ -406,7 +445,7 @@ function DebitRow({ txn, isOpen, setExpanded, groupName, onLink, onAddNew, onUnl
           </div>
           )}
 
-          {!txn.isTransfer && !txn.isPayment && !txn.isSplitwised && onConfirmTransfer && (
+          {!txn.isTransfer && !txn.isPayment && !txn.isExcluded && !txn.isSplitwised && onConfirmTransfer && (
             <button onClick={() => { onConfirmTransfer(txn); setExpanded(p => ({ ...p, [txn.id]: false })); }}
               className="flex items-center justify-center gap-1.5 text-xs font-semibold text-muted hover:text-ink transition-colors pt-1">
               <ArrowLeftRight size={12} /> Mark as transfer between my accounts

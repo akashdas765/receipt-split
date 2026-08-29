@@ -11,7 +11,7 @@ const INDIGO = '#6366f1';
 // a confirmed transfer anywhere else in the app (Splitwise-exclusion aside)
 // until the user taps Confirm here. Confirmed rows get a lightweight
 // "not a transfer, undo" escape hatch instead.
-export default function TransfersList({ pairs, hints, monthRange, onConfirm, onDismiss, onConfirmPair, onUnpair }) {
+export default function TransfersList({ pairs, hints, monthRange, onConfirm, onDismiss, onConfirmPair, onUnpair, onUndoHint }) {
   const unconfirmedPairs = pairs.filter(p => !p.confirmed);
   const confirmedPairs   = pairs.filter(p => p.confirmed);
   const unconfirmedHints = hints.filter(h => !h.confirmed);
@@ -60,6 +60,17 @@ export default function TransfersList({ pairs, hints, monthRange, onConfirm, onD
             <p className="text-xs text-subtle mt-0.5">{formatShortDate(h.txn.date)}</p>
           </div>
           <p className="text-sm font-bold text-ink shrink-0">{formatCurrency(h.txn.amount)}</p>
+          {/* Same undo affordance confirmed pairs get above — without it a
+              confirmed hint was final, with no way back from this tab. */}
+          {onUndoHint && (
+            <button
+              onClick={() => onUndoHint(h.txn)}
+              title="Not a transfer? Undo"
+              className="p-1.5 rounded-lg text-subtle hover:text-red-500 hover:bg-red-50 transition-colors shrink-0"
+            >
+              <Unlink size={13} />
+            </button>
+          )}
         </div>
       ))}
 

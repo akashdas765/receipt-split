@@ -18,6 +18,7 @@ import NetWorthDetail from '../components/NetWorthDetail';
 import SpendingDetail from '../components/SpendingDetail';
 import SplitwiseExpenseDetail from '../components/SplitwiseExpenseDetail';
 import BankTransactionDetail from '../components/BankTransactionDetail';
+import { ledgerTypeOverrideFields } from '../utils/ledgerTypes';
 import ReceiptDetail from '../components/ReceiptDetail';
 import NotificationCenter from '../components/NotificationCenter';
 import MonthSlider from '../components/MonthSlider';
@@ -297,7 +298,10 @@ export default function HomePage() {
     [bankTxns, monthRange, transferLabelById]
   );
   const realBankExpenseTxns = useMemo(() =>
-    monthlyBankExpenses.filter(t => !t.isPayment && !t.overrideConfirmedTransfer),
+    // overridePayment (Statements' "Counts as" control) beats the stored
+    // isPayment stamp both ways — same precedence StatementsPage's own
+    // bankExpenseTxns applies.
+    monthlyBankExpenses.filter(t => !(t.overridePayment ?? t.isPayment) && !t.overrideConfirmedTransfer && !t.overrideExcludedFromSpend),
     [monthlyBankExpenses]
   );
   // isSplitOnly rows (unmatched Splitwise expenses with no bank-side row)
@@ -826,6 +830,27 @@ export default function HomePage() {
       toast.error('Could not update category');
       setBankTxns(prev => prev.map(t => t.id === txn.id ? { ...t, category: txn.category, overrideConfirmedTransfer: txn.overrideConfirmedTransfer } : t));
       setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, category: txn.category, overrideConfirmedTransfer: txn.overrideConfirmedTransfer } : prev);
+    }
+  };
+
+  // Same "Counts as" control as Statements (see LedgerTypeRow /
+  // StatementsPage's handleSetLedgerType) — writes the shared override
+  // fields and lets every derived total here (personalSpendTxns, the
+  // Spending card) recompute off the updated bankTxns. Fire-and-forget
+  // persistence with revert-on-failure, same shape as the category handler
+  // above.
+  const handleSetLedgerType = async (txn, type) => {
+    const fields = ledgerTypeOverrideFields(type);
+    setBankTxns(prev => prev.map(t => t.id === txn.id ? { ...t, ...fields } : t));
+    setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, ...fields } : prev);
+    try {
+      await setTransactionOverride(txn.id, fields);
+    } catch {
+      toast.error('Could not update transaction');
+      const revert = {};
+      Object.keys(fields).forEach(k => { revert[k] = txn[k] ?? null; });
+      setBankTxns(prev => prev.map(t => t.id === txn.id ? { ...t, ...revert } : t));
+      setOpenTxn(prev => prev && prev.id === txn.id ? { ...prev, ...revert } : prev);
     }
   };
 
@@ -1429,6 +1454,7 @@ export default function HomePage() {
               : 'Personal — not split'
           }
           onChangeCategory={handleChangeTransactionCategory}
+          onSetLedgerType={handleSetLedgerType}
           actionLabel="Open in Statements"
           onAction={() => navigate('/statements', { state: { openTxnId: openTxn.id, accountSource: openTxn.source, date: openTxn.date } })}
           onClose={() => setOpenTxn(null)}

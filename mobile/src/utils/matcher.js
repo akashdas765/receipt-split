@@ -212,11 +212,13 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
     // pairs are never real Splitwise expenses either), and for a bill
     // payment / account transfer detected by isPaymentTransaction (paying
     // your own card, moving money to savings — never a Splitwise expense
-    // either). All three are still shown (relabeled by the caller) rather
-    // than hidden, just never scored. Manual linking (section 2,
-    // overrideSplitwiseId) is unaffected — that path never reaches here,
-    // so "I'll match it manually" still works regardless of any of these.
-    for (const exp of ((txn.isBankAccount || txn.isTransfer || txn.isPayment) ? [] : splitwiseExpenses)) {
+    // either), and for a transaction the user marked "Don't count"
+    // (isExcluded — not their spend, so not their Splitwise expense). All
+    // are still shown (relabeled by the caller) rather than hidden, just
+    // never scored. Manual linking (section 2, overrideSplitwiseId) is
+    // unaffected — that path never reaches here, so "I'll match it
+    // manually" still works regardless of any of these.
+    for (const exp of ((txn.isBankAccount || txn.isTransfer || txn.isPayment || txn.isExcluded) ? [] : splitwiseExpenses)) {
       if (usedExpenses.has(exp.id)) continue;
       // Only expenses I actually paid toward are plausible matches for a
       // charge on my own card — otherwise a group-mate's expense could get

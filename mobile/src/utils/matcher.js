@@ -42,12 +42,19 @@ const MAX_DATE_DIFF_DAYS = 14;
 const MAX_TIP_OVER_PCT   = 0.30;
 const MAX_UNDER_PCT      = 0.05;
 
-// Auto-match: linked immediately, counted as matched. Below that but above
-// SUGGEST_THRESHOLD: surfaced in Review as "looks like…", one tap to
-// confirm or dismiss, instead of the algorithm having to be fully certain
-// on its own. Below SUGGEST_THRESHOLD: left alone, no suggestion shown.
-const AUTO_MATCH_THRESHOLD = 0.65;
-const SUGGEST_THRESHOLD    = 0.35;
+// NOTHING auto-links anymore — every candidate at or above
+// SUGGEST_THRESHOLD is surfaced as a "looks like…" suggestion the user
+// confirms or dismisses, however high it scores (an explicit product
+// decision: a 100% score is still the algorithm's guess, and only the
+// user actually knows). STRONG_MATCH_THRESHOLD now only decides whether
+// the candidate expense gets RESERVED (claimed in usedExpenses) — a
+// strong candidate's expense shouldn't also show up as a separate
+// "Splitwise-only" row while its suggestion sits one tap from
+// confirmation, or the same purchase would be counted twice (once as the
+// full unmatched bank charge, once as the expense's share). Below
+// SUGGEST_THRESHOLD: left alone, no suggestion shown.
+const STRONG_MATCH_THRESHOLD = 0.65;
+const SUGGEST_THRESHOLD      = 0.35;
 
 function daysDiff(d1, d2) {
   const t1 = d1 instanceof Date ? d1.getTime() : new Date(d1).getTime();
@@ -238,10 +245,10 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
       const descScore = fuzzyDescScore(txn.description, exp.description);
       // Amount carries the most weight (it's the most reliable signal) but
       // NOT so much that an exact-amount coincidence alone can clear
-      // AUTO_MATCH_THRESHOLD regardless of how far apart the dates are —
-      // date still has to contribute meaningfully for a high-confidence
-      // auto-match, or a purely coincidental same-amount charge weeks apart
-      // would auto-link to the wrong expense. Description is frequently
+      // STRONG_MATCH_THRESHOLD regardless of how far apart the dates are —
+      // date still has to contribute meaningfully for a strong candidate,
+      // or a purely coincidental same-amount charge weeks apart would
+      // reserve the wrong expense. Description is frequently
       // unreliable on the bank side (cryptic merchant codes vs. whatever
       // was typed into Splitwise), so it's a tiebreaker at most.
       const total = dateScore * 0.30 + amountScore * 0.55 + descScore * 0.15;
@@ -249,47 +256,30 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
       if (total > bestScore) { bestScore = total; bestMatch = exp; }
     }
 
-    if (bestMatch && bestScore >= AUTO_MATCH_THRESHOLD) {
+    // No auto-linking, no matter the score (see the thresholds' comment) —
+    // a strong candidate only RESERVES its expense so the Splitwise-only
+    // pass below doesn't emit the same purchase as a second row; the
+    // transaction itself still renders as an unmatched suggestion, counted
+    // at its full bank amount until the user confirms (confirmation goes
+    // through the manual-override path in section 2, exactly as if the
+    // user had picked the expense by hand).
+    if (bestMatch && bestScore >= STRONG_MATCH_THRESHOLD) {
       usedExpenses.add(bestMatch.id);
-      result.push({
-        ...txn,
-        isSplitwised:    true,
-        splitwiseId:     bestMatch.id,
-        splitwiseMatches: [{
-          id: bestMatch.id, description: bestMatch.description, date: bestMatch.date,
-          cost: parseFloat(bestMatch.cost || 0), myOwedShare: bestMatch.myOwedShare || 0, group_id: bestMatch.group_id,
-        }],
-        splitwiseDesc:   bestMatch.description,
-        splitwiseDate:   bestMatch.date,
-        splitwiseCost:   parseFloat(bestMatch.cost || 0),
-        matchScore:      Math.round(bestScore * 100),
-        manualOverride:  false,
-        originalAmount:  txnAmount,
-        effectiveAmount: bestMatch.myOwedShare,
-        savings:         txnAmount - bestMatch.myOwedShare,
-        category:        txn.category || detectCategory(txn.description) || bestMatch.category,
-        groupId:         bestMatch.group_id,
-      });
-    } else {
-      // Below auto-match confidence but still plausible — surfaced in
-      // Review as a one-tap suggestion instead of silently staying
-      // unmatched (which is how the same expense used to end up counted
-      // twice: once here at full amount, once as a Splitwise-only row).
-      const suggestedMatch = (bestMatch && bestScore >= SUGGEST_THRESHOLD)
-        ? { score: Math.round(bestScore * 100), expense: bestMatch }
-        : null;
-      result.push({
-        ...txn,
-        isSplitwised:    false,
-        splitwiseId:     null,
-        manualOverride:  false,
-        originalAmount:  txnAmount,
-        effectiveAmount: txnAmount,
-        savings:         0,
-        category:        txn.category || detectCategory(txn.description),
-        suggestedMatch,
-      });
     }
+    const suggestedMatch = (bestMatch && bestScore >= SUGGEST_THRESHOLD)
+      ? { score: Math.round(bestScore * 100), expense: bestMatch }
+      : null;
+    result.push({
+      ...txn,
+      isSplitwised:    false,
+      splitwiseId:     null,
+      manualOverride:  false,
+      originalAmount:  txnAmount,
+      effectiveAmount: txnAmount,
+      savings:         0,
+      category:        txn.category || detectCategory(txn.description),
+      suggestedMatch,
+    });
   }
 
   // Splitwise-only (not in any bank upload)

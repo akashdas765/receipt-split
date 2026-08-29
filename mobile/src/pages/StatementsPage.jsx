@@ -33,13 +33,16 @@ import { ledgerTypeOverrideFields } from '../utils/ledgerTypes';
 const INDIGO = '#6366f1';
 
 // accountFilter is either a specific transaction source id, or a
-// 'group:bank' | 'group:credit' | 'group:other' scope — bank accounts and
-// cards are never mixed into one "everything" view since their debit/
-// credit meaning is different (a bank debit is money leaving you, a card
-// debit is money you owe), so there's no blanket "all accounts" option.
+// 'group:all' | 'group:bank' | 'group:credit' | 'group:other' scope.
+// 'group:all' spans every account regardless of type — bank debits and
+// card debits mean slightly different things (money leaving you vs. money
+// you owe), but a single every-account view of the month is still useful
+// as the full ledger; the per-type groups remain for when the distinction
+// matters.
 function matchesAccountFilter(source, filter) {
   if (filter.startsWith('group:')) {
     const key = filter.slice(6);
+    if (key === 'all') return true;
     const type = session.getAccountType(source);
     if (key === 'bank')   return type === 'bank';
     if (key === 'credit') return type === 'credit';
@@ -346,8 +349,11 @@ export default function StatementsPage() {
   // TOWARD the card shows up as a CREDIT on its statement ("Payment Thank
   // You-Mobile"), so isCardsView switches paymentsMade to count those
   // instead of the plain sign-based debit split bank accounts use.
+  // group:all uses the bank-style sign-based split — a mixed view has no
+  // single "payments toward the card" reading, so the generic money-in/
+  // money-out framing is the one that stays true across both account types.
   const isCardsView = accountFilter.startsWith('group:')
-    ? accountFilter !== 'group:bank'
+    ? accountFilter !== 'group:bank' && accountFilter !== 'group:all'
     : session.getAccountType(accountFilter) !== 'bank';
   const paymentsMade = useMemo(() =>
     monthlyTransactions
@@ -468,10 +474,13 @@ export default function StatementsPage() {
         ...computeFor(monthlyTransactions, s => s === accountFilter),
       };
     }
-    const groupKey = accountFilter.slice(6); // 'bank' | 'credit' | 'other'
+    const groupKey = accountFilter.slice(6); // 'all' | 'bank' | 'credit' | 'other'
     return {
-      type: groupKey === 'bank' ? 'bank' : 'card',
-      title: groupKey === 'bank' ? 'All Bank Accounts' : groupKey === 'credit' ? 'All Cards' : 'Uncategorized',
+      // 'all' renders as the bank kind — its SummaryCard extra line
+      // (Transfers) stays meaningful across a mixed view, unlike the card
+      // kind's "Payments received".
+      type: groupKey === 'bank' || groupKey === 'all' ? 'bank' : 'card',
+      title: groupKey === 'all' ? 'All Accounts' : groupKey === 'bank' ? 'All Bank Accounts' : groupKey === 'credit' ? 'All Cards' : 'Uncategorized',
       ...computeFor(monthlyTransactions, s => matchesAccountFilter(s, accountFilter)),
     };
   }, [monthlyTransactions, accountFilter, transferPairsThisMonth, transferHintsThisMonth, statements, transferLabelById]);
@@ -1092,6 +1101,14 @@ export default function StatementsPage() {
             ].filter(g => g.items.length > 0);
             return (
               <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-subtle uppercase tracking-wide pr-0.5 w-14">
+                    <Wallet size={11} /> All
+                  </span>
+                  <button onClick={() => setAccountFilter('group:all')} className={chipClass('group:all')}>
+                    All Accounts
+                  </button>
+                </div>
                 {groups.map(g => (
                   <div key={g.key} className="flex flex-wrap items-center gap-1.5">
                     <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-subtle uppercase tracking-wide pr-0.5 w-14">

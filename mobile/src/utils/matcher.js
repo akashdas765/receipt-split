@@ -84,9 +84,27 @@ function amountScoreOf(txnAmount, expAmount) {
   return 1 - (underPct / MAX_UNDER_PCT) * 0.3;
 }
 
+// Card processors bury the merchant under boilerplate — "TST* BAWARCHI",
+// "SQ *COFFEE CO", "APLPAY WALGREENS #123 CHICAGO IL" — none of which the
+// person typing "Bawarchi dinner" into Splitwise ever reproduces. Those
+// noise tokens (and pure-number tokens: store numbers, last-4 digits,
+// phone fragments) only ever LOWER the overlap score of a genuinely
+// matching pair, so they're stripped before comparing. Falls back to the
+// unfiltered token set if stripping ate everything (e.g. a description
+// that is nothing but numbers), so a degenerate description still
+// compares as itself rather than as an empty set.
+const DESC_NOISE_TOKENS = new Set([
+  'tst', 'sq', 'aplpay', 'applepay', 'paypal', 'pp', 'pos', 'debit',
+  'credit', 'card', 'purchase', 'payment', 'www', 'com', 'inc', 'llc', 'co',
+]);
+
 function fuzzyDescScore(a, b) {
   if (!a || !b) return 0;
-  const tokenize = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  const tokenize = s => {
+    const all = s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+    const meaningful = all.filter(t => !DESC_NOISE_TOKENS.has(t) && !/^\d+$/.test(t));
+    return meaningful.length ? meaningful : all;
+  };
   const tokA = new Set(tokenize(a));
   const tokB = new Set(tokenize(b));
   let common = 0;
@@ -154,8 +172,11 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
     return total > 0 ? txnAmount / total : 1 / claimants.size;
   };
 
+  // Transactions with no manual override fall through sections 1-2 into
+  // here, to be scored globally against the expense pool below.
+  const unresolved = [];
+
   for (const txn of bankTransactions) {
-    const txnDate   = parseDate(txn.date) || new Date();
     const txnAmount = Math.abs(txn.amount || 0);
 
     // 1. Manual force-unmatched — also permanently suppresses suggestions
@@ -206,30 +227,38 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
       }
     }
 
-    // 3. Auto-match / suggest
-    let bestMatch = null;
-    let bestScore = 0;
+    // 3. No override — held for the global scoring pass below.
+    unresolved.push(txn);
+  }
 
-    // Bank/checking accounts don't correspond to Splitwise group expenses
-    // the way a credit card charge does (paychecks, rent, ATM withdrawals,
-    // etc. would just produce bogus date/amount coincidences) — left
-    // unscored entirely, falling through as a plain unmatched row below.
-    // Same for a transaction utils/transferMatcher.js has identified as
-    // money moving between the user's own accounts (transferMatcher's
-    // pairs are never real Splitwise expenses either), and for a bill
-    // payment / account transfer detected by isPaymentTransaction (paying
-    // your own card, moving money to savings — never a Splitwise expense
-    // either), and for a transaction the user marked "Don't count"
-    // (isExcluded — not their spend, so not their Splitwise expense). All
-    // are still shown (relabeled by the caller) rather than hidden, just
-    // never scored. Manual linking (section 2, overrideSplitwiseId) is
-    // unaffected — that path never reaches here, so "I'll match it
-    // manually" still works regardless of any of these.
-    for (const exp of ((txn.isBankAccount || txn.isTransfer || txn.isPayment || txn.isExcluded) ? [] : splitwiseExpenses)) {
+  // 3. Global suggestion assignment. Every eligible transaction×expense
+  // pair is scored FIRST, then assigned best-pair-first — replacing the
+  // old per-transaction greedy loop, where whichever transaction happened
+  // to be iterated earlier claimed its best expense even when a later
+  // transaction fit that same expense far better (two charges at the same
+  // merchant in one month made this a real, recurring misassignment).
+  // Assignment is one-to-one: each expense is suggested to at most one
+  // transaction — the best-scoring one — so two rows can't both point the
+  // user at the same expense (a single expense legitimately spanning two
+  // charges is still expressible via manual multi-link, section 2).
+  //
+  // Eligibility: bank/checking rows don't correspond to Splitwise group
+  // expenses the way a card charge does (paychecks, rent, ATM withdrawals
+  // would just produce bogus date/amount coincidences); transfers between
+  // the user's own accounts, bill payments, and "Don't count" rows
+  // (isExcluded) are equally never real Splitwise expenses. All stay
+  // visible as plain unmatched rows — just never scored. Manual linking
+  // is unaffected (that path never reaches here). On the expense side,
+  // only expenses the user actually paid toward are plausible matches —
+  // otherwise a group-mate's expense could glom onto this card just
+  // because dates/amounts line up.
+  const candidatePairs = [];
+  for (const txn of unresolved) {
+    if (txn.isBankAccount || txn.isTransfer || txn.isPayment || txn.isExcluded) continue;
+    const txnDate   = parseDate(txn.date) || new Date();
+    const txnAmount = Math.abs(txn.amount || 0);
+    for (const exp of splitwiseExpenses) {
       if (usedExpenses.has(exp.id)) continue;
-      // Only expenses I actually paid toward are plausible matches for a
-      // charge on my own card — otherwise a group-mate's expense could get
-      // linked to my bank transaction just because dates/amounts line up.
       if (!(exp.myPaidShare > 0)) continue;
 
       const expDate   = parseDate(exp.date) || new Date();
@@ -248,27 +277,33 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
       // STRONG_MATCH_THRESHOLD regardless of how far apart the dates are —
       // date still has to contribute meaningfully for a strong candidate,
       // or a purely coincidental same-amount charge weeks apart would
-      // reserve the wrong expense. Description is frequently
-      // unreliable on the bank side (cryptic merchant codes vs. whatever
-      // was typed into Splitwise), so it's a tiebreaker at most.
-      const total = dateScore * 0.30 + amountScore * 0.55 + descScore * 0.15;
-
-      if (total > bestScore) { bestScore = total; bestMatch = exp; }
+      // reserve the wrong expense. Description is frequently unreliable on
+      // the bank side (cryptic merchant codes vs. whatever was typed into
+      // Splitwise), so it's a tiebreaker at most.
+      const score = dateScore * 0.30 + amountScore * 0.55 + descScore * 0.15;
+      if (score >= SUGGEST_THRESHOLD) candidatePairs.push({ txn, exp, score });
     }
+  }
+  candidatePairs.sort((a, b) => b.score - a.score);
 
-    // No auto-linking, no matter the score (see the thresholds' comment) —
-    // a strong candidate only RESERVES its expense so the Splitwise-only
-    // pass below doesn't emit the same purchase as a second row; the
-    // transaction itself still renders as an unmatched suggestion, counted
-    // at its full bank amount until the user confirms (confirmation goes
-    // through the manual-override path in section 2, exactly as if the
-    // user had picked the expense by hand).
-    if (bestMatch && bestScore >= STRONG_MATCH_THRESHOLD) {
-      usedExpenses.add(bestMatch.id);
-    }
-    const suggestedMatch = (bestMatch && bestScore >= SUGGEST_THRESHOLD)
-      ? { score: Math.round(bestScore * 100), expense: bestMatch }
-      : null;
+  // No auto-linking, no matter the score (see the thresholds' comment) —
+  // a strong pairing only RESERVES its expense (usedExpenses) so the
+  // Splitwise-only pass below doesn't emit the same purchase as a second
+  // row; the transaction itself still renders as an unmatched suggestion,
+  // counted at its full bank amount until the user confirms (confirmation
+  // goes through the manual-override path in section 2, exactly as if the
+  // user had picked the expense by hand).
+  const suggestionFor = new Map(); // txn.id -> { score, expense }
+  const claimedExpenses = new Set();
+  for (const { txn, exp, score } of candidatePairs) {
+    if (suggestionFor.has(txn.id) || claimedExpenses.has(exp.id)) continue;
+    suggestionFor.set(txn.id, { score: Math.round(score * 100), expense: exp });
+    claimedExpenses.add(exp.id);
+    if (score >= STRONG_MATCH_THRESHOLD) usedExpenses.add(exp.id);
+  }
+
+  for (const txn of unresolved) {
+    const txnAmount = Math.abs(txn.amount || 0);
     result.push({
       ...txn,
       isSplitwised:    false,
@@ -278,7 +313,7 @@ export function matchTransactions(bankTransactions, splitwiseExpenses) {
       effectiveAmount: txnAmount,
       savings:         0,
       category:        txn.category || detectCategory(txn.description),
-      suggestedMatch,
+      suggestedMatch:  suggestionFor.get(txn.id) || null,
     });
   }
 

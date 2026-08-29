@@ -51,6 +51,18 @@ function matchesAccountFilter(source, filter) {
   return source === filter;
 }
 
+// Shifts an ISO date string by `days` — both the transfer scan and the
+// Splitwise fetch below need windows that look slightly past the visible
+// month's edges.
+function padDate(dateStr, days) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+const inRange = (dateStr, range) =>
+  !!dateStr && dateStr.slice(0, 10) >= range.start && dateStr.slice(0, 10) <= range.end;
+
 // 'Upload' isn't a tab — connecting a bank / dropping a statement isn't
 // something you switch to and browse, it's a one-off action, so it lives
 // behind its own "Add" button (opens a bottom sheet) instead of competing
@@ -168,11 +180,22 @@ export default function StatementsPage() {
     (async () => {
       setLoadingSw(true); setSwError('');
       try {
+        // Fetched with ±14 days of slack past the month edges — the
+        // matcher tolerates that much posting drift (MAX_DATE_DIFF_DAYS in
+        // utils/matcher.js), so an Aug 31 expense must be in the candidate
+        // pool when its charge posts Sep 2, or a month-boundary purchase
+        // can never even be suggested. Month-scoped consumers
+        // (splitwiseOwed, the Splitwise-only rows in `matched`, the
+        // Payments tab list) re-filter to the visible month themselves.
         const { expenses, paymentsReceived } = await fetchAllExpenses(myId, {
-          datedAfter:  monthRange.start,
-          datedBefore: monthRange.end,
+          datedAfter:  padDate(monthRange.start, -14),
+          datedBefore: padDate(monthRange.end, 14),
         });
-        if (!cancelled) { setSwExpenses(expenses); setSwPayments(paymentsReceived); }
+        if (!cancelled) {
+          setSwExpenses(expenses);
+          setSwPayments(paymentsReceived.filter(p =>
+            p.date && p.date.slice(0, 10) >= monthRange.start && p.date.slice(0, 10) <= monthRange.end));
+        }
       } catch (err) {
         if (!cancelled) setSwError(err?.message || 'Could not load Splitwise expenses.');
       } finally {
@@ -212,13 +235,8 @@ export default function StatementsPage() {
   // independent scan will deterministically reconstruct the same pair and
   // agree on excluding both sides from its own bucket.
   const transferScanTxns = useMemo(() => {
-    const pad = (dateStr, days) => {
-      const d = new Date(`${dateStr}T00:00:00`);
-      d.setDate(d.getDate() + days);
-      return d.toISOString().slice(0, 10);
-    };
-    const start = pad(monthRange.start, -3);
-    const end   = pad(monthRange.end, 3);
+    const start = padDate(monthRange.start, -3);
+    const end   = padDate(monthRange.end, 3);
     return transactions
       .filter(t => t.date && t.date.slice(0, 10) >= start && t.date.slice(0, 10) <= end)
       .map(t => ({ ...t, accountType: session.getAccountType(t.source) }));
@@ -489,7 +507,15 @@ export default function StatementsPage() {
   // see its Section 3 skip) so they still render in the Transactions tab;
   // computeSummary excludes them on DETECTION (same reasoning as
   // realExpenseTxns above) — plus isPayment rows, same as realExpenseTxns.
-  const matched = useMemo(() => matchTransactions(bankExpenseTxns, swExpenses), [bankExpenseTxns, swExpenses]);
+  // The out-of-month expenses the padded fetch pulls in exist ONLY to be
+  // matchable/suggestible against this month's charges — an unclaimed one
+  // must not surface as a Splitwise-only row here, or every adjacent
+  // month's expenses would pollute this month's list and totals.
+  const matched = useMemo(() =>
+    matchTransactions(bankExpenseTxns, swExpenses)
+      .filter(t => !t.isSplitOnly || inRange(t.date, monthRange)),
+    [bankExpenseTxns, swExpenses, monthRange]
+  );
   const matchedBankOnly = useMemo(() => matched.filter(t => !t.isSplitOnly), [matched]);
   // Run the same matcher over pending transactions, kept separate from
   // `matched` (and everything derived from it — stat-bar totals,
@@ -535,7 +561,12 @@ export default function StatementsPage() {
     [matched]
   );
 
-  const splitwiseOwed = useMemo(() => swExpenses.reduce((s, e) => s + (e.myOwedShare || 0), 0), [swExpenses]);
+  // Month-scoped (swExpenses itself is padded ±14d for matching — see the
+  // fetch effect) so "owed this month" doesn't absorb neighboring months.
+  const splitwiseOwed = useMemo(() =>
+    swExpenses.filter(e => inRange(e.date, monthRange)).reduce((s, e) => s + (e.myOwedShare || 0), 0),
+    [swExpenses, monthRange]
+  );
   const personalTotal = useMemo(() =>
     matched.filter(t => !t.isSplitwised && !t.isSplitOnly).reduce((s, t) => s + (t.effectiveAmount || 0), 0),
     [matched]

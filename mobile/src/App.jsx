@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { onAuthChange } from './services/auth';
 import { db } from './services/firebase';
 import { session } from './services/session';
 import { migrateLegacyPlaidConnection, loadPlaidConnections, loadSourceMeta } from './services/db';
+import { isEnabled as isBiometricLockEnabled } from './services/biometricLock';
+import LockScreen from './components/LockScreen';
 import LoginPage   from './pages/LoginPage';
 import SignupPage  from './pages/SignupPage';
 import HomePage    from './pages/HomePage';
@@ -29,10 +31,23 @@ function Spinner() {
 export default function App() {
   const [user,     setUser]     = useState(undefined);
   const [hydrated, setHydrated] = useState(false);
+  const [locked,   setLocked]   = useState(false);
+  // Only the FIRST auth event can arm the lock — that's the cold-start
+  // session restore, the moment the app opens into someone's hands. Later
+  // events are fresh password logins (the tree swaps from /login), and
+  // demanding Face ID seconds after the user typed their password would
+  // be pure friction. Cold-start-only also covers reopening the installed
+  // PWA (iOS kills the process, so reopening IS a cold start); a
+  // visibilitychange + idle-timeout re-lock is the natural follow-up if
+  // backgrounding-without-kill turns out to matter.
+  const firstAuthEventRef = useRef(true);
 
   useEffect(() => {
     return onAuthChange(async (firebaseUser) => {
+      const firstEvent = firstAuthEventRef.current;
+      firstAuthEventRef.current = false;
       if (firebaseUser) {
+        if (firstEvent && isBiometricLockEnabled(firebaseUser.uid)) setLocked(true);
         session.setUserId(firebaseUser.uid);
         if (!session.getKey()) {
           try {
@@ -66,6 +81,11 @@ export default function App() {
   }, []);
 
   if (!hydrated) return <Spinner />;
+
+  // Rendered INSTEAD of the router — no page mounts, no data flashes,
+  // until the OS verification passes. Session/Plaid hydration above has
+  // already run; the lock is purely visual gating.
+  if (user && locked) return <LockScreen uid={user.uid} onUnlocked={() => setLocked(false)} />;
 
   return (
     <BrowserRouter>

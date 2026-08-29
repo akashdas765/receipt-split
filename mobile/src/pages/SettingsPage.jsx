@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, Key, Mail, Lock, LogOut, Moon, Sun, Bell, BellOff } from 'lucide-react';
+import { Eye, EyeOff, Key, Mail, Lock, LogOut, Moon, Sun, Bell, BellOff, ScanFace } from 'lucide-react';
 import { auth } from '../services/firebase';
 import { logout, changePassword } from '../services/auth';
+import { isSupported as isBiometricSupported, isEnabled as isBiometricEnabled, enable as enableBiometric, disable as disableBiometric } from '../services/biometricLock';
 import { updateSplitwiseKey } from '../services/db';
 import { session } from '../services/session';
 import { requestNotificationPermission } from '../services/pwa';
@@ -36,6 +37,15 @@ export default function SettingsPage() {
   const [confirmPw,  setConfirmPw] = useState('');
   const [pwRevealed, setPwRevealed] = useState(false);
   const [changingPw, setChangingPw] = useState(false);
+
+  // 'checking' until the async capability probe resolves — the section
+  // renders its unsupported text only once we know for sure, same
+  // capability-gated pattern as the Notifications section below.
+  const [bioSupport, setBioSupport] = useState('checking'); // 'checking' | 'ready' | 'unsupported'
+  const [bioEnabled, setBioEnabled] = useState(() => isBiometricEnabled(auth.currentUser?.uid));
+  useEffect(() => {
+    isBiometricSupported().then(ok => setBioSupport(ok ? 'ready' : 'unsupported'));
+  }, []);
 
   const savedKey = session.getKey() || '';
   const dirty    = apiKey.trim() !== savedKey;
@@ -71,9 +81,33 @@ export default function SettingsPage() {
     }
   };
 
+  // Explicit logout disarms the lock — the session it guarded is gone,
+  // and leaving the flag set would greet the NEXT password login with a
+  // Face ID wall it never asked for (or, worse, one that can't succeed if
+  // the OS credential was deleted in the meantime).
   const handleLogout = async () => {
+    disableBiometric(auth.currentUser?.uid);
     await logout();
     navigate('/login');
+  };
+
+  const handleToggleBiometric = async () => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    if (bioEnabled) {
+      disableBiometric(uid);
+      setBioEnabled(false);
+      toast.success('Face ID lock disabled');
+      return;
+    }
+    try {
+      await enableBiometric(uid, auth.currentUser?.email);
+      setBioEnabled(true);
+      toast.success('Face ID lock enabled — required next time the app opens');
+    } catch {
+      // User cancelled the OS prompt (NotAllowedError) — leave it off.
+      toast.error('Face ID setup was cancelled');
+    }
   };
 
   const handleEnableNotifications = async () => {
@@ -162,6 +196,37 @@ export default function SettingsPage() {
           >
             {changingPw ? 'Changing…' : 'Change password'}
           </button>
+        </Section>
+
+        <Section title="Security">
+          {bioSupport === 'unsupported' ? (
+            <p className="flex items-center gap-2 text-sm text-muted">
+              <ScanFace size={16} className="text-subtle shrink-0" /> {"Face ID / Touch ID isn't available in this browser"}
+            </p>
+          ) : (
+            <>
+              <button
+                onClick={handleToggleBiometric}
+                disabled={bioSupport === 'checking'}
+                className="w-full flex items-center justify-between gap-2 text-sm font-semibold text-ink disabled:opacity-60"
+              >
+                <span className="flex items-center gap-2">
+                  <ScanFace size={16} className={bioEnabled ? 'text-indigo-400' : 'text-subtle'} />
+                  Require Face ID to open
+                </span>
+                <span
+                  className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${bioEnabled ? 'bg-indigo-500' : 'bg-surface-alt'}`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-surface shadow transition-transform ${bioEnabled ? 'translate-x-5' : 'translate-x-0'}`}
+                  />
+                </span>
+              </button>
+              <p className="text-xs text-subtle mt-2">
+                {"Locks this device only — you'll unlock with Face ID, Touch ID, or your device passcode each time the app opens."}
+              </p>
+            </>
+          )}
         </Section>
 
         <Section title="Appearance">

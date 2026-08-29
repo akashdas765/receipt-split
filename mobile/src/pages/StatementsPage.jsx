@@ -629,10 +629,23 @@ export default function StatementsPage() {
     // category, so refine those with an AI batch call before writing.
     // Never blocks/fails the add itself — categorizeTransactions degrades
     // to the existing keyword detection per-transaction if the call fails.
+    //
+    // Only transactions still CARRYING a category are sent — plaidSync's
+    // preserveStoredCategory strips the key from any transaction whose
+    // stored doc already has one (Plaid re-sends old transactions on
+    // modified/full syncs), and those must stay stripped: re-categorizing
+    // them here both re-ran the AI over the entire history on every sync
+    // (the bulk of a full re-sync's wall-clock time — sequential batches
+    // of 50 against Groq) and silently overwrote manually-corrected
+    // categories whenever the AI disagreed, defeating the very protection
+    // preserveStoredCategory exists to provide.
     let txnsToAdd = newTxns;
     if (sourceName !== 'Manual entry' && newTxns.length) {
-      const categories = await categorizeTransactions(newTxns.map(t => ({ id: t.id, description: t.description, amount: t.amount })));
-      txnsToAdd = newTxns.map(t => ({ ...t, category: categories.get(t.id) || t.category }));
+      const needsCategory = newTxns.filter(t => t.category !== undefined);
+      if (needsCategory.length) {
+        const categories = await categorizeTransactions(needsCategory.map(t => ({ id: t.id, description: t.description, amount: t.amount })));
+        txnsToAdd = newTxns.map(t => categories.has(t.id) ? { ...t, category: categories.get(t.id) || t.category } : t);
+      }
     }
     await addTransactions(txnsToAdd, sourceName);
     const uploadedAt = new Date().toISOString();
@@ -647,11 +660,15 @@ export default function StatementsPage() {
 
   // Header "Sync" button — runs every connected account's sync in one tap
   // instead of opening the Add sheet and driving PlaidConnect's per-
-  // connection tabs one at a time. Always full:true (re-pulls each
-  // connection's whole history, re-tagging every transaction by card) rather
-  // than a plain incremental sync — full is already a superset of a plain
-  // sync's result (see plaidSync.js), so running both back to back would
-  // just re-fetch the same data twice for no benefit.
+  // connection tabs one at a time. INCREMENTAL (cursor-based) on purpose:
+  // this used to be full:true, which reset the cursor and re-downloaded
+  // each connection's ENTIRE history (paged 500/call) on every tap — the
+  // routine refresh took as long as the very first import, mostly
+  // re-fetching and re-processing transactions Firestore already had. A
+  // plain sync pulls only what changed since the stored cursor, which is
+  // what a refresh button means. Full re-pull still exists where it
+  // belongs: PlaidConnect's "Restore full history" button and the
+  // legacy-source auto-fix effect below, both of which actually need it.
   const handleSyncAll = async () => {
     const connections = session.getPlaidConnections();
     if (!connections.length || syncingAll) return;
@@ -659,7 +676,7 @@ export default function StatementsPage() {
     let failures = 0;
     for (const conn of connections) {
       try {
-        const { cursor } = await syncPlaidConnection(conn, { full: true, onAdd: handleAdd });
+        const { cursor } = await syncPlaidConnection(conn, { onAdd: handleAdd });
         session.upsertPlaidConnection({ itemId: conn.itemId, cursor });
         await savePlaidConnection({ itemId: conn.itemId, cursor });
       } catch (err) {

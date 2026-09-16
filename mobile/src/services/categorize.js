@@ -7,7 +7,7 @@ import { detectCategory, ALL_CATEGORIES } from '../utils/categoryDetector';
 // allowlist keeps that allowlist as the single source of truth for "what
 // this app is allowed to run inference with."
 const PROXY = '/.netlify/functions/groq';
-const MODEL = 'qwen/qwen3.6-27b';
+const MODEL = 'qwen/qwen3.8-27b';
 
 // Batch cap: keeps one call's prompt/response comfortably within the
 // proxy's 4096-token response budget (each {id, category} pair is roughly

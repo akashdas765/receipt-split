@@ -117,7 +117,7 @@ async function attemptGroq(base64, mime, userText) {
         ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
       },
       body: JSON.stringify({
-        model: 'qwen/qwen3.6-27b',
+        model: 'qwen/qwen3.8-27b',
         messages: [
           { role: 'system', content: PARSE_SYSTEM },
           { role: 'user', content: [
@@ -126,7 +126,7 @@ async function attemptGroq(base64, mime, userText) {
           ]},
         ],
         max_tokens: 4096,
-        // qwen3.6-27b is a "thinking" model by default and prepends a
+        // qwen3.8-27b is a "thinking" model by default and prepends a
         // <think>...</think> reasoning block before the actual JSON, which
         // breaks JSON.parse. Disable reasoning entirely — we just want the
         // structured answer, not a rationale.

@@ -13,7 +13,7 @@ const NVIDIA_MODEL = 'meta/llama-3.2-11b-vision-instruct';
 // parser's vision model (src/services/groq.js's callGroq) and Insights'
 // chat model (src/services/insights.js's askInsightsChat) — so the endpoint
 // can't be repurposed as a general-purpose LLM its billing foots.
-const ALLOWED_MODELS = new Set(['qwen/qwen3.6-27b', 'openai/gpt-oss-20b']);
+const ALLOWED_MODELS = new Set(['qwen/qwen3.8-27b', 'openai/gpt-oss-20b']);
 const MAX_TOKENS_CAP = 4096;
 // Receipt/statement images are sent inline as base64, so the body is
 // legitimately a few MB — cap generously, only to stop absurd abuse.

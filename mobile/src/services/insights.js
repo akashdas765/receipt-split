@@ -281,7 +281,7 @@ export async function askInsightsChat(stats, messages) {
         { role: 'system', content: `${CHAT_SYSTEM}\n\nSpending data:\n${JSON.stringify(stats)}` },
         ...messages.slice(-MAX_HISTORY_TURNS),
       ],
-      // gpt-oss-20b is a reasoning model — unlike qwen3.6-27b (see groq.js),
+      // gpt-oss-20b is a reasoning model — unlike qwen3.8-27b (see groq.js),
       // it doesn't support reasoning_effort: 'none', only low/medium/high,
       // and its reasoning tokens count against max_tokens same as content.
       // Left at the default (unset ≈ medium) with the itemized-transactions

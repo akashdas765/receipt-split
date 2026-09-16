@@ -125,12 +125,20 @@ input:focus { outline: none; border-color: var(--indigo) !important; box-shadow:
 
 /* ───────────────────────── Animation utilities ───────────────────────── */
 
-.anim-fade-up  { animation: fade-up 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
+/* fill-mode "backwards" (not "both"): "both" would leave the final
+   translate/scale keyframe value permanently applied, and any non-"none"
+   transform — even an identity one like translateY(0) — creates a
+   stacking context that traps a card's own absolutely-positioned children
+   (e.g. a dropdown menu) below later sibling cards forever. "backwards"
+   still holds the "from" state during the stagger delay, but drops back to
+   the element's un-animated styles (transform: none) once the animation
+   completes, since the "to" state is visually identical anyway. */
+.anim-fade-up  { animation: fade-up 0.45s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
 .anim-fade-in  { animation: fade-in 0.3s ease both; }
-.anim-scale-in { animation: scale-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both; }
-.anim-sheet-up { animation: sheet-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.anim-scale-in { animation: scale-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
+.anim-sheet-up { animation: sheet-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
 .anim-float    { animation: float-y 3.5s ease-in-out infinite; }
-.anim-pop      { animation: pop 0.3s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.anim-pop      { animation: pop 0.3s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
 
 /* Stagger children of a list */
 .stagger > *:nth-child(1)  { animation-delay: 0.03s; }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Store, Calendar, List, DollarSign, Trash2, Plus, ChevronDown, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { fetchGroups } from '../services/splitwise';
@@ -35,8 +36,10 @@ export default function DetailPage() {
   const [swError,       setSwError]       = useState('');
   const [showFallbackNotice, setShowFallbackNotice] = useState(!!receipt?.usedFallback);
   const [openCat,       setOpenCat]       = useState(null);
+  const [menuPos,       setMenuPos]       = useState(null);
   const [showBreakdown, setShowBreakdown] = useState(false);
   const dropdownRef  = useRef(null);
+  const menuRef       = useRef(null);
   const newItemIdRef = useRef(null);
 
   useEffect(() => {
@@ -64,11 +67,33 @@ export default function DetailPage() {
 
   useEffect(() => {
     const handler = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setOpenCat(null);
+      // The open menu itself lives in a portal on document.body (so it can
+      // float above every item card regardless of stacking context/scroll
+      // container), so it's no longer a DOM descendant of dropdownRef —
+      // check it separately or a click on an option would register as
+      // "outside" and close the menu before the option's own click fires.
+      if (dropdownRef.current?.contains(e.target)) return;
+      if (menuRef.current?.contains(e.target)) return;
+      setOpenCat(null);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  useEffect(() => {
+    if (!openCat) return;
+    // The menu is positioned with fixed viewport coordinates computed at
+    // open time; if the scrollable item list (or the page) scrolls while
+    // it's open, those coordinates go stale, so just dismiss it. Capture
+    // phase because "scroll" doesn't bubble.
+    const close = () => setOpenCat(null);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [openCat]);
 
   const switchGroup = gid => {
     const grp = groups.find(g => g.id === gid);
@@ -387,14 +412,32 @@ export default function DetailPage() {
                     {/* Category dropdown */}
                     <div className="relative inline-block mb-3">
                       <button
-                        onClick={e => { e.stopPropagation(); setOpenCat(catOpen ? null : item.id); }}
+                        onClick={e => {
+                          e.stopPropagation();
+                          if (catOpen) { setOpenCat(null); return; }
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          const MENU_HEIGHT = CATS.length * 36 + 8;
+                          // Flip to open upward when there isn't room below (e.g. an
+                          // item near the bottom of the list) — otherwise it opens
+                          // downward as usual.
+                          const openUp = window.innerHeight - rect.bottom < MENU_HEIGHT && rect.top > MENU_HEIGHT;
+                          setMenuPos({
+                            left:  rect.left,
+                            width: rect.width,
+                            top:    openUp ? undefined : rect.bottom + 4,
+                            bottom: openUp ? window.innerHeight - rect.top + 4 : undefined,
+                            openUp,
+                          });
+                          setOpenCat(item.id);
+                        }}
                         className="flex items-center gap-1.5 text-xs font-semibold text-muted border border-edge bg-surface-alt rounded-lg px-2.5 py-1 hover:border-indigo-200 transition-colors"
                       >
                         {(item.category || 'other').charAt(0).toUpperCase() + (item.category || 'other').slice(1)}
                         <ChevronDown size={12} />
                       </button>
-                      {catOpen && (
-                        <div className="absolute top-full mt-1 left-0 z-30 bg-surface border border-edge rounded-xl shadow-lg overflow-hidden min-w-[130px] anim-scale-in origin-top-left">
+                      {catOpen && menuPos && createPortal(
+                        <div ref={menuRef} style={{ position: 'fixed', left: menuPos.left, top: menuPos.top, bottom: menuPos.bottom, minWidth: Math.max(menuPos.width, 130) }}
+                          className={`z-[100] bg-surface border border-edge rounded-xl shadow-lg overflow-hidden anim-scale-in ${menuPos.openUp ? 'origin-bottom-left' : 'origin-top-left'}`}>
                           {CATS.map(cat => (
                             <button key={cat} onClick={() => { updateItem(item.id, 'category', cat); setOpenCat(null); }}
                               className={`w-full text-left px-3 py-2 text-sm transition-colors flex items-center justify-between
@@ -404,7 +447,8 @@ export default function DetailPage() {
                               {item.category === cat && <CheckCircle2 size={14} style={{ color: INDIGO }} />}
                             </button>
                           ))}
-                        </div>
+                        </div>,
+                        document.body
                       )}
                     </div>
 

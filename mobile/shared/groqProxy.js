@@ -2,10 +2,11 @@ import { verifyFirebaseToken } from './verifyFirebaseToken.js';
 
 const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions';
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
-// meta/llama-3.2-11b-vision-instruct chosen over the 90b variant for lower
-// latency — this only runs when Groq is already rate-limiting us, so
-// responsiveness matters more than squeezing out extra accuracy.
-const NVIDIA_MODEL = 'meta/llama-3.2-11b-vision-instruct';
+// NVIDIA retired meta/llama-3.2-11b-vision-instruct on 2026-11-05 (HTTP 410),
+// which broke the fallback whenever Groq rate-limited. 90b is the remaining
+// llama-3.2 vision model in NVIDIA's public /v1/models listing. If this one
+// is retired too, check https://integrate.api.nvidia.com/v1/models.
+const NVIDIA_MODEL = 'meta/llama-3.2-90b-vision-instruct';
 
 // Signup is open, so "has a valid Firebase token" isn't much of a barrier to
 // someone wanting to run arbitrary inference on our Groq/NVIDIA quota. Pin

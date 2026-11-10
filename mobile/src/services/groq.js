@@ -145,24 +145,28 @@ async function attemptGroq(base64, mime, userText) {
     clearTimeout(timer);
   }
 
-  let data;
-  try {
-    data = await res.json();
-  } catch {
-    // A non-JSON body (e.g. a platform error page during an outage) means
-    // something went wrong before the request ever reached our own proxy
-    // logic — also transient, also worth retrying.
-    const err = new Error('Groq API error');
-    err.retryable = true;
-    throw err;
-  }
-  if (!res.ok) {
-    const message = typeof data?.error === 'string' ? data.error : data?.error?.message;
-    const err = new Error(message || 'Groq API error');
-    // 5xx is Groq/the proxy having a bad moment — worth retrying. 4xx
-    // (bad request, unsupported model, oversized body, auth failure) is
-    // deterministic; retrying identical input won't change the outcome.
-    err.retryable = res.status >= 500;
+  // Read as text first so a non-JSON body (platform error page, 413 from the
+  // host, etc.) can still be reported with its HTTP status instead of an
+  // opaque "Groq API error".
+  const rawText = await res.text().catch(() => '');
+  let data = null;
+  try { data = JSON.parse(rawText); } catch { /* handled below */ }
+
+  if (!data || !res.ok) {
+    const apiMsg =
+      (typeof data?.error === 'string' ? data.error : data?.error?.message) ||
+      data?.detail || data?.message ||
+      (!data && rawText ? rawText.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160) : '');
+    const label =
+      res.status === 429 ? 'AI service is rate-limited (too many requests)'
+      : res.status === 413 ? 'Image is too large to send'
+      : res.status === 401 ? 'Not authorized'
+      : 'AI service error';
+    const err = new Error(`${label} [HTTP ${res.status}${apiMsg ? `: ${apiMsg}` : ''}]`);
+    // 429 and 5xx (and unparseable bodies) are transient — worth retrying.
+    // Other 4xx are deterministic; retrying identical input won't help.
+    err.retryable = res.status === 429 || res.status >= 500 || (!data && res.ok);
+    err.rateLimited = res.status === 429;
     throw err;
   }
   let parsed;
@@ -189,6 +193,7 @@ async function attemptGroq(base64, mime, userText) {
 // try again, even though a second attempt usually just works.
 const MAX_ATTEMPTS   = 3;
 const RETRY_DELAYS_MS = [800, 2000];
+const RATE_LIMIT_DELAYS_MS = [3000, 6000];
 
 async function callGroq(base64, mime, userText) {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -196,7 +201,7 @@ async function callGroq(base64, mime, userText) {
       return await attemptGroq(base64, mime, userText);
     } catch (err) {
       if (!err.retryable || attempt === MAX_ATTEMPTS - 1) throw err;
-      await sleep(RETRY_DELAYS_MS[attempt]);
+      await sleep((err.rateLimited ? RATE_LIMIT_DELAYS_MS : RETRY_DELAYS_MS)[attempt]);
     }
   }
 }

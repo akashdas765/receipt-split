@@ -182,13 +182,23 @@ export default function ScanPage() {
     submittingRef.current = true;
     setError(''); setParsing(true);
     try {
-      const results = await Promise.all(
-        entries.map(async entry => {
-          if (entry.isPdf) return parseReceiptImage(entry.pdfB64, 'image/jpeg');
-          const { b64, mime } = await toGroqCompatible(entry.file);
-          return parseReceiptImage(b64, mime);
-        })
-      );
+      // Sequential, not Promise.all: firing 2-3 vision requests at once
+      // (each possibly followed by a correction call) trips Groq's rate
+      // limit, which used to surface as a vague "Groq API error".
+      const results = [];
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        try {
+          if (entry.isPdf) results.push(await parseReceiptImage(entry.pdfB64, 'image/jpeg'));
+          else {
+            const { b64, mime } = await toGroqCompatible(entry.file);
+            results.push(await parseReceiptImage(b64, mime));
+          }
+        } catch (err) {
+          if (entries.length > 1) err.message = `Image ${i + 1} of ${entries.length}: ${err.message}`;
+          throw err;
+        }
+      }
 
       const base          = results[0];
       const allItems      = mergeAndDedup(results);
